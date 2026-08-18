@@ -83,4 +83,4 @@ g++ -std=c++17 -pthread -fsanitize=address  05_data_races/example_28.cpp -o shal
 > | `07/example_40`, `07/example_41` | consumer loops forever with no shutdown signal |
 >
 > Their own READMEs say which and why. Stop hung ones with Ctrl-C.
-> `07/example_42` is the one that exits cleanly.
+> `07/example_42` is the one that exits cleanly
