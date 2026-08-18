@@ -1,29 +1,31 @@
+// The std::thread constructor is variadic: extra arguments are forwarded to the
+// callable. They must satisfy the signature exactly -- see the third one.
 #include <iostream>
 #include <string>
 #include <thread>
 
-void printID(int id) {
+void logOrder(int orderId) {
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  std::cout << "ID = " << id << std::endl;
+  std::cout << "order " << orderId << '\n';
 }
 
-void printIDAndName(int id, std::string name) {
+void logOrderWithSymbol(int orderId, std::string symbol) {
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  std::cout << "ID = " << id << ", name = " << name << std::endl;
+  std::cout << "order " << orderId << " on " << symbol << '\n';
 }
 
 int main() {
-  int id = 0;  // Define an integer variable
+  int orderId = 0;
 
-  // starting threads using variadic templates
-  std::thread t1(printID, id);
-  std::thread t2(printIDAndName, ++id, "MyString");
-  std::thread t3(printIDAndName, ++id);  // this procudes a compiler error
+  std::thread t1(logOrder, orderId);
+  std::thread t2(logOrderWithSymbol, ++orderId, "ACME");
 
-  // wait for threads before returning
+  // COMPILE ERROR if uncommented: logOrderWithSymbol needs two arguments.
+  // Thread argument mismatches are caught at compile time, not at run time.
+  // std::thread t3(logOrderWithSymbol, ++orderId);
+
   t1.join();
   t2.join();
-  // t3.join();
 
   return 0;
 }

@@ -1,80 +1,78 @@
+// BUSY-WAIT (POLLING) -- runs forever and pins a core at 100%. Ctrl-C to stop.
+//
+// The consumer loops asking "anything yet?" as fast as it can. Two problems:
+//   1. It burns CPU doing nothing between arrivals.
+//   2. hasOrders() and take() are each locked, but the GAP between them is not
+//      -- with a second consumer, both could pass the check and one would then
+//      pop from an empty vector. A check-then-act race.
+//
+// example_41 replaces the polling with a condition variable, fixing both.
 #include <future>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
 
-class Vehicle {
+class Order {
  public:
-  Vehicle(int id) : _id(id) {}
-  int getID() { return _id; }
+  explicit Order(int id) : _id(id) {}
+  int id() const { return _id; }
 
  private:
   int _id;
 };
 
-class WaitingVehicles {
+class OrderBook {
  public:
-  WaitingVehicles() {}
+  OrderBook() = default;
 
-  bool dataIsAvailable() {
-    std::lock_guard<std::mutex> myLock(_mutex);
-    return !_vehicles.empty();
+  bool hasOrders() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return !_orders.empty();
   }
 
-  Vehicle popBack() {
-    // perform vector modification under the lock
-    std::lock_guard<std::mutex> uLock(_mutex);
-
-    // remove last vector element from queue
-    Vehicle v = std::move(_vehicles.back());
-    _vehicles.pop_back();
-
-    return v;  // will not be copied due to return value optimization (RVO) in C++
+  Order take() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    Order order = std::move(_orders.back());
+    _orders.pop_back();
+    return order;  // moved out, not copied (RVO / implicit move on return)
   }
 
-  void pushBack(Vehicle&& v) {
-    // simulate some work
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  void submit(Order&& order) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));  // work OUTSIDE the lock
 
-    // perform vector modification under the lock
-    std::lock_guard<std::mutex> uLock(_mutex);
-
-    // add vector to queue
-    std::cout << "   Vehicle #" << v.getID() << " will be added to the queue" << std::endl;
-    _vehicles.emplace_back(std::move(v));
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::cout << "   order #" << order.id() << " submitted\n";
+    _orders.emplace_back(std::move(order));
   }
 
  private:
-  std::vector<Vehicle> _vehicles;  // list of all vehicles waiting to enter this intersection
+  std::vector<Order> _orders;
   std::mutex _mutex;
 };
 
 int main() {
-  // create monitor object as a shared pointer to enable access by multiple threads
-  std::shared_ptr<WaitingVehicles> queue(new WaitingVehicles);
+  auto book = std::make_shared<OrderBook>();
 
-  std::cout << "Spawning threads..." << std::endl;
-  std::vector<std::future<void>> futures;
+  std::cout << "starting producers...\n";
+  std::vector<std::future<void>> producers;
+  producers.reserve(10);
+
   for (int i = 0; i < 10; ++i) {
-    // create a new Vehicle instance and move it into the queue
-    Vehicle v(i);
-    futures.emplace_back(std::async(std::launch::async, &WaitingVehicles::pushBack, queue, std::move(v)));
+    Order order(i);
+    producers.emplace_back(
+        std::async(std::launch::async, &OrderBook::submit, book, std::move(order)));
   }
 
-  std::cout << "Collecting results..." << std::endl;
-  while (true) {
-    if (queue->dataIsAvailable()) {
-      Vehicle v = queue->popBack();
-      std::cout << "   Vehicle #" << v.getID() << " has been removed from the queue" << std::endl;
+  std::cout << "matching...\n";
+  while (true) {  // spins hot forever, even once the producers are done
+    if (book->hasOrders()) {
+      Order order = book->take();
+      std::cout << "   order #" << order.id() << " matched\n";
     }
   }
 
-  std::for_each(futures.begin(), futures.end(), [](std::future<void>& ftr) {
-    ftr.wait();
-  });
-
-  std::cout << "Finished processing queue" << std::endl;
-
+  // Unreachable -- the loop above never exits.
   return 0;
 }

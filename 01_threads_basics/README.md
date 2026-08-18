@@ -51,19 +51,20 @@ depend on ordering, you need real synchronization (folders `04`, `06`, `07`).
 ## Files
 | File | What it demonstrates |
 |------|----------------------|
-| `example_1.cpp` | Spawning N threads into a `std::vector` and joining them all. (Note: the worker `while(true);` spins forever — it illustrates thread creation, not a program that terminates.) |
-| `example_2.cpp` | Querying `hardware_concurrency()`. |
-| `example_3.cpp` | Printing the main thread's id. |
-| `example_4.cpp` | A worker that is **never joined** — undefined behavior at program exit (the `t.join()` is commented out). |
-| `example_5.cpp` | Interleaved work in main and worker, correctly `join()`ed. |
-| `example_6.cpp` | Same as 5 but join is commented out — observe the crash/UB. |
-| `example_7.cpp` | `detach()` — the worker runs independently; main may exit before it finishes. |
-| `example_8.cpp` | Many detached threads; relying on `sleep` to let them finish (fragile!). |
+| `example_1.cpp` | Spawning N workers into a `std::vector` and joining them all. The workers spin forever on purpose — it illustrates thread creation, not a program that terminates. **Ctrl-C to stop.** |
+| `example_2.cpp` | Querying `hardware_concurrency()` — and handling the `0` ("unknown") case. |
+| `example_3.cpp` | Printing the id of the implicit main thread. |
+| `example_4.cpp` | A worker that is **neither joined nor detached** — `~thread()` calls `std::terminate`. The `join()` is commented out. |
+| `example_5.cpp` | Interleaved work in main and worker, correctly `join()`ed *after* main's own work. |
+| `example_6.cpp` | Same defect as 4, but showing where a *premature* `join()` would go — and why it would destroy the concurrency. |
+| `example_7.cpp` | `detach()` — the worker runs unowned; main may exit before it prints. |
+| `example_8.cpp` | Six detached workers with `sleep` used as a (fragile, wrong) barrier. |
 
 ## Try it yourself
-- In `example_4.cpp` / `example_6.cpp`, restore `t.join()` and compare behavior.
-- In `example_8.cpp`, remove the final `sleep_for` and watch output disappear —
-  detached threads are killed when `main` returns.
+- In `example_4.cpp` / `example_6.cpp`, restore `join()` and compare behavior.
+- In `example_5.cpp`, run it several times — the interleaving is not stable.
+- In `example_8.cpp`, remove the final `sleep_for` and watch output disappear:
+  detached threads die when `main` returns.
 
 ## Compiling
 ```sh

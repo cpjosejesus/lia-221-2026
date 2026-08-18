@@ -60,21 +60,39 @@ synchronously — a common surprise.
 ## Files
 | File | What it demonstrates |
 |------|----------------------|
-| `example_20.cpp` | Basic promise/future: worker sets a value, main retrieves it with `get()`. |
-| `example_21.cpp` | **TODO exercise** — poll the future with `wait_for` and branch on `future_status` (ready / timeout / deferred). |
-| `example_22.cpp` | Passing an **exception** across threads via `prms.set_exception` + try/catch around `get()`. |
-| `example_23.cpp` | Same idea with `std::async` — exceptions re-thrown in `get()`. |
-| `example_24.cpp` | `std::launch::deferred`: note the worker runs on the **main** thread id. |
-| `example_25.cpp` | Reinforces deferred launch (compare thread ids with 24). |
-| `example_26.cpp` | Launching several tasks and **timing** the whole batch with `std::chrono`. |
+| `example_20.cpp` | The raw `promise`/`future` pair: a one-shot channel, with the promise **moved** into the worker. |
+| `example_21.cpp` | `wait_for` and `std::future_status` — polling with a deadline instead of blocking. **Contains the TODO exercise.** |
+| `example_22.cpp` | `set_exception` — shipping an exception across the thread boundary so `get()` rethrows it. |
+| `example_23.cpp` | `std::async` does all of the above plumbing for you: return a value, throw an exception, same semantics, far less code. |
+| `example_24.cpp` | `std::launch::async` — **forces** a new thread. The two printed ids differ. |
+| `example_25.cpp` | `std::launch::deferred` — creates **no** thread; the task runs lazily inside `get()`, so the ids match. |
+| `example_26.cpp` | Measuring the cost: with a tiny workload, thread-spawn overhead dominates the "parallel" run. |
+
+## The exercise
+`example_21.cpp` marks a `TODO (STARTS here)` / `TODO (ENDS here)` block. A
+working solution is already in place so the file compiles and runs — the task is
+to experiment with it:
+
+1. Set the `wait_for` timeout **shorter** than the worker's 2000 ms → `timeout`.
+2. Raise it to 3000 ms → `ready`, and `get()` returns the value.
+3. Wrap it in a loop that prints a heartbeat between polls. That is the pattern
+   behind every responsive UI and health-checked worker.
+
+Find it with:
+```sh
+grep -rn "TODO" .
+```
 
 ## Try it yourself
-- Complete the TODO in `example_21.cpp`, then change the timeout from 1000 ms to
-  3000 ms and watch the branch flip from "unavailable" to "Result = ...".
-- In `example_24.cpp`, switch `std::launch::deferred` to `std::launch::async` and
-  observe that the worker now prints a **different** thread id.
+- In `example_23.cpp`, change the denominator to `0` and watch the exception
+  surface out of `get()` rather than terminating the worker.
+- In `example_25.cpp`, delete the `result.get()` call entirely. With `deferred`,
+  the task then **never runs at all** — no output from it whatsoever.
+- In `example_26.cpp`, raise `workPerTask` to `1000000` and re-time it, then
+  swap `std::launch::async` for `std::launch::deferred` and compare. Somewhere
+  between the two workloads is the crossover point where threads start to pay.
 
 ## Compiling
 ```sh
-g++ -std=c++17 -pthread example_20.cpp -o example_20 && ./example_20
+g++ -std=c++17 -pthread example_23.cpp -o example_23 && ./example_23
 ```

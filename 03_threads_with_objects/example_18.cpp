@@ -1,29 +1,27 @@
+// Staggered start times force a deterministic-looking order -- but that order
+// comes from the sleeps, not from any guarantee. Delete the sleep and the
+// output scrambles.
 #include <chrono>
 #include <iostream>
-#include <random>
 #include <thread>
 #include <vector>
 
 int main() {
-  // create threads
-  std::vector<std::thread> threads;
-  for (size_t i = 0; i < 10; ++i) {
-    // create new thread from a Lambda
-    threads.emplace_back([i]() {
-      // wait for certain amount of time
-      std::this_thread::sleep_for(std::chrono::milliseconds(10 * i));
+  std::vector<std::thread> pool;
+  pool.reserve(10);
 
-      // perform work
-      std::cout << "Hello from Worker thread #" << i << std::endl;
+  for (int i = 0; i < 10; ++i) {
+    pool.emplace_back([i] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10 * i));
+      std::cout << "worker #" << i << " reporting\n";
     });
   }
 
-  // do something in main()
-  std::cout << "Hello from Main thread" << std::endl;
+  std::cout << "main thread reporting\n";
 
-  // call join on all thread objects using a range-based loop
-  for (auto& t : threads)
-    t.join();
+  for (std::thread& worker : pool) {
+    worker.join();
+  }
 
   return 0;
 }

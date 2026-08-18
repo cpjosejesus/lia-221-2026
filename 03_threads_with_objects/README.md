@@ -50,21 +50,23 @@ reuse threads instead of creating one per task, but the mental model starts here
 ## Files
 | File | What it demonstrates |
 |------|----------------------|
-| `example_14.cpp` | Member function on a thread by **value** (`v1`, no effect) vs. by **pointer** (`&v2`, effect). Compare `printID()` output. |
-| `example_15.cpp` | Passing a `std::shared_ptr` so the worker modifies the shared object. |
-| `example_16.cpp` | Two threads modifying the *same* shared object concurrently (foreshadows data races). |
-| `example_17.cpp` | A `std::vector<std::thread>` — why threads must be **moved** in, not copied (the commented `push_back(t)` won't compile). |
-| `example_18.cpp` | A vector of threads created from lambdas, each capturing its index `i` by value. |
-| `example_19.cpp` | Mixing a variadic-template thread and a lambda thread; joining both as a barrier. |
+| `example_14.cpp` | Member function on a thread bound **by value** (mutation lost on a copy) vs. **by address** (mutation lands). Compare the two `print()` outputs. |
+| `example_15.cpp` | `std::shared_ptr` as the safe way to share an object with a worker — cheap to copy, and it keeps the object alive. |
+| `example_16.cpp` | Two threads mutating **different members** of one shared object — safe, because distinct members are distinct memory locations. |
+| `example_17.cpp` | `std::thread` is **move-only**; build containers with `emplace_back`, never `push_back` of a named thread (compile error shown). |
+| `example_18.cpp` | Ten workers with staggered sleeps — an order that *looks* deterministic but is only an artifact of the timing. |
+| `example_19.cpp` | Two equivalent ways to hand data to a thread: variadic argument vs. lambda capture. |
 
 ## Try it yourself
-- In `example_17.cpp`, uncomment the `push_back(t)` block to see the "thread is
-  move-only" compile error.
-- In `example_16.cpp`, note that both threads touch the same object — is any field
-  written by both? (Here they write different fields, so it happens to be safe;
-  change one to write the same field and you have a race — see folder `06`.)
+- In `example_16.cpp`, point **both** threads at the same member (call `deposit`
+  from both) and you have converted a safe program into a data race — the exact
+  subject of folder `05`.
+- In `example_17.cpp`, uncomment the `push_back` lines and read the error: it is
+  the deleted copy constructor.
+- In `example_18.cpp`, delete the `sleep_for` and re-run several times — the
+  tidy ordering collapses. Nothing ever guaranteed it.
 
 ## Compiling
 ```sh
-g++ -std=c++17 -pthread example_17.cpp -o example_17 && ./example_17
+g++ -std=c++17 -pthread example_16.cpp -o example_16 && ./example_16
 ```

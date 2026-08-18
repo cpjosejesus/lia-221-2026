@@ -55,31 +55,46 @@ both try to `delete` it (double free), or one mutates the other's data.
   contents from concurrent writes — that still needs a mutex.
 
 ### The classic non-atomic read-modify-write race
-`example_31` is the payoff. `pushBack` does:
+`example_31` is the payoff. `submit()` does:
 ```cpp
-int oldNum = _tmpVehicles;   // READ
+const int seen = _filled;    // READ
 sleep(...);                  // (window where another thread interleaves)
-_tmpVehicles = oldNum + 1;   // WRITE back a stale value
+_filled = seen + 1;          // WRITE back a stale value
 ```
 1000 threads each try to increment the counter, but because the read and write
-are **not atomic and not locked**, updates are **lost** — the final count is well
-below 1000. The `sleep` merely widens the window so the bug is reproducible every
-run. Folder `06` fixes exactly this with a mutex.
+are **not atomic and not locked**, updates are **lost** — the final count lands
+somewhere in the hundreds. The `sleep` merely widens the window so the bug
+reproduces on every run. Folder `06` fixes exactly this with a mutex.
+
+Note that `example_31` *does* lock the vector while leaving the counter
+unguarded. That is deliberate: an unsynchronized `push_back` corrupts the
+vector's internals and aborts the process before it can print anything, which
+would hide the lesson behind a crash. Drop that `lock_guard` and see for
+yourself — a good reminder that UB does not politely produce a wrong number.
 
 ## Files
 | File | What it demonstrates |
 |------|----------------------|
-| `example_27.cpp` | Passing a `Vehicle` **by value** to a task — worker mutates a copy, `main` is unaffected (no race). |
-| `example_28.cpp` | Same, but the object holds a raw `std::string*`; a *shallow* copy shares the pointer — watch which object's name changes. |
-| `example_29.cpp` | Adds explicit **copy** and **move** constructors; observe which is called and reading a moved-from object. |
-| `example_30.cpp` | Move constructor backed by `std::unique_ptr`; reading the moved-from source throws (dereferencing a null unique_ptr). |
-| `example_31.cpp` | **The data race**: 1000 concurrent unsynchronized increments lose updates; final count < 1000. |
+| `example_27.cpp` | Passing an `Order` **by value** to a task — the worker mutates a copy, `main` is unaffected. **No race**, and the reason is the copy. |
+| `example_28.cpp` | Same shape, but the object owns a raw `std::string*`. The implicit **shallow copy** shares the pointer, so both threads write through it. |
+| `example_29.cpp` | Explicit **copy** and **move** constructors — including a deliberately broken copy ctor to fix as an exercise. |
+| `example_30.cpp` | The fix: `std::unique_ptr` makes the class move-only, so the shallow-copy bug becomes *impossible to write*. Reading the moved-from source throws. |
+| `example_31.cpp` | **The lost update**: 1000 unsynchronized increments, final count well below 1000, different every run. |
 
 ## Try it yourself
-- Run `example_31.cpp` several times — the final count varies and is always
-  wrong. Then compare with `06/example_32.cpp`, which adds a mutex and prints 1000.
+- Run `example_31.cpp` several times — the count varies and is always wrong.
+  Then run `06/example_32.cpp`, which adds a mutex and prints 1000 every time.
+- In `example_31.cpp`, remove the `lock_guard` around `push_back` and re-run.
+  It now usually **crashes** instead of printing a wrong answer.
 - In `example_28.cpp`, change the raw `std::string*` to a plain `std::string`
-  member and see the shallow-copy problem disappear.
+  member — the shallow-copy problem disappears entirely, for free.
+- In `example_29.cpp`, repair the broken copy constructor (deep-copy `_symbol`,
+  copy `_id`) and confirm the copy and the original are independent.
+- Build any of these with `-fsanitize=thread` and let the tool find the race for
+  you:
+  ```sh
+  g++ -std=c++17 -pthread -fsanitize=thread example_31.cpp -o example_31 && ./example_31
+  ```
 
 ## Compiling
 ```sh

@@ -1,3 +1,9 @@
+// Threads are not free. With a tiny workload the spawn overhead dominates and
+// the "parallel" version loses to doing it inline.
+//
+// Try it yourself: raise workPerTask to 1'000'000 so each task actually earns
+// its thread, then compare std::launch::async against std::launch::deferred by
+// swapping the policy below. The crossover point is the whole lesson.
 #include <chrono>
 #include <cmath>
 #include <future>
@@ -5,38 +11,43 @@
 #include <thread>
 #include <vector>
 
-void workerFunction(int n) {
-  // print system id of worker thread
-  std::cout << "Worker thread id = " << std::this_thread::get_id() << std::endl;
+void revalueBook(int iterations) {
+  std::cout << "task on thread id = " << std::this_thread::get_id() << '\n';
 
-  // perform work
-  for (int i = 0; i < n; ++i) {
-    sqrt(12345.6789);
+  double checksum = 0.0;
+  for (int i = 0; i < iterations; ++i) {
+    checksum += std::sqrt(12345.6789);
+  }
+
+  // Consume the result so the optimiser cannot delete the loop entirely.
+  if (checksum < 0) {
+    std::cout << "unreachable\n";
   }
 }
 
 int main() {
-  // print system id of worker thread
-  std::cout << "Main thread id = " << std::this_thread::get_id() << std::endl;
+  std::cout << "main thread id    = " << std::this_thread::get_id() << '\n';
 
-  // start time measurement
-  std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
+  const int workPerTask = 10;  // deliberately tiny -- overhead will dominate
+  const int taskCount = 5;
 
-  // launch various tasks
-  std::vector<std::future<void>> futures;
-  int nLoops = 10, nThreads = 5;
-  for (int i = 0; i < nThreads; ++i) {
-    futures.emplace_back(std::async(std::launch::any, workerFunction, nLoops));
+  const auto start = std::chrono::high_resolution_clock::now();
+
+  std::vector<std::future<void>> tasks;
+  tasks.reserve(taskCount);
+  for (int i = 0; i < taskCount; ++i) {
+    tasks.emplace_back(std::async(std::launch::async, revalueBook, workPerTask));
   }
 
-  // wait for tasks to complete
-  for (const std::future<void>& ftr : futures)
-    ftr.wait();
+  for (const std::future<void>& task : tasks) {
+    task.wait();
+  }
 
-  // stop time measurement and print execution time
-  std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-  std::cout << "Execution finished after " << duration << " microseconds" << std::endl;
+  const auto stop = std::chrono::high_resolution_clock::now();
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+
+  std::cout << "finished in " << elapsed << " microseconds\n";
 
   return 0;
 }

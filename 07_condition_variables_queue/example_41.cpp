@@ -1,77 +1,81 @@
+// PRODUCER / CONSUMER with a CONDITION VARIABLE. Still runs forever once the
+// producers finish (the consumer waits for a 11th order that never comes) --
+// Ctrl-C to stop. example_42 adds clean shutdown.
+//
+// The difference from example_40: take() now BLOCKS instead of spinning. The
+// waiting thread consumes no CPU until notify_one() wakes it.
+//
+// Two details that matter:
+//   * wait() needs a unique_lock, not a lock_guard -- it must unlock while
+//     asleep and re-lock on wake, which lock_guard cannot do.
+//   * The predicate is re-checked on every wake, which is what makes SPURIOUS
+//     WAKEUPS harmless. Never wait() without one.
+#include <condition_variable>
 #include <future>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
 
-class Vehicle {
+class Order {
  public:
-  Vehicle(int id) : _id(id) {}
-  int getID() { return _id; }
+  explicit Order(int id) : _id(id) {}
+  int id() const { return _id; }
 
  private:
   int _id;
 };
 
-class WaitingVehicles {
+class OrderBook {
  public:
-  WaitingVehicles() {}
+  OrderBook() = default;
 
-  Vehicle popBack() {
-    // perform vector modification under the lock
-    std::unique_lock<std::mutex> uLock(_mutex);
-    _cond.wait(uLock, [this] { return !_vehicles.empty(); });  // pass unique lock to condition variable
+  Order take() {
+    std::unique_lock<std::mutex> lock(_mutex);
 
-    // remove last vector element from queue
-    Vehicle v = std::move(_vehicles.back());
-    _vehicles.pop_back();
+    // Sleeps here, holding nothing, until the predicate is true on a wake.
+    _ready.wait(lock, [this] { return !_orders.empty(); });
 
-    return v;  // will not be copied due to return value optimization (RVO) in C++
+    Order order = std::move(_orders.back());
+    _orders.pop_back();
+    return order;
   }
 
-  void pushBack(Vehicle&& v) {
-    // simulate some work
+  void submit(Order&& order) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // perform vector modification under the lock
-    std::lock_guard<std::mutex> uLock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::cout << "   order #" << order.id() << " submitted\n";
+    _orders.push_back(std::move(order));
 
-    // add vector to queue
-    std::cout << "   Vehicle #" << v.getID() << " will be added to the queue" << std::endl;
-    _vehicles.push_back(std::move(v));
-    _cond.notify_one();  // notify client after pushing new Vehicle into vector
+    _ready.notify_one();  // wake one waiting consumer
   }
 
  private:
   std::mutex _mutex;
-  std::condition_variable _cond;
-  std::vector<Vehicle> _vehicles;  // list of all vehicles waiting to enter this intersection
+  std::condition_variable _ready;
+  std::vector<Order> _orders;
 };
 
 int main() {
-  // create monitor object as a shared pointer to enable access by multiple threads
-  std::shared_ptr<WaitingVehicles> queue(new WaitingVehicles);
+  auto book = std::make_shared<OrderBook>();
 
-  std::cout << "Spawning threads..." << std::endl;
-  std::vector<std::future<void>> futures;
+  std::cout << "starting producers...\n";
+  std::vector<std::future<void>> producers;
+  producers.reserve(10);
+
   for (int i = 0; i < 10; ++i) {
-    // create a new Vehicle instance and move it into the queue
-    Vehicle v(i);
-    futures.emplace_back(std::async(std::launch::async, &WaitingVehicles::pushBack, queue, std::move(v)));
+    Order order(i);
+    producers.emplace_back(
+        std::async(std::launch::async, &OrderBook::submit, book, std::move(order)));
   }
 
-  std::cout << "Collecting results..." << std::endl;
-  while (true) {
-    // popBack wakes up when a new element is available in the queue
-    Vehicle v = queue->popBack();
-    std::cout << "   Vehicle #" << v.getID() << " has been removed from the queue" << std::endl;
+  std::cout << "matching...\n";
+  while (true) {  // blocks in take() rather than spinning -- but never exits
+    Order order = book->take();
+    std::cout << "   order #" << order.id() << " matched\n";
   }
-
-  std::for_each(futures.begin(), futures.end(), [](std::future<void>& ftr) {
-    ftr.wait();
-  });
-
-  std::cout << "Finished!" << std::endl;
 
   return 0;
 }

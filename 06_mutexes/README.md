@@ -45,11 +45,12 @@ create by accident is **circular wait** on **multiple mutexes acquired in
 different orders**:
 
 ```
-Thread A: lock(mutex2); lock(mutex1);   // wants 2 then 1
-Thread B: lock(mutex1); lock(mutex2);   // wants 1 then 2
+settleWorker: lock(feed); lock(book);   // wants feed then book
+quoteWorker:  lock(book); lock(feed);   // wants book then feed
 ```
-If A holds `mutex2` and B holds `mutex1`, each waits forever for the other's
-lock. `example_34` (raw locks) and `example_37` (lock_guards) both deadlock —
+If the settle worker holds `feed` and the quote worker holds `book`, each waits
+forever for the other's lock. (Both examples sleep briefly between the two
+acquisitions, which makes the deadlock happen reliably rather than occasionally.) `example_34` (raw locks) and `example_37` (lock_guards) both deadlock —
 RAII does **not** save you here, because the problem is *lock ordering*, not
 *lock release*.
 
@@ -65,20 +66,27 @@ Two standard cures:
 ## Files
 | File | What it demonstrates |
 |------|----------------------|
-| `example_32.cpp` | Mutex fixes the folder-05 race: `lock()`/`unlock()` around the shared vector → correct count. |
-| `example_33.cpp` | The **bug** in manual unlocking: a `throw` skips `mtx.unlock()` and can leave the mutex locked. |
-| `example_34.cpp` | **Deadlock** via two mutexes locked in opposite orders (raw lock/unlock). |
-| `example_35.cpp` | `std::lock_guard` — exception-safe locking; unlock happens automatically. |
-| `example_36.cpp` | `std::unique_lock` — manually `unlock()`/`lock()` around work done *outside* the critical section. |
-| `example_37.cpp` | Deadlock again, this time with `lock_guard` — proves RAII alone doesn't prevent deadlock. |
-| `example_38.cpp` | **Fix**: `std::lock(m1, m2)` + `std::adopt_lock` guards to acquire both without deadlock. |
+| `example_32.cpp` | The mutex fixes the folder-05 race: `lock()`/`unlock()` around the shared vector → a correct count of 1000, every run. |
+| `example_33.cpp` | The **bug** in manual unlocking: an early `return` from the catch block skips `unlock()` and the program **hangs**. Ctrl-C. |
+| `example_34.cpp` | **Deadlock** — two mutexes, opposite acquisition orders, raw lock/unlock. **Hangs**; Ctrl-C. |
+| `example_35.cpp` | `std::lock_guard` — `example_33` fixed. Unlock happens on every exit path, exceptions included. |
+| `example_36.cpp` | `std::unique_lock` — `unlock()`/`lock()` mid-scope to keep the critical section as small as the shared access itself. |
+| `example_37.cpp` | Deadlock again, this time with `lock_guard` — proof that RAII fixes *release*, not *ordering*. **Hangs**; Ctrl-C. |
+| `example_38.cpp` | **The fix**: `std::lock(m1, m2)` + `std::adopt_lock` guards acquire both without deadlock. |
 
 ## Try it yourself
-- Run `example_34.cpp` / `example_37.cpp` — they hang (deadlock). Kill with Ctrl-C.
-  Then run `example_38.cpp` and see it finish. Try rewriting `38` with
-  `std::scoped_lock lk(mutex1, mutex2);`.
-- In `example_33.cpp`, feed a zero denominator so the exception fires, then note
-  how a following thread can block. Rewrite it with `lock_guard` (as in `35`).
+- Run `example_33.cpp`, `example_34.cpp` and `example_37.cpp` — all three hang.
+  Then run `example_38.cpp` and watch it finish. Rewrite `38` using C++17's
+  `std::scoped_lock guard(bookMutex, feedMutex);` — it replaces all three lines
+  in each function.
+- Fix `example_33.cpp` yourself by swapping the manual lock for a `lock_guard`,
+  then diff your version against `example_35.cpp`.
+- In `example_36.cpp`, delete the `lock.unlock()` / `lock.lock()` pair so the
+  mutex is held for the whole function, and time both versions. The private work
+  in the middle is now serialised across every thread.
+- In `example_37.cpp`, make both functions acquire the mutexes in the **same**
+  order and confirm the deadlock disappears — that is cure #1 from above,
+  without needing `std::lock` at all.
 
 ## Compiling
 ```sh

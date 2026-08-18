@@ -1,49 +1,46 @@
+// Blocking on get() means main can do nothing else. wait_for() lets you ask
+// "is it ready yet?" with a deadline and stay responsive in the meantime.
 #include <cmath>
 #include <future>
 #include <iostream>
 #include <thread>
 
-void computeSqrt(std::promise<double>&& prms, double input) {
-  std::this_thread::sleep_for(std::chrono::milliseconds(2000));  // simulate work
-  double output = sqrt(input);
-  prms.set_value(output);
+void computeVwap(std::promise<double>&& sink, double notional) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));  // slow pricing
+  sink.set_value(std::sqrt(notional));
 }
 
 int main() {
-  // define input data
-  double inputData = 42.0;
+  const double notional = 42.0;
 
-  // create promise and future
-  std::promise<double> prms;
-  std::future<double> ftr = prms.get_future();
+  std::promise<double> sink;
+  std::future<double> result = sink.get_future();
 
-  // start thread and pass promise as argument
-  std::thread t(computeSqrt, std::move(prms), inputData);
+  std::thread worker(computeVwap, std::move(sink), notional);
 
-  // TODO (STARTS here): Poll the future with a timeout instead of blocking on get().
-  //   1. Call ftr.wait_for(...) with a timeout SHORTER than the worker's 2000 ms
-  //      of simulated work (e.g. 1000 ms) and capture the returned status.
-  //   2. If the status is std::future_status::ready, the value is available:
-  //      call ftr.get() and print the result.
-  //   3. If the status is std::future_status::timeout (result not ready yet) or
-  //      std::future_status::deferred (task not started), print "Result unavailable".
-  //   Experiment: change the timeout to 3000 ms and observe how the branch taken
-  //   changes. Notice that wait_for lets you keep the main thread responsive
-  //   instead of blocking indefinitely on ftr.get().
-  auto status = ftr.wait_for(std::chrono::milliseconds(1000));
-  if (status == std::future_status::ready)  // result is ready
-  {
-    std::cout << "Result = " << ftr.get() << std::endl;
-  }
+  // TODO (STARTS here): poll the future instead of blocking on get().
+  //   1. Call result.wait_for(...) with a timeout SHORTER than the worker's
+  //      2000 ms of simulated pricing (1000 ms is a good start) and keep the
+  //      returned std::future_status.
+  //   2. If the status is std::future_status::ready the value has arrived --
+  //      call result.get() and print it.
+  //   3. If it is std::future_status::timeout (not ready yet) or
+  //      std::future_status::deferred (the task has not even started), print
+  //      "quote not ready".
+  //   Experiment: raise the timeout to 3000 ms and watch which branch runs.
+  //   Then try polling in a loop, printing a heartbeat between attempts --
+  //   that is the pattern behind any responsive UI or health-checked worker.
+  auto status = result.wait_for(std::chrono::milliseconds(1000));
 
-  //  timeout has expired or function has not yet been started
-  else if (status == std::future_status::timeout || status == std::future_status::deferred) {
-    std::cout << "Result unavailable" << std::endl;
+  if (status == std::future_status::ready) {
+    std::cout << "vwap = " << result.get() << '\n';
+  } else if (status == std::future_status::timeout ||
+             status == std::future_status::deferred) {
+    std::cout << "quote not ready\n";
   }
   // TODO (ENDS here)
 
-  // thread barrier
-  t.join();
+  worker.join();
 
   return 0;
 }

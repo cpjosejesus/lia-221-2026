@@ -1,43 +1,43 @@
+// Is this a data race? No -- and the reason matters.
+// The lambda takes Order BY VALUE, so the worker mutates its own copy. Main's
+// object is untouched. Passing by reference (or sharing a pointer) is what
+// turns concurrent access into a race.
 #include <future>
 #include <iostream>
 #include <thread>
 
-class Vehicle {
+class Order {
  public:
-  // default constructor
-  Vehicle() : _id(0) {
-    std::cout << "Vehicle #" << _id << " Default constructor called" << std::endl;
+  Order() : _id(0) {
+    std::cout << "Order #" << _id << ": default ctor\n";
   }
 
-  // initializing constructor
-  Vehicle(int id) : _id(id) {
-    std::cout << "Vehicle #" << _id << " Initializing constructor called" << std::endl;
+  explicit Order(int id) : _id(id) {
+    std::cout << "Order #" << _id << ": init ctor\n";
   }
 
-  // setter and getter
-  void setID(int id) { _id = id; }
-  int getID() { return _id; }
+  void setId(int id) { _id = id; }
+  int id() const { return _id; }
 
  private:
   int _id;
 };
 
 int main() {
-  // create instances of class Vehicle
-  Vehicle v0;     // default constructor
-  Vehicle v1(1);  // initializing constructor
+  Order resting;      // default ctor
+  Order marketable(1);  // init ctor
+  (void)marketable;
 
-  // read and write name in different threads (which one of the above creates a data race?)
-  std::future<void> ftr = std::async([](Vehicle v) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));  // simulate work
-    v.setID(2);
-  },
-                                     v0);
+  // 'resting' is COPIED into the task -- the worker cannot reach main's object.
+  std::future<void> task = std::async([](Order o) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    o.setId(2);  // mutates the copy only
+  }, resting);
 
-  v0.setID(3);
+  resting.setId(3);
 
-  ftr.wait();
-  std::cout << "Vehicle #" << v0.getID() << std::endl;
+  task.wait();
+  std::cout << "main's order id = " << resting.id() << " (3 -- worker saw a copy)\n";
 
   return 0;
 }

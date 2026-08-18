@@ -1,29 +1,29 @@
+// The same capture choice, now with real threads -- and the stakes are higher.
+// The by-reference thread reads orderId long after main mutated it, so its
+// output depends on timing. The by-value thread is immune.
 #include <iostream>
 #include <thread>
 
 int main() {
-  int id = 0;  // Define an integer variable
+  int orderId = 0;
 
-  // starting a first thread (by reference)
-  auto f0 = [&id]() {
+  // Captures by reference: races with main's ++orderId below.
+  std::thread byRef([&orderId] {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    std::cout << "a) ID in Thread (call-by-reference) = " << id << std::endl;
-  };
-  std::thread t1(f0);
-
-  // starting a second thread (by value)
-  std::thread t2([id]() mutable {
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    std::cout << "b) ID in Thread (call-by-value) = " << id << std::endl;
+    std::cout << "a) by-reference thread sees = " << orderId << '\n';
   });
 
-  // increment and print id in main
-  ++id;
-  std::cout << "c) ID in Main (call-by-value) = " << id << std::endl;
+  // Captures by value: snapshotted at thread creation, safe from main.
+  std::thread byValue([orderId]() mutable {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::cout << "b) by-value thread sees     = " << orderId << '\n';
+  });
 
-  // wait for threads before returning
-  t1.join();
-  t2.join();
+  ++orderId;
+  std::cout << "c) main mutated orderId to  = " << orderId << '\n';
+
+  byRef.join();
+  byValue.join();
 
   return 0;
 }

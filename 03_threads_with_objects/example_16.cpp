@@ -1,38 +1,38 @@
+// Two threads mutating two DIFFERENT members of one shared object. This
+// happens to be fine, because distinct non-overlapping members are distinct
+// memory locations. Point both threads at the SAME member and you have the
+// data race that folder 05 is about.
 #include <iostream>
+#include <memory>
+#include <string>
 #include <thread>
 
-class Vehicle {
+class Account {
  public:
-  Vehicle() : _id(0) {}
-  void addID(int id) { _id = id; }
-  void setName(std::string name) { _name = name; }
-  void printID() {
-    std::cout << "Vehicle ID=" << _id << std::endl;
-  }
-  void printName() {
-    std::cout << "Vehicle name=" << _name << std::endl;
+  Account() : _balance(0) {}
+
+  void deposit(int amount) { _balance = amount; }
+  void rename(std::string owner) { _owner = std::move(owner); }
+
+  void print() const {
+    std::cout << "Account owner=" << _owner << " balance=" << _balance << '\n';
   }
 
  private:
-  int _id;
-  std::string _name;
+  int _balance;
+  std::string _owner;
 };
 
 int main() {
-  // create thread 1
-  std::shared_ptr<Vehicle> v(new Vehicle);
-  std::thread t1 = std::thread(&Vehicle::addID, v, 1);
+  auto account = std::make_shared<Account>();
 
-  // create thread 2
-  std::thread t2 = std::thread(&Vehicle::setName, v, "MyVehicle");
+  std::thread t1(&Account::deposit, account, 500);
+  std::thread t2(&Account::rename, account, "desk-a");
 
-  // wait for thread to finish
   t1.join();
   t2.join();
 
-  // print Vehicle id
-  v->printID();
-  v->printName();
+  account->print();
 
   return 0;
 }

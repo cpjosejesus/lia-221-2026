@@ -1,47 +1,52 @@
-#include <algorithm>
+// WHY MANUAL UNLOCK IS A TRAP.
+// The catch block returns early -- skipping mtx.unlock() at the bottom. The
+// first thread to hit denominator == 0 leaves the mutex locked forever and
+// every other thread blocks on it. The program hangs; Ctrl-C to stop it.
+//
+// example_35 is this same code with a lock_guard, which cannot leak.
 #include <future>
 #include <iostream>
+#include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
-std::mutex mtx;
-double result;
+std::mutex bookMutex;
+double lastQuote;
 
-void printResult(int denom) {
-  std::cout << "for denom = " << denom << ", the result is " << result << std::endl;
+void reportQuote(double denominator) {
+  std::cout << "denominator " << denominator << " -> quote " << lastQuote << '\n';
 }
 
-void divideByNumber(double num, double denom) {
-  mtx.lock();
+void quote(double notional, double denominator) {
+  bookMutex.lock();
 
   try {
-    // divide num by denom but throw an exception if division by zero is attempted
-    if (denom != 0) {
-      result = num / denom;
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      printResult(denom);
-    } else {
-      throw std::invalid_argument("Exception from thread: Division by zero!");
+    if (denominator == 0) {
+      throw std::invalid_argument("worker: cannot quote against zero volume");
     }
+
+    lastQuote = notional / denominator;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    reportQuote(denominator);
   } catch (const std::invalid_argument& e) {
-    // notify the user about the exception and return
-    std::cout << e.what() << std::endl;
-    return;
+    std::cout << e.what() << '\n';
+    return;  // <-- BUG: returns with bookMutex still held
   }
-  mtx.unlock();
+
+  bookMutex.unlock();  // never reached on the exception path
 }
 
 int main() {
-  // create a number of threads which execute the function "divideByNumber" with varying parameters
-  std::vector<std::future<void>> futures;
-  for (double i = -5; i <= +5; ++i) {
-    futures.emplace_back(std::async(std::launch::async, divideByNumber, 50.0, i));
+  std::vector<std::future<void>> tasks;
+
+  for (double d = -5; d <= +5; ++d) {
+    tasks.emplace_back(std::async(std::launch::async, quote, 50.0, d));
   }
 
-  // wait for the results
-  std::for_each(futures.begin(), futures.end(), [](std::future<void>& ftr) {
-    ftr.wait();
-  });
+  for (std::future<void>& task : tasks) {
+    task.wait();
+  }
 
   return 0;
 }

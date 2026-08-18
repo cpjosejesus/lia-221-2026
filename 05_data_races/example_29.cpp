@@ -1,60 +1,59 @@
+// An attempt at the rule of five -- with a deliberate landmine.
+// The copy constructor initialises NOTHING: it prints _id and _symbol while
+// both are uninitialised garbage. The move constructor is correct, and moving
+// (rather than copying) is what keeps the task from sharing state.
 #include <future>
 #include <iostream>
+#include <string>
 #include <thread>
 
-class Vehicle {
+class Order {
  public:
-  // default constructor
-  Vehicle() : _id(0), _name(new std::string("Default Name")) {
-    std::cout << "Vehicle #" << _id << " Default constructor called" << std::endl;
+  Order() : _id(0), _symbol(new std::string("UNSET")) {
+    std::cout << "Order #" << _id << ": default ctor\n";
   }
 
-  // initializing constructor
-  Vehicle(int id, std::string name) : _id(id), _name(new std::string(name)) {
-    std::cout << "Vehicle #" << _id << " Initializing constructor called" << std::endl;
+  Order(int id, std::string symbol) : _id(id), _symbol(new std::string(std::move(symbol))) {
+    std::cout << "Order #" << _id << ": init ctor\n";
   }
 
-  // copy constructor
-  Vehicle(Vehicle const& src) {
-    //...
-    std::cout << "Vehicle #" << _id << " copy constructor called" << std::endl;
-  };
+  // BROKEN ON PURPOSE: copies nothing, then reads uninitialised members.
+  // Fix it as an exercise -- deep-copy _symbol and copy _id.
+  Order(Order const& src) {
+    std::cout << "Order #" << _id << ": copy ctor (broken -- copies nothing)\n";
+  }
 
-  // move constructor
-  Vehicle(Vehicle&& src) {
-    _id = src.getID();
-    _name = new std::string(src.getName());
+  // Correct move: steal the pointer, then null out the source.
+  Order(Order&& src) noexcept : _id(src._id), _symbol(src._symbol) {
+    src._id = 0;
+    src._symbol = nullptr;  // source must not delete what we now own
+    std::cout << "Order #" << _id << ": move ctor\n";
+  }
 
-    src.setID(0);
-    src.setName("Default Name");
-
-    std::cout << "Vehicle #" << _id << " move constructor called" << std::endl;
-  };
-
-  // setter and getter
-  void setID(int id) { _id = id; }
-  int getID() { return _id; }
-  void setName(std::string name) { *_name = name; }
-  std::string getName() { return *_name; }
+  void setSymbol(std::string symbol) { *_symbol = std::move(symbol); }
+  std::string symbol() const { return *_symbol; }
 
  private:
   int _id;
-  std::string* _name;
+  std::string* _symbol;
 };
 
 int main() {
-  // create instances of class Vehicle
-  Vehicle v0;                  // default constructor
-  Vehicle v1(1, "Vehicle 1");  // initializing constructor
+  Order resting;
 
-  // launch a thread that modifies the Vehicle name
-  std::future<void> ftr = std::async([](Vehicle v) {
-    v.setName("Vehicle 2");
-  },
-                                     std::move(v0));
+  // std::move selects the move ctor, so no sharing occurs -- but 'resting' is
+  // left hollow (_symbol == nullptr).
+  std::future<void> task = std::async([](Order o) {
+    o.setSymbol("GLOBEX");
+  }, std::move(resting));
 
-  ftr.wait();
-  std::cout << v0.getName() << std::endl;
+  task.wait();
+
+  // Dereferencing the moved-from order's null _symbol is UB -- see example_30
+  // for the version that reports the mistake instead of crashing silently.
+  // std::cout << resting.symbol() << '\n';
+
+  std::cout << "task complete; 'resting' was moved from\n";
 
   return 0;
 }

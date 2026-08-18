@@ -1,54 +1,57 @@
-#include <algorithm>
+// lock_guard is rigid: locked for its whole scope. std::unique_lock adds the
+// flexibility to unlock() and lock() again mid-scope, so you can drop the lock
+// around work that does not touch shared state.
+//
+// Holding a mutex across a sleep -- or any I/O -- serialises every other
+// thread behind you. Shrink critical sections to the shared access itself.
 #include <future>
 #include <iostream>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
-std::mutex mtx;
-double result;
+std::mutex bookMutex;
+double lastQuote;
 
-void printResult(int denom) {
-  std::cout << "for denom = " << denom << ", the result is " << result << std::endl;
+void reportQuote(double denominator) {
+  std::cout << "denominator " << denominator << " -> quote " << lastQuote << '\n';
 }
 
-void divideByNumber(double num, double denom) {
-  std::unique_lock<std::mutex> lck(mtx);
+void quote(double notional, double denominator) {
+  std::unique_lock<std::mutex> lock(bookMutex);
+
   try {
-    // divide num by denom but throw an exception if division by zero is attempted
-    if (denom != 0) {
-      result = num / denom;
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      printResult(denom);
-      lck.unlock();
-
-      // do something outside of the lock
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-      lck.lock();
-      // do someting else under the lock
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    } else {
-      throw std::invalid_argument("Exception from thread: Division by zero!");
+    if (denominator == 0) {
+      throw std::invalid_argument("worker: cannot quote against zero volume");
     }
+
+    lastQuote = notional / denominator;  // shared state -- lock required
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    reportQuote(denominator);
+
+    lock.unlock();  // release early: the next part touches nothing shared
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));  // private work
+
+    lock.lock();  // re-acquire for more shared access
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   } catch (const std::invalid_argument& e) {
-    // notify the user about the exception and return
-    std::cout << e.what() << std::endl;
-    return;
+    std::cout << e.what() << '\n';
+    return;  // still safe -- unique_lock unlocks in its destructor
   }
 }
 
 int main() {
-  // create a number of threads which execute the function "divideByNumber" with varying parameters
-  std::vector<std::future<void>> futures;
-  for (double i = -5; i <= +5; ++i) {
-    futures.emplace_back(std::async(std::launch::async, divideByNumber, 50.0, i));
+  std::vector<std::future<void>> tasks;
+
+  for (double d = -5; d <= +5; ++d) {
+    tasks.emplace_back(std::async(std::launch::async, quote, 50.0, d));
   }
 
-  // wait for the results
-  std::for_each(futures.begin(), futures.end(), [](std::future<void>& ftr) {
-    ftr.wait();
-  });
+  for (std::future<void>& task : tasks) {
+    task.wait();
+  }
 
   return 0;
 }

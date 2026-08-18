@@ -1,31 +1,34 @@
+// Running a member function on a thread. The second argument is the object the
+// call binds to -- and passing it BY VALUE copies it, so the mutation lands on
+// the copy and is lost. Passing an address binds to the original.
 #include <iostream>
 #include <thread>
 
-class Vehicle {
+class Account {
  public:
-  Vehicle() : _id(0) {}
-  void addID(int id) { _id = id; }
-  void printID() {
-    std::cout << "Vehicle ID=" << _id << std::endl;
+  Account() : _balance(0) {}
+
+  void deposit(int amount) { _balance = amount; }
+
+  void print() const {
+    std::cout << "Account balance = " << _balance << '\n';
   }
 
  private:
-  int _id;
+  int _balance;
 };
 
 int main() {
-  // create thread
-  Vehicle v1, v2;
-  std::thread t1 = std::thread(&Vehicle::addID, v1, 1);   // call member function on object v
-  std::thread t2 = std::thread(&Vehicle::addID, &v2, 2);  // call member function on object v
+  Account copied, original;
 
-  // wait for thread to finish
+  std::thread t1(&Account::deposit, copied, 100);     // operates on a COPY
+  std::thread t2(&Account::deposit, &original, 200);  // operates on the original
+
   t1.join();
   t2.join();
 
-  // print Vehicle id
-  v1.printID();
-  v2.printID();
+  copied.print();    // still 0 -- the deposit went to a temporary copy
+  original.print();  // 200 -- as intended
 
   return 0;
 }

@@ -8,8 +8,8 @@ This folder builds a **concurrent queue** step by step and ends at the classic
 ### The monitor object pattern
 A **monitor object** wraps shared data together with the mutex that protects it,
 so *every* access to the data goes through methods that lock internally. Callers
-can never touch the raw data unlocked. `WaitingVehicles` here is a monitor: its
-`pushBack`/`popBack` each take the lock before touching `_vehicles`. Sharing the
+can never touch the raw data unlocked. `OrderBook` here is a monitor: its
+`submit`/`take` each acquire the lock before touching `_orders`. Sharing the
 monitor across threads is done with a `std::shared_ptr` (folder 03/05 lifetime
 rule).
 
@@ -18,15 +18,15 @@ A consumer needs to wait until the producer has put something in the queue. The
 naive approach is to **spin**:
 ```cpp
 while (true) {
-    if (queue->dataIsAvailable())      // lock, check, unlock — repeat forever
-        process(queue->popBack());
+    if (book->hasOrders())      // lock, check, unlock — repeat forever
+        match(book->take());
 }
 ```
 This is a **busy-wait / polling loop** (`example_40`). It "works" but:
 - It burns 100% CPU checking an empty queue.
 - It repeatedly locks/unlocks the mutex, creating contention.
-- It has a lurking bug: `dataIsAvailable()` and `popBack()` are two separate
-  locked calls, so another consumer could empty the queue *between* them (a
+- It has a lurking bug: `hasOrders()` and `take()` are two separate locked
+  calls, so another consumer could empty the queue *between* them (a
   **check-then-act race**).
 
 ### Condition variables — sleep until notified
@@ -36,7 +36,7 @@ thread signals that a condition may now be true. No CPU spinning.
 Consumer side:
 ```cpp
 std::unique_lock<std::mutex> lk(_mutex);          // must be unique_lock, not lock_guard
-_cond.wait(lk, [this]{ return !_vehicles.empty(); });
+_ready.wait(lk, [this]{ return !_orders.empty(); });
 // woken up AND predicate true AND lock re-held -> safe to pop
 ```
 What `wait(lk, pred)` does, atomically:
@@ -48,9 +48,9 @@ Producer side:
 ```cpp
 {
   std::lock_guard<std::mutex> lk(_mutex);
-  _vehicles.push_back(std::move(v));
+  _orders.push_back(std::move(order));
 }
-_cond.notify_one();     // wake one waiting consumer
+_ready.notify_one();     // wake one waiting consumer
 ```
 
 ### Why the predicate (and why `unique_lock`)
@@ -72,28 +72,46 @@ producers `pushBack` and notify; consumers `wait` then `popBack`. Work flows
 between threads with no busy-waiting and no lost updates. This is how thread
 pools, task queues, and pipelines are built.
 
-> **Note on these examples:** the `main()` consumer loop is `while(true)`, so the
-> program runs forever (it never reaches the `futures` join / "Finished!"). That's
-> intentional for demonstration — stop it with Ctrl-C. A real system would add a
-> shutdown signal (e.g. a sentinel value or an atomic `done` flag checked in the
-> predicate).
+### Shutdown — the part most tutorials skip
+A blocking consumer creates a new problem: once the producers stop, the consumer
+is still asleep in `wait()`, waiting for an item that will never arrive. The
+program never ends.
+
+`example_42` closes the loop with the standard solution:
+1. a `_closed` flag, set by `close()` once every producer has finished;
+2. a predicate that also accepts closure —
+   `return !_orders.empty() || _closed;`
+3. `notify_all()` on close, so **every** blocked consumer wakes, not just one;
+4. `take()` returning `std::optional<Order>`, where `std::nullopt` means
+   "drained and closed — stop looping".
+
+> **Note on these examples:** `example_40` and `example_41` deliberately run
+> forever — stop them with Ctrl-C. `40` spins hot; `41` blocks politely but has
+> no way to learn that the producers are done. `example_42` is the finished
+> version and **exits cleanly**.
 
 ## Files
 | File | What it demonstrates |
 |------|----------------------|
-| `example_39.cpp` | The **monitor object** foundation: `pushBack`/`printIDs` protected by a `lock_guard`; a shared_ptr shared across threads. |
-| `example_40.cpp` | A **busy-wait** consumer polling `dataIsAvailable()` — works but wastes CPU and has a check-then-act gap. |
-| `example_41.cpp` | **Condition variable**: consumer `wait`s on a predicate; producer `notify_one()`s. No polling. |
-| `example_42.cpp` | Same producer/consumer with the condition variable (reinforcement / template for reuse). |
+| `example_39.cpp` | The **monitor object** foundation: `submit`/`printAll` protected by a `lock_guard`, the monitor shared via `shared_ptr`. Producer-only. |
+| `example_40.cpp` | A **busy-wait** consumer polling `hasOrders()` — works, burns a core, and has a check-then-act gap. **Runs forever**; Ctrl-C. |
+| `example_41.cpp` | **Condition variable**: the consumer `wait`s on a predicate, the producer `notify_one()`s. No polling. **Runs forever**; Ctrl-C. |
+| `example_42.cpp` | The finished queue: adds `close()`, `notify_all()`, and an `optional`-returning `take()` for clean shutdown. **Terminates.** |
 
 ## Try it yourself
-- Compare CPU usage of `example_40` (spins, high CPU) vs `example_41` (sleeps,
-  near-zero CPU) while the queue is empty.
-- Add a graceful shutdown to `example_41`: an atomic `bool done`, have the
-  predicate become `return done || !_vehicles.empty();`, and `notify_all()` when
-  done so the consumer can exit the loop and the program reaches "Finished!".
+- Watch CPU usage while `example_40` runs (`top`/Activity Monitor) — one core
+  pinned at 100%. Then watch `example_41`: near zero while it waits. Same work,
+  same result, completely different machine cost.
+- In `example_39.cpp`, move the `sleep_for` outside the `lock_guard` scope and
+  time the difference. Holding a lock across a sleep serialises every producer.
+- In `example_42.cpp`, replace `notify_all()` in `close()` with `notify_one()`,
+  then start a **second** consumer. One of them will never wake — the reason
+  `notify_all` is the correct call for shutdown.
+- Give `example_42` a bounded capacity: a second condition variable that makes
+  `submit()` wait while the book is full. That turns it into the classic
+  **bounded buffer**, which is how real systems apply backpressure.
 
 ## Compiling
 ```sh
-g++ -std=c++17 -pthread example_41.cpp -o example_41 && ./example_41
+g++ -std=c++17 -pthread example_42.cpp -o example_42 && ./example_42
 ```

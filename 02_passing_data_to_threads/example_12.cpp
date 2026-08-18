@@ -1,27 +1,27 @@
+// std::thread COPIES its arguments into internal storage by default.
+// Wrapping one in std::move() transfers ownership instead -- after which the
+// source string is valid but unspecified (typically empty).
 #include <iostream>
 #include <string>
 #include <thread>
 
-void printName(std::string name, int waitTime) {
-  std::this_thread::sleep_for(std::chrono::milliseconds(waitTime));
-  std::cout << "Name (from Thread) = " << name << std::endl;
+void logSymbol(std::string symbol, int delayMs) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+  std::cout << "worker got symbol = " << symbol << '\n';
 }
 
 int main() {
-  std::string name1 = "MyThread1";
-  std::string name2 = "MyThread2";
+  std::string copied = "ACME";
+  std::string moved = "GLOBEX";
 
-  // starting threads using value-copy and move semantics
-  std::thread t1(printName, name1, 50);
-  std::thread t2(printName, std::move(name2), 100);
+  std::thread t1(logSymbol, copied, 50);              // copied into the thread
+  std::thread t2(logSymbol, std::move(moved), 100);   // moved into the thread
 
-  // wait for threads before returning
   t1.join();
   t2.join();
 
-  // print name from main
-  std::cout << "Name (from Main) = " << name1 << std::endl;
-  std::cout << "Name (from Main) = " << name2 << std::endl;
+  std::cout << "main still holds copied = '" << copied << "'\n";
+  std::cout << "main after move,  moved = '" << moved << "' (moved-from)\n";
 
   return 0;
 }

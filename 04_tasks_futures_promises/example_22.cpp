@@ -1,40 +1,36 @@
-#include <cmath>
+// A future carries exceptions as well as values. set_exception() on the worker
+// side makes get() rethrow in the consumer -- so error handling crosses the
+// thread boundary intact instead of terminating the process.
 #include <future>
 #include <iostream>
-#include <memory>
+#include <stdexcept>
 #include <thread>
 
-void divideByNumber(std::promise<double>&& prms, double num, double denom) {
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));  // simulate work
+void computeRatio(std::promise<double>&& sink, double numerator, double denominator) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
   try {
-    if (denom == 0)
-      throw std::runtime_error("Exception from thread: Division by zero!");
-    else
-      prms.set_value(num / denom);
+    if (denominator == 0) {
+      throw std::runtime_error("worker: cannot price against zero volume");
+    }
+    sink.set_value(numerator / denominator);
   } catch (...) {
-    prms.set_exception(std::current_exception());
+    sink.set_exception(std::current_exception());  // ship the exception home
   }
 }
 
 int main() {
-  // create promise and future
-  std::promise<double> prms;
-  std::future<double> ftr = prms.get_future();
+  std::promise<double> sink;
+  std::future<double> result = sink.get_future();
 
-  // start thread and pass promise as argument
-  double num = 42.0, denom = 0.0;
-  std::thread t(divideByNumber, std::move(prms), num, denom);
+  std::thread worker(computeRatio, std::move(sink), 42.0, 0.0);
 
-  // retrieve result within try-catch-block
   try {
-    double result = ftr.get();
-    std::cout << "Result = " << result << std::endl;
-  } catch (std::runtime_error e) {
-    std::cout << e.what() << std::endl;
+    std::cout << "ratio = " << result.get() << '\n';
+  } catch (const std::runtime_error& e) {
+    std::cout << "caught in main: " << e.what() << '\n';
   }
 
-  // thread barrier
-  t.join();
+  worker.join();
 
   return 0;
 }

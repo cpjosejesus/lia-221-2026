@@ -33,11 +33,16 @@ course. Each folder groups related examples and ships a `README.md` with the
 Work through them in order — each folder assumes the previous ones.
 
 ## The through-line
-Folders 5→6→7 tell one story with the same `WaitingVehicles` example:
-1. **05** exposes a **data race** (lost updates on a shared counter/queue).
-2. **06** fixes it with a **mutex**, then shows the new hazard: **deadlock**.
+Folders 5→6→7 tell one story with the same `OrderBook` example — a queue of
+orders submitted by many threads at once:
+1. **05** exposes a **data race**: 1000 concurrent submissions, and the fill
+   counter ends up in the hundreds because increments are lost.
+2. **06** fixes it with a **mutex** (the count is now exactly 1000), then shows
+   the two hazards that replace it: a **leaked lock** on the exception path, and
+   **deadlock** from inconsistent lock ordering.
 3. **07** turns the locked queue into an efficient **producer/consumer** using a
-   **condition variable** instead of wasteful polling.
+   **condition variable** instead of wasteful polling — and then adds the
+   shutdown path that lets it actually terminate.
 
 ## Exercises (TODO)
 Search the tree for `TODO` to find the hands-on tasks:
@@ -47,6 +52,10 @@ grep -rn "TODO" .
 Currently: [`04_tasks_futures_promises/example_21.cpp`](04_tasks_futures_promises/example_21.cpp)
 — poll a `std::future` with `wait_for` and branch on `future_status`.
 
+Each folder's README also ends with a **Try it yourself** section: deliberate
+breakages to repair, comparisons to time, and extensions to build (a bounded
+buffer, a `scoped_lock` rewrite, a deep-copy constructor to fix).
+
 ## Building
 All examples are single-file C++17 programs that need the pthreads library:
 ```sh
@@ -55,8 +64,23 @@ g++ -std=c++17 -pthread path/to/example_N.cpp -o example_N && ./example_N
 clang++ -std=c++17 -pthread path/to/example_N.cpp -o example_N && ./example_N
 ```
 
-> ⚠️ A few examples deliberately **misbehave** to teach a point: infinite loops
-> (`01/example_1`, the `while(true)` consumers in `07`), deadlocks
-> (`06/example_34`, `06/example_37`), and undefined behavior from un-joined
-> threads (`01/example_4`, `01/example_6`). Their READMEs say which — stop hung
-> ones with Ctrl-C.
+### Sanitizers
+Several examples are *supposed* to be broken. To have the toolchain prove it:
+```sh
+g++ -std=c++17 -pthread -fsanitize=thread   05_data_races/example_31.cpp -o race && ./race
+g++ -std=c++17 -pthread -fsanitize=address  05_data_races/example_28.cpp -o shallow && ./shallow
+```
+
+> ⚠️ Some examples deliberately **misbehave** to teach a point, and will not
+> terminate on their own:
+>
+> | Example | Behavior |
+> |---------|----------|
+> | `01/example_1` | spins forever (thread creation demo) |
+> | `01/example_4`, `01/example_6` | UB — neither joined nor detached, `std::terminate` |
+> | `06/example_33` | hangs — a leaked mutex on the exception path |
+> | `06/example_34`, `06/example_37` | deadlock |
+> | `07/example_40`, `07/example_41` | consumer loops forever with no shutdown signal |
+>
+> Their own READMEs say which and why. Stop hung ones with Ctrl-C.
+> `07/example_42` is the one that exits cleanly.

@@ -1,20 +1,25 @@
+// Spawn one spinning worker per core. Each never returns, so main blocks in join()
+// forever -- press Ctrl-C. The point: creating a thread is cheap, but every thread
+// you create is one you must eventually account for.
 #include <thread>
 #include <vector>
 
 int main() {
-  std::vector<std::thread> threads;
+  const unsigned workerCount = 4;
 
-  // start up n threads
-  int nThreads = 4;
-  for (int i = 0; i < nThreads; ++i) {
-    threads.emplace_back(std::thread([]() {
-      while (true);
-    }));
+  std::vector<std::thread> pool;
+  pool.reserve(workerCount);
+
+  for (unsigned w = 0; w < workerCount; ++w) {
+    pool.emplace_back([w] {
+      // A busy loop stands in for a market-data feed handler that never idles.
+      for (;;) {
+        (void)w;
+      }
+    });
   }
 
-  std::for_each(threads.begin(), threads.end(), [](std::thread& t) {
-    t.join();
-  });
+  for (std::thread& worker : pool) {
+    worker.join();
+  }
 }
-
-//

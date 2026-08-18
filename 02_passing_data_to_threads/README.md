@@ -46,18 +46,21 @@ count that doesn't match `fn` is a **compile-time** error (see `example_11`).
 ## Files
 | File | What it demonstrates |
 |------|----------------------|
-| `example_9.cpp`  | Lambda captures: by value vs. by reference, `mutable`, parameters, and *when* a capture reads its value. No threads yet — pure closure semantics. |
-| `example_10.cpp` | Same captures but launched as threads: by-reference vs. by-value into a thread; note the race on `id`. |
-| `example_11.cpp` | Passing arguments via variadic templates. `t3` is a **deliberate compiler error** (wrong argument count) — see the comment. |
-| `example_12.cpp` | Passing a `std::string` by copy vs. via `std::move` — observe what remains in `main` after the move. |
-| `example_13.cpp` | Passing by **reference** correctly using `std::ref(name)` so the thread mutates `main`'s variable. |
+| `example_9.cpp` | Lambda captures with **no threads yet**: by-reference vs. by-value, `mutable`, and *when* a capture reads its variable. |
+| `example_10.cpp` | The same capture choice across **real threads** — the by-reference worker races with `main`, the by-value one cannot. |
+| `example_11.cpp` | The variadic `std::thread` constructor; an argument-count mismatch is a **compile-time** error (commented out). |
+| `example_12.cpp` | Thread arguments are **copied** by default; `std::move` transfers instead, leaving the source moved-from. |
+| `example_13.cpp` | `std::ref` to pass a genuine reference — the worker mutates `main`'s object. |
 
 ## Try it yourself
-- In `example_11.cpp`, uncomment `t3` to see the variadic-template compile error.
-- In `example_13.cpp`, remove `std::ref(...)` and confirm the change in `main`
-  disappears (the thread mutated a copy).
-- In `example_10.cpp`, add `t1.join()`/`t2.join()` ordering experiments and
-  observe how `id` differs between the by-value and by-reference threads.
+- In `example_10.cpp`, swap the two sleep durations and re-run — the by-reference
+  thread's output changes, the by-value thread's never does.
+- In `example_11.cpp`, uncomment the third thread and read the compiler error.
+- In `example_13.cpp`, remove `std::ref` — the code still compiles only if the
+  parameter is `const&` or by value; with `std::string&` it fails. That failure
+  is the compiler protecting you from silently mutating a temporary copy.
+- Also in `example_13.cpp`, move `join()` to the end of `main` and you have
+  built a data race — which is exactly what folder `05` is about.
 
 ## Compiling
 ```sh

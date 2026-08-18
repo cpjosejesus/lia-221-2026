@@ -1,21 +1,20 @@
+// detach() severs the handle: the worker becomes a daemon nobody waits for.
+// Whether its output appears at all is a race against main returning.
 #include <iostream>
 #include <thread>
 
-void threadFunction() {
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));  // simulate work
-  std::cout << "Finished work in thread\n";
+void publishTick() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  std::cout << "worker: tick published\n";
 }
 
 int main() {
-  // create thread
-  std::thread t(threadFunction);
+  std::thread publisher(publishTick);
 
-  // detach thread and continue with main
-  t.detach();
+  publisher.detach();  // we can never join() this thread again
 
-  // do something in main()
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));  // simulate work
-  std::cout << "Finished work in main\n";
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  std::cout << "main: done\n";
 
   return 0;
 }

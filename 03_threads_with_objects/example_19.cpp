@@ -1,25 +1,24 @@
+// Two equivalent ways to hand data to a thread, side by side: a variadic
+// argument versus a lambda capture. Both copy; pick whichever reads better.
 #include <iostream>
+#include <string>
 #include <thread>
 
-void printMessage(std::string message) {
-  std::this_thread::sleep_for(std::chrono::milliseconds(10));  // simulate work
-  std::cout << "Thread 1: " << message << std::endl;
+void report(std::string note) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  std::cout << "variadic form: " << note << '\n';
 }
 
 int main() {
-  // define message
-  std::string message = "My Message";
+  std::string note = "fill received";
 
-  // start thread using variadic templates
-  std::thread t1(printMessage, message);
+  std::thread t1(report, note);  // forwarded as a constructor argument
 
-  // start thread using a Lambda
-  std::thread t2([message] {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));  // simulate work
-    std::cout << "Thread 2: " << message << std::endl;
+  std::thread t2([note] {        // captured by the closure
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::cout << "lambda form:   " << note << '\n';
   });
 
-  // thread barrier
   t1.join();
   t2.join();
 

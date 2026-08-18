@@ -1,27 +1,37 @@
+// Closures before threads: what a lambda captures, and when it captures it.
+// No concurrency here yet -- get the capture rules straight first.
 #include <iostream>
 
 int main() {
-  int id = 0;  // Define an integer variable
+  int orderId = 0;
 
-  // capture by reference (immutable)
-  auto f0 = [&id]() { std::cout << "a) ID in Lambda = " << id << std::endl; };
+  // Capture by reference: reads orderId at CALL time, not at definition time.
+  auto showByRef = [&orderId] {
+    std::cout << "a) by-ref sees orderId = " << orderId << '\n';
+  };
 
-  // capture by value (mutable)
-  auto f1 = [id]() mutable { std::cout << "b) ID in Lambda = " << ++id << std::endl; };
-  f1();  // call the closure and execute the code witin the Lambda
-  std::cout << "c) ID in Main = " << id << std::endl;
+  // Capture by value + mutable: mutates the closure's own private copy.
+  auto bumpCopy = [orderId]() mutable {
+    std::cout << "b) inside copy      = " << ++orderId << '\n';
+  };
+  bumpCopy();
+  std::cout << "c) caller unchanged = " << orderId << '\n';
 
-  // capture by reference (mutable)
-  auto f2 = [&id]() mutable { std::cout << "d) ID in Lambda = " << ++id << std::endl; };
-  f2();
-  std::cout << "e) ID in Main = " << id << std::endl;
+  // Capture by reference: mutates the caller's variable for real.
+  auto bumpOriginal = [&orderId] {
+    std::cout << "d) inside by-ref    = " << ++orderId << '\n';
+  };
+  bumpOriginal();
+  std::cout << "e) caller changed   = " << orderId << '\n';
 
-  // pass parameter
-  auto f3 = [](const int id) { std::cout << "f) ID in Lambda = " << id << std::endl; };
-  f3(++id);
+  // No capture at all -- plain parameter passing.
+  auto showParam = [](int id) {
+    std::cout << "f) as parameter     = " << id << '\n';
+  };
+  showParam(++orderId);
 
-  // observe the effect of capturing by reference at an earlier point in time
-  f0();
+  // showByRef was defined when orderId was 0, but prints its value NOW.
+  showByRef();
 
   return 0;
 }

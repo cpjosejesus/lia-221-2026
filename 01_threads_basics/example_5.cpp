@@ -1,27 +1,27 @@
+// join() placed AFTER main's own work: both sides run concurrently and their
+// output interleaves unpredictably. Run it a few times -- the order changes.
 #include <iostream>
 #include <thread>
 
-void threadFunction() {
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));  // simulate work
-  std::cout << "Finished work 1 in thread\n";
+void settleTrade() {
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  std::cout << "worker: leg 1 settled\n";
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  std::cout << "Finished work 2 in thread\n";
+  std::cout << "worker: leg 2 settled\n";
 }
 
 int main() {
-  // create thread
-  std::thread t(threadFunction);
+  std::thread settler(settleTrade);
 
-  // do something in main()
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));  // simulate work
-  std::cout << "Finished work 1 in main\n";
+  // Main keeps working while the settler runs -- this is the concurrency.
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  std::cout << "main: order 1 acknowledged\n";
 
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  std::cout << "Finished work 2 in main\n";
+  std::cout << "main: order 2 acknowledged\n";
 
-  // wait for thread to finish
-  t.join();
+  settler.join();  // barrier: main waits here until the worker is done
 
   return 0;
 }
