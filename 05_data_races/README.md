@@ -1,0 +1,87 @@
+# 05 — Data Races and Object Copy/Move Semantics
+
+## Theory you need before reading the code
+
+### What is a data race?
+A **data race** occurs when:
+1. two or more threads access the **same memory location** concurrently,
+2. **at least one** access is a **write**, and
+3. there is **no synchronization** ordering those accesses.
+
+In C++ a data race is **undefined behavior** — not "you get one of two values,"
+but "the standard makes *no* guarantee at all." The program may print garbage,
+crash, corrupt data, or appear to work until it doesn't. Never reason about a
+racy program's output; fix the race (folder `06`).
+
+### Race condition vs. data race
+- A **data race** is the low-level UB above (unsynchronized concurrent memory
+  access). It is always a bug.
+- A **race condition** is a higher-level *logic* bug where correctness depends on
+  timing/ordering (e.g. "reader ran before writer"). You can have a race
+  condition even with perfectly synchronized, race-free memory.
+
+### Why copies quietly avoid some races
+Many of these examples pass an object **by value** into `std::async`/`std::thread`.
+Because the argument is *copied* into the task, the worker mutates its **own
+copy** — the original in `main` is a *different* object, so there is no shared
+memory and thus no data race (`example_27`, `example_28`). The lesson: **copying
+is one way to avoid sharing.** The cost is duplicated data and the fact that the
+worker's result never reaches `main` unless you send it back (futures, folder 04).
+
+### The rule of five (and why it matters here)
+When a class manages a resource (raw `new`/`delete`, a file, a socket), you
+usually must define/consider all five:
+- destructor
+- copy constructor, copy assignment
+- move constructor, move assignment
+
+If you only define some, the compiler-generated ones may do the **wrong** thing —
+e.g. a *shallow copy* of a raw pointer means two objects own the same memory and
+both try to `delete` it (double free), or one mutates the other's data.
+
+### Copy vs. move for owned resources
+- **Copy** should perform a **deep copy**: allocate new storage and duplicate the
+  contents so the two objects are independent.
+- **Move** transfers the pointer/handle and **nulls out the source**, leaving it
+  in a valid-but-empty state. Reading a moved-from object's resource is a bug
+  (`example_30` deliberately dereferences a moved-from `unique_ptr` → exception).
+
+### Smart pointers to express ownership
+- `std::unique_ptr<T>` — **exclusive** ownership, move-only. Automatically deletes
+  the resource. Using it as a member makes the move constructor almost free to
+  write correctly (`example_30`).
+- `std::shared_ptr<T>` — **shared** ownership, reference counted. Lets several
+  threads keep an object alive (`example_31`), but does **not** protect its
+  contents from concurrent writes — that still needs a mutex.
+
+### The classic non-atomic read-modify-write race
+`example_31` is the payoff. `pushBack` does:
+```cpp
+int oldNum = _tmpVehicles;   // READ
+sleep(...);                  // (window where another thread interleaves)
+_tmpVehicles = oldNum + 1;   // WRITE back a stale value
+```
+1000 threads each try to increment the counter, but because the read and write
+are **not atomic and not locked**, updates are **lost** — the final count is well
+below 1000. The `sleep` merely widens the window so the bug is reproducible every
+run. Folder `06` fixes exactly this with a mutex.
+
+## Files
+| File | What it demonstrates |
+|------|----------------------|
+| `example_27.cpp` | Passing a `Vehicle` **by value** to a task — worker mutates a copy, `main` is unaffected (no race). |
+| `example_28.cpp` | Same, but the object holds a raw `std::string*`; a *shallow* copy shares the pointer — watch which object's name changes. |
+| `example_29.cpp` | Adds explicit **copy** and **move** constructors; observe which is called and reading a moved-from object. |
+| `example_30.cpp` | Move constructor backed by `std::unique_ptr`; reading the moved-from source throws (dereferencing a null unique_ptr). |
+| `example_31.cpp` | **The data race**: 1000 concurrent unsynchronized increments lose updates; final count < 1000. |
+
+## Try it yourself
+- Run `example_31.cpp` several times — the final count varies and is always
+  wrong. Then compare with `06/example_32.cpp`, which adds a mutex and prints 1000.
+- In `example_28.cpp`, change the raw `std::string*` to a plain `std::string`
+  member and see the shallow-copy problem disappear.
+
+## Compiling
+```sh
+g++ -std=c++17 -pthread example_31.cpp -o example_31 && ./example_31
+```
