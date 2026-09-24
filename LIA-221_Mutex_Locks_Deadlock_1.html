@@ -1,0 +1,3285 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mutex, locks y deadlock · LIA-221</title>
+<style>
+:root{
+  --paper:#FFFFFF;
+  --ink:#000000;
+  --graphite:#6E6E73;
+  --rule:#D6D6D8;
+  --wash:#F2F2F3;
+  --code:#1E1E1E;
+  --thread:#FFFFBF;      /* hilos: amarillo de los diagramas originales */
+  --thread-line:#B8B24A;
+  --mutex:#C3C3FF;       /* mutex / recurso: lavanda de los diagramas */
+  --mutex-line:#6B6BD6;
+  --blocked:#D92D20;     /* flechas rojas: bloqueado */
+  --ok:#1F8A4C;
+  --sans:"Helvetica Neue",Helvetica,Arial,sans-serif;
+  --mono:Menlo,"SF Mono",Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#E9E9EB;overflow:hidden;font-family:var(--sans);color:var(--ink);-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+
+/* ---------- escenario 16:9 escalado ---------- */
+#stage{position:absolute;left:50%;top:50%;width:1280px;height:720px;transform-origin:0 0;background:var(--paper);box-shadow:0 10px 40px rgba(0,0,0,.12);overflow:hidden}
+.slide{position:absolute;inset:0;padding:54px 72px 64px;opacity:0;visibility:hidden;transition:opacity .35s ease, transform .35s ease;transform:translateX(18px)}
+.slide.active{opacity:1;visibility:visible;transform:none}
+.slide.past{transform:translateX(-18px)}
+
+/* ---------- tipografía ---------- */
+h1.cover{font-size:78px;font-weight:700;letter-spacing:-.02em;line-height:1.02}
+.cover-sub{font-size:30px;font-weight:700;margin-top:22px}
+.cover-foot{position:absolute;left:72px;bottom:58px;font-size:20px;font-weight:700}
+.cover-meta{position:absolute;left:72px;bottom:34px;font-size:13px;color:var(--graphite)}
+.divider h1.cover{margin-top:190px}
+h2{font-size:42px;font-weight:700;letter-spacing:-.015em;line-height:1.08;margin-bottom:26px;max-width:1080px}
+h3{font-size:21px;font-weight:700;margin-bottom:10px}
+p,li{font-size:20px;line-height:1.42}
+.lead{font-size:23px;line-height:1.4;max-width:1000px}
+.small{font-size:16px;line-height:1.4}
+.muted{color:var(--graphite)}
+.strong-foot{position:absolute;left:72px;right:72px;bottom:64px;font-size:20px;font-weight:700;line-height:1.3}
+ul.b{padding-left:24px}
+ul.b li{margin-bottom:11px}
+code,.mono{font-family:var(--mono);font-size:.9em}
+.big{font-size:104px;font-weight:700;letter-spacing:-.03em;line-height:1}
+
+/* pie de página: bloque + número */
+.pager{position:absolute;bottom:22px;left:72px;right:72px;display:flex;justify-content:space-between;font-size:13px;color:var(--graphite);pointer-events:none}
+
+/* ---------- rejillas ---------- */
+.cols{display:grid;gap:40px}
+.c2{grid-template-columns:1fr 1fr}
+.c3{grid-template-columns:1fr 1fr 1fr}
+.c4{grid-template-columns:repeat(4,1fr);gap:28px}
+.split{display:grid;grid-template-columns:1.25fr 1fr;gap:44px;align-items:start}
+.split.r{grid-template-columns:1fr 1.25fr}
+.num{font-size:58px;font-weight:700;line-height:1;margin-bottom:12px}
+
+/* ---------- código ---------- */
+pre.code{background:var(--code);color:#D4D4D4;border-radius:10px;padding:18px 22px;font-family:var(--mono);font-size:15px;line-height:1.5;overflow:hidden;white-space:pre;tab-size:4}
+pre.code.sm{font-size:13px;line-height:1.45}
+pre.code.xs{font-size:12px;line-height:1.42}
+pre.code .ln{display:block;border-radius:3px;margin:0 -8px;padding:0 8px;transition:background .25s}
+pre.code .ln.hl{background:rgba(255,255,160,.16)}
+pre.code .ln.hl-red{background:rgba(217,45,32,.35)}
+pre.code .ln.hl-green{background:rgba(31,138,76,.35)}
+.tk-kw{color:#C586C0}.tk-ty{color:#569CD6}.tk-std{color:#4EC9B0}.tk-str{color:#CE9178}
+.tk-com{color:#6A9955}.tk-num{color:#B5CEA8}.tk-pre{color:#C586C0}.tk-fn{color:#DCDCAA}.tk-var{color:#9CDCFE}
+
+.term{background:var(--code);color:#D4D4D4;border-radius:10px;padding:14px 20px;font-family:var(--mono);font-size:14px;line-height:1.5;white-space:pre-wrap;min-height:48px}
+.term .err{color:#FF8A80}.term .okc{color:#8FE3A8}.term .dim{color:#8A8A8E}
+
+/* ---------- tablas ---------- */
+table.t{border-collapse:collapse;width:100%;font-size:19px}
+table.t th,table.t td{border:1px solid var(--rule);padding:8px 12px;text-align:left;vertical-align:middle;line-height:1.3}
+table.t th{background:var(--wash);font-weight:700;font-size:16px}
+table.t tr{transition:background .25s,opacity .25s}
+table.t.stepper tbody tr{opacity:.28}
+table.t.stepper tbody tr.seen{opacity:1}
+table.t.stepper tbody tr.now{background:#FFFBD6}
+
+/* ---------- controles ---------- */
+.ctrl{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{border:1.5px solid var(--ink);background:var(--paper);border-radius:999px;padding:7px 16px;font-size:15px;font-weight:700;cursor:pointer;transition:background .15s,color .15s}
+.btn:hover{background:var(--wash)}
+.btn.on{background:var(--ink);color:var(--paper)}
+.btn:focus-visible,.seg button:focus-visible,input:focus-visible{outline:3px solid var(--mutex-line);outline-offset:2px}
+.seg{display:inline-flex;border:1.5px solid var(--ink);border-radius:999px;overflow:hidden}
+.seg button{border:0;background:var(--paper);padding:7px 14px;font-size:14px;font-weight:700;cursor:pointer}
+.seg button+button{border-left:1.5px solid var(--ink)}
+.seg button.on{background:var(--ink);color:var(--paper)}
+.slider{display:grid;grid-template-columns:210px 1fr 70px;gap:12px;align-items:center;font-size:15px;margin-bottom:10px}
+.slider input{width:100%;accent-color:#000}
+.slider output{font-family:var(--mono);font-size:14px;text-align:right}
+label.chk{font-size:15px;display:inline-flex;gap:8px;align-items:center;cursor:pointer}
+
+/* ---------- piezas comunes: hilos, mutex ---------- */
+.chip{display:inline-flex;align-items:center;justify-content:center;border:1.5px solid var(--thread-line);background:var(--thread);border-radius:10px;padding:6px 10px;font-size:14px;font-weight:700;min-width:64px;transition:all .25s}
+.chip.wait{border-color:var(--blocked);background:#FDECEA;color:var(--blocked)}
+.chip.run{border-color:var(--mutex-line);background:var(--mutex)}
+.chip.done{opacity:.35}
+.chip.stuck{border-color:var(--blocked);background:var(--blocked);color:#fff}
+.mutexbox{border:2px solid var(--mutex-line);background:var(--mutex);border-radius:12px;padding:10px 16px;font-weight:700;font-size:17px;display:inline-flex;gap:10px;align-items:center;transition:all .3s}
+.mutexbox.free{background:#fff;border-style:dashed}
+.mutexbox.stuck{background:var(--blocked);border-color:var(--blocked);color:#fff}
+.lamp{width:14px;height:14px;border-radius:50%;background:var(--ok);display:inline-block;transition:background .25s}
+.lamp.taken{background:var(--blocked)}
+
+.card{border:1.5px solid var(--rule);border-radius:12px;padding:16px 18px}
+.reveal-a{color:var(--graphite);font-size:16px;margin-top:6px;display:none}
+.reveal-a.show{display:block;color:var(--ink)}
+.q{cursor:pointer;padding:10px 0;border-bottom:1px solid var(--rule)}
+.q:last-child{border-bottom:0}
+.q strong{font-size:18px}
+
+/* barras */
+#raceBars .bar{max-width:72px}
+.bars{display:flex;align-items:flex-end;gap:14px;height:170px;border-bottom:1.5px solid var(--ink)}
+.bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.bar i{display:block;width:100%;background:var(--mutex);border:1.5px solid var(--mutex-line);border-bottom:0;border-radius:6px 6px 0 0;height:0;transition:height .6s cubic-bezier(.2,.8,.2,1)}
+.bar.fail i{background:#F6C9C4;border-color:var(--blocked)}
+.bar b{font-size:14px;margin-bottom:4px}
+.barlab{display:flex;gap:14px;font-size:13px;color:var(--graphite);margin-top:6px}
+.barlab span{flex:1;text-align:center}
+
+/* gantt */
+.gantt{position:relative;border-left:1.5px solid var(--ink)}
+.glane{position:relative;height:26px;margin:6px 0}
+.glane .gname{position:absolute;left:-96px;width:88px;text-align:right;font-size:13px;font-weight:700;top:4px}
+.gseg{position:absolute;top:0;height:26px;border-radius:4px;transform-origin:left;transform:scaleX(0);transition:transform .35s ease}
+.gseg.show{transform:scaleX(1)}
+.gseg.crit{background:var(--mutex);border:1.5px solid var(--mutex-line)}
+.gseg.free{background:var(--wash);border:1.5px solid #B9B9BD}
+.gseg.wait{background:repeating-linear-gradient(135deg,#FDECEA 0 6px,#F7C7C2 6px 12px);border:1.5px solid #E7A39C}
+.legend{display:flex;gap:18px;font-size:14px;align-items:center}
+.legend i{display:inline-block;width:22px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:6px}
+
+/* ---------- SVG diagramas ---------- */
+svg text{font-family:var(--sans)}
+.n-thread rect{fill:var(--thread);stroke:#000;stroke-width:1.5}
+.n-mutex rect{fill:var(--mutex);stroke:#000;stroke-width:1.5;transition:fill .3s}
+.n-mutex.taken rect{fill:#9E9EF5}
+.n-var rect{fill:var(--thread);stroke:#000;stroke-width:1.5}
+.edge{stroke:#000;stroke-width:4;fill:none;transition:stroke .3s,opacity .3s}
+.edge.red{stroke:var(--blocked)}
+.edge.off{opacity:.12}
+.elabel{font-size:17px;transition:opacity .3s}
+.elabel.off{opacity:.15}
+.pulse{animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* ---------- navegación ---------- */
+#progress{position:fixed;left:0;bottom:0;height:4px;background:#000;width:0;transition:width .3s;z-index:5}
+#hint{position:fixed;right:14px;top:10px;font-size:12px;color:#6E6E73;z-index:5;transition:opacity .6s}
+#hint.gone{opacity:0}
+#index{position:fixed;inset:0;background:rgba(255,255,255,.97);z-index:10;display:none;padding:40px 56px;overflow:auto}
+#index.open{display:block}
+#index h2{margin-bottom:18px}
+#index ol{columns:3;column-gap:40px;padding-left:28px}
+#index li{font-size:16px;margin-bottom:6px;cursor:pointer;break-inside:avoid}
+#index li:hover{text-decoration:underline}
+#index li.cur{font-weight:700}
+.notes{display:none}
+#notesPane{position:fixed;left:0;right:0;bottom:4px;background:#000;color:#fff;font-size:15px;line-height:1.45;padding:12px 20px;z-index:6;display:none;max-height:30vh;overflow:auto}
+#notesPane.open{display:block}
+
+
+/* ---------- variables de condición ---------- */
+#ilTable tbody tr.now{background:#FFFBD6}
+#ilTable tbody tr:hover{background:#F7F7F8}
+.cvbox{border:2px solid var(--mutex-line);background:var(--mutex);border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:18px}
+
+/* ---------- monitor ---------- */
+.mon{display:grid;grid-template-columns:120px 1fr;gap:26px;align-items:center}
+.mon-clients{display:flex;flex-direction:column;gap:12px}
+.mon-clients .chip{width:100%}
+.mon-obj{border:2px solid #000;border-radius:16px;padding:16px 18px;background:#fff}
+.mon-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:19px;margin-bottom:14px}
+.mon-method{display:flex;justify-content:space-between;align-items:center;border:1.5px solid var(--rule);border-radius:10px;padding:10px 12px;margin-bottom:10px;min-height:48px;transition:background .25s,border-color .25s}
+.mon-method code{font-size:15px}
+.mon-method.active{background:var(--mutex);border-color:var(--mutex-line)}
+.mon-inside{font-size:14px;font-weight:700}
+.mon-vec-label{font-family:var(--mono);font-size:13px;color:var(--graphite);margin:14px 0 6px}
+.mon-vec{display:flex;gap:6px;min-height:44px;align-items:center;border:1.5px dashed #B9B9BD;border-radius:10px;padding:6px;flex-wrap:wrap}
+.slot{min-width:46px;height:30px;border:1.5px solid var(--thread-line);background:var(--thread);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;animation:slotIn .3s ease}
+.slot.flash{background:var(--mutex);border-color:var(--mutex-line)}
+.slot.out{animation:slotOut .3s ease forwards}
+@keyframes slotIn{from{transform:translateY(-10px);opacity:0}}
+@keyframes slotOut{to{transform:translateY(10px);opacity:0}}
+.chip.sleep{background:var(--wash);border-color:#B9B9BD;color:var(--graphite)}
+.cmp-row{margin-bottom:30px}
+.cmp-row h3{margin-bottom:8px}
+.cmp-track{position:relative;height:64px;border-left:1.5px solid #000;border-bottom:1.5px solid #000;margin:0 0 8px 70px}
+.cmp-track .lab{position:absolute;left:-70px;width:62px;text-align:right;font-size:13px;font-weight:700}
+.cmp-track .blk{position:absolute;height:22px;border-radius:4px}
+.cpu{height:14px;border:1.5px solid #000;border-radius:7px;overflow:hidden;margin:6px 0 4px}
+.cpu i{display:block;height:100%;width:0;background:var(--blocked);transition:width .3s}
+.gantt.mini .glane{height:20px;margin:4px 0}
+.gantt.mini .gseg{height:20px;transform:none;transition:none}
+.gantt.mini .gname{font-size:12px;top:2px}
+.playhead{position:absolute;top:0;bottom:18px;width:2px;background:#000;left:0}
+.ctline{position:relative;height:300px;border-left:1.5px solid #000;border-bottom:1.5px solid #000;margin-left:80px}
+.ctline .lab{position:absolute;left:-80px;width:72px;text-align:right;font-size:13px;font-weight:700}
+.ctline .dot{position:absolute;width:14px;height:14px;border-radius:50%;margin:-7px 0 0 -7px;border:1.5px solid var(--mutex-line);background:var(--mutex);transition:left .4s}
+.ctline .dot.left{background:var(--blocked);border-color:var(--blocked)}
+.ctline .tick{position:absolute;width:2px;height:18px;background:#000;margin-left:-1px}
+.ctline .brk{position:absolute;top:0;bottom:0;width:2px;background:var(--blocked)}
+.ctline .zone{position:absolute;height:22px;border-radius:4px}
+.ctline .ax{position:absolute;bottom:-20px;font-size:12px;color:var(--graphite);transform:translateX(-50%);white-space:nowrap}
+
+@media (prefers-reduced-motion: reduce){
+  .slot{animation:none!important}
+  .slide,.gseg,.bar i,table.t tr,.edge{transition:none!important}
+  .pulse{animation:none}
+}
+</style>
+</head>
+<body>
+<div id="stage">
+
+<!-- ============ 1 · PORTADA ============ -->
+<section class="slide" data-title="Portada" data-block="">
+  <div style="margin-top:118px">
+    <h1 class="cover">Mutex, locks<br>y deadlock</h1>
+    <div class="cover-sub">Proteger datos compartidos entre hilos en C++</div>
+  </div>
+  <svg id="heroLanes" viewBox="0 0 520 260" style="position:absolute;right:64px;top:150px;width:470px" aria-label="Dos hilos que se turnan un mutex">
+    <text x="0" y="46" font-size="16" font-weight="700">Hilo 1</text>
+    <text x="0" y="176" font-size="16" font-weight="700">Hilo 2</text>
+    <line x1="70" y1="40" x2="510" y2="40" stroke="#D6D6D8" stroke-width="2"/>
+    <line x1="70" y1="170" x2="510" y2="170" stroke="#D6D6D8" stroke-width="2"/>
+    <g id="heroSegs"></g>
+    <g id="heroToken" style="transition:transform .5s cubic-bezier(.3,.8,.2,1)">
+      <rect x="-34" y="-17" width="68" height="34" rx="9" fill="#C3C3FF" stroke="#000" stroke-width="1.5"/>
+      <text x="0" y="5" text-anchor="middle" font-size="13" font-weight="700">mutex</text>
+    </g>
+  </svg>
+  <div class="cover-foot">Jose Jesus CP</div>
+  <div class="cover-meta">LIA-221 Computación Concurrente, Paralela y Distribuida</div>
+  <aside class="notes">Navegación: flechas o espacio. M abre el índice, F pantalla completa, N muestra estas notas.</aside>
+</section>
+
+<!-- ============ 2 · DÓNDE ESTAMOS ============ -->
+<section class="slide" data-title="Del canal de un solo uso al canal estable" data-block="Introducción">
+  <h2>Del canal de un solo uso al canal estable</h2>
+  <div class="cols c3" style="margin-top:34px">
+    <div><h3>Hasta ahora</h3><p>promise y future: el hilo padre entrega una promesa y el trabajador devuelve un resultado.</p><p style="margin-top:12px">Es un canal de un solo uso. Se abre, se usa una vez y se cierra.</p></div>
+    <div><h3>Lo que aprendimos</h3><p>Para evitar carreras de datos había dos caminos: no compartir datos, o compartirlos solo para lectura.</p><p style="margin-top:12px">Ninguno sirve cuando varios hilos necesitan <b>modificar</b> el mismo dato.</p></div>
+    <div><h3>Hoy</h3><p>Un canal estable que permite compartir y mutar.</p><p style="margin-top:12px">La pieza que lo hace posible es el mutex. Las herramientas para no usarlo mal son los locks.</p></div>
+  </div>
+  <div class="strong-foot">Todo lo de hoy ocurre en CPU. Es la base para entender por qué la GPU se programa de otra manera.</div>
+</section>
+
+<!-- ============ 3 · AGENDA ============ -->
+<section class="slide" data-title="Cómo va a ser la clase" data-block="Introducción">
+  <h2>Cómo va a ser la clase</h2>
+  <table class="t" style="margin-top:0;font-size:17px">
+    <thead><tr><th style="width:70px">Bloque</th><th>Qué vemos</th><th style="width:300px">Código</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Exclusión mutua: el protocolo de turnos</td><td>Diagrama animado</td></tr>
+      <tr><td>2</td><td>Una carrera de datos provocada a propósito</td><td>WaitingVehicles</td></tr>
+      <tr><td>3</td><td>Proteger con std::mutex · Ejercicio 1 con timed_mutex</td><td>try_lock_for</td></tr>
+      <tr><td>4</td><td>Deadlock 1: el cerrojo que nunca se libera · Ejercicio 2</td><td>divideByNumber</td></tr>
+      <tr><td>5</td><td>Deadlock 2: espera circular entre dos mutex</td><td>ThreadA y ThreadB</td></tr>
+      <tr><td>6</td><td>Locks: lock_guard, unique_lock y std::lock · Ejercicio 3</td><td>RAII, adopt_lock</td></tr>
+      <tr><td>7</td><td>El patrón monitor: sondeo · Ejercicio 4</td><td>dataIsAvailable, popBack</td></tr>
+      <tr><td>8</td><td>Cola de mensajes: variables de condición · Ejercicio 5</td><td>wait, notify_one, MessageQueue</td></tr>
+      <tr><td>9</td><td>Las cuatro condiciones y por qué importa en IA</td><td>scoped_lock</td></tr>
+    </tbody>
+  </table>
+  <p class="small muted" style="margin-top:18px">Las diapositivas con botones son simulaciones. Los números que muestran salen de un modelo simplificado, no de ejecutar C++.</p>
+</section>
+
+<!-- ============ BLOQUE 1 ============ -->
+<section class="slide divider" data-title="Exclusión mutua" data-block="1 · Exclusión mutua">
+  <h1 class="cover">Exclusión mutua</h1>
+  <div class="cover-sub">La entidad mutex</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="Tomar turnos, como en una radio" data-block="1 · Exclusión mutua">
+  <h2>Tomar turnos, como en una radio</h2>
+  <p class="lead">Quien transmite por radio dice «cambio» para ceder el canal. Emisor y receptor nunca hablan a la vez: se turnan.</p>
+  <div style="font-size:64px;font-weight:700;letter-spacing:-.02em;margin:30px 0 30px"><span style="text-decoration:underline;text-decoration-thickness:4px">MU</span>tual <span style="text-decoration:underline;text-decoration-thickness:4px">EX</span>clusion</div>
+  <div class="cols c2">
+    <div><h3>La observación clave</h3><p>Una carrera de datos exige acceso <b>simultáneo</b> de dos hilos. Si un solo hilo a la vez accede a una posición de memoria, la carrera no puede ocurrir.</p></div>
+    <div><h3>Lo que el mutex no es</h3><p>No resuelve la carrera por sí solo. Habilita un protocolo que el programador tiene que implementar y respetar en <b>todos</b> los accesos.</p></div>
+  </div>
+</section>
+
+<section class="slide" data-title="El protocolo: lock, sección crítica, unlock" data-block="1 · Exclusión mutua" data-init="protocol">
+  <h2>El protocolo: lock, sección crítica, unlock</h2>
+  <div class="split r" style="align-items:center">
+    <div>
+      <table class="t stepper" id="protoSteps" style="font-size:16px">
+        <tbody>
+          <tr><td style="width:36px">1</td><td>El Hilo 1 bloquea el mutex y queda «bajo el cerrojo».</td></tr>
+          <tr><td>2</td><td>Accede a la variable compartida: esa es la sección crítica.</td></tr>
+          <tr><td>3</td><td>El Hilo 2 intenta el lock, no lo consigue y el sistema lo suspende.</td></tr>
+          <tr><td>4</td><td>El Hilo 1 termina y libera con unlock.</td></tr>
+          <tr><td>5</td><td>El Hilo 2 despierta, toma el cerrojo y accede.</td></tr>
+        </tbody>
+      </table>
+      <div class="ctrl" style="margin-top:18px">
+        <button class="btn" data-act="step">Siguiente paso</button>
+        <button class="btn" data-act="play">Reproducir</button>
+        <button class="btn" data-act="reset">Reiniciar</button>
+      </div>
+    </div>
+    <svg viewBox="0 0 620 470" style="width:100%" id="protoSvg">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#000"/></marker>
+        <marker id="ahr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#D92D20"/></marker>
+      </defs>
+      <g class="n-var"><rect x="210" y="20" width="200" height="60" rx="12"/><text x="310" y="57" text-anchor="middle" font-size="19">shared variable</text></g>
+      <path id="pAccess" class="edge off" d="M310 180 L310 92" marker-end="url(#ah)"/>
+      <text id="pAccessL" class="elabel off" x="324" y="140" font-size="17">access</text>
+      <g class="n-mutex" id="pMutex"><rect x="210" y="180" width="200" height="60" rx="12"/><text x="310" y="217" text-anchor="middle" font-size="19" id="pMutexT">mutex</text></g>
+      <path id="p1" class="edge off" d="M110 390 L110 210 L198 210" marker-end="url(#ah)"/>
+      <text id="p1L" class="elabel off" x="20" y="300" font-size="17">under the lock</text>
+      <path id="p2" class="edge off" d="M510 390 L510 210 L424 210" marker-end="url(#ahr)"/>
+      <text id="p2L" class="elabel off" x="520" y="300" font-size="17">is blocked</text>
+      <g class="n-thread"><rect x="10" y="390" width="200" height="60" rx="12"/><text x="110" y="427" text-anchor="middle" font-size="19">Thread 1</text></g>
+      <g class="n-thread"><rect x="410" y="390" width="200" height="60" rx="12"/><text x="510" y="427" text-anchor="middle" font-size="19">Thread 2</text></g>
+    </svg>
+  </div>
+  <aside class="notes">Diagrama original redibujado en SVG. Con muchos hilos, solo uno gana; los demás esperan como autos ante un semáforo en rojo.</aside>
+</section>
+
+<section class="slide" data-title="Tres ideas que se olvidan" data-block="1 · Exclusión mutua">
+  <h2>Tres ideas que se olvidan en la práctica</h2>
+  <div class="cols c3" style="margin-top:20px">
+    <div><div class="num">1</div><h3>Leer también bloquea</h3><p>Una lectura sin lock mientras otro hilo escribe bajo el lock sigue siendo una carrera de datos.</p></div>
+    <div><div class="num">2</div><h3>Un mutex por dato</h3><p>Proteger un dato con el mutex A en una función y con el B en otra no protege nada. ¿Qué mutex guarda <b>esta</b> memoria?</p></div>
+    <div><div class="num">3</div><h3>Todos los accesos</h3><p>Basta un acceso fuera del protocolo para volver a tener carreras. Ni el mutex ni el compilador avisan.</p></div>
+  </div>
+  <div class="strong-foot">El mutex es una convención entre hilos. Funciona solo si todos la cumplen.</div>
+</section>
+
+<!-- ============ BLOQUE 2 ============ -->
+<section class="slide divider" data-title="Una carrera de datos a propósito" data-block="2 · Carrera de datos">
+  <h1 class="cover">Una carrera de datos<br>a propósito</h1>
+  <div class="cover-sub">El ejemplo de la cola de vehículos</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="Vehicle y WaitingVehicles" data-block="2 · Carrera de datos">
+  <h2>El código: Vehicle y WaitingVehicles</h2>
+  <div class="split">
+    <pre class="code xs" data-src="raceClasses"></pre>
+    <ul class="b" style="margin-top:6px">
+      <li>Vehicle tiene un único dato: <code>int _id</code>.</li>
+      <li>WaitingVehicles debería guardar vehículos en un vector.</li>
+      <li>El vehículo entra por referencia rvalue y se mueve.</li>
+      <li><code>push_back</code> está comentado: con la carrera, el programa se caería.</li>
+      <li><code>_tmpVehicles</code> cuenta las llamadas para exponer la carrera sin que el programa falle.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" data-title="main: mil tareas sobre la misma cola" data-block="2 · Carrera de datos">
+  <h2>main: mil tareas sobre la misma cola</h2>
+  <pre class="code" data-src="raceMain"></pre>
+  <p class="lead" style="margin-top:22px">Mil tareas con std::async comparten el mismo objeto a través de un shared_ptr y llaman a pushBack. Al final se esperan los futures y se imprime el contador.</p>
+  <aside class="notes">Para compilar en casa: std::for_each necesita &lt;algorithm&gt; y shared_ptr pertenece a &lt;memory&gt;. Muchos compiladores los incluyen de forma transitiva, pero no es portable.</aside>
+</section>
+
+<section class="slide" data-title="Mismo código, distintos lanzamientos" data-block="2 · Carrera de datos" data-init="race">
+  <h2>Mismo código, distintos lanzamientos</h2>
+  <div class="split" style="grid-template-columns:1fr 1fr;align-items:start">
+    <div>
+      <div class="seg" id="raceMode" role="group" aria-label="Política de lanzamiento">
+        <button data-m="deferred" class="on">deferred</button>
+        <button data-m="async">async</button>
+        <button data-m="nosleep">async sin sleep</button>
+        <button data-m="mutex">async + mutex</button>
+      </div>
+      <div class="big" id="raceNum" style="margin-top:34px">0</div>
+      <p class="muted" style="margin-top:6px">#vehicles al final</p>
+      <p id="raceTxt" style="margin-top:18px;min-height:90px"></p>
+      <div class="ctrl" style="margin-top:8px"><button class="btn" id="raceRun">Ejecutar de nuevo</button></div>
+    </div>
+    <div>
+      <h3>Últimas 10 ejecuciones</h3>
+      <div class="bars" id="raceBars" style="height:210px"></div>
+      <p class="small muted" style="margin-top:10px">Cada barra muestra cuántos de los 1000 vehículos se contaron. La escala empieza en 900 para que se vean las pérdidas.</p>
+      <div class="term" id="raceTerm" style="margin-top:14px"></div>
+    </div>
+  </div>
+  <aside class="notes">Simulación de intercalaciones, no ejecución real. En la sesión original, deferred dio 1000 y async dio 992. Aclarar que la captura del código tenía launch::async; la salida de 1000 corresponde a cambiar esa línea por launch::deferred.</aside>
+</section>
+
+<section class="slide" data-title="Dónde ocurre: leer, esperar, escribir" data-block="2 · Carrera de datos" data-init="stepper">
+  <h2>Dónde ocurre: leer, esperar, escribir</h2>
+  <div class="split" style="grid-template-columns:1.05fr 1fr">
+    <pre class="code sm" data-src="racePush"></pre>
+    <div>
+      <table class="t stepper" style="font-size:16px">
+        <thead><tr><th>Paso</th><th>Hilo A</th><th>Hilo B</th><th>_tmpVehicles</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>oldNum = 5</td><td>—</td><td>5</td></tr>
+          <tr><td>2</td><td>sleep_for</td><td>oldNum = 5</td><td>5</td></tr>
+          <tr><td>3</td><td>_tmpVehicles = 6</td><td>sleep_for</td><td>6</td></tr>
+          <tr><td>4</td><td>—</td><td>_tmpVehicles = 6</td><td>6</td></tr>
+        </tbody>
+      </table>
+      <div class="ctrl" style="margin-top:16px"><button class="btn" data-act="step">Siguiente paso</button><button class="btn" data-act="reset">Reiniciar</button></div>
+      <p class="stepper-end" style="margin-top:18px;font-weight:700;opacity:0;transition:opacity .3s">Dos llamadas a pushBack, un solo incremento. El valor viejo que escribe B borra el trabajo de A.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="«Casi siempre funciona» no es correcto" data-block="2 · Carrera de datos">
+  <h2>«Casi siempre funciona» no es correcto</h2>
+  <div class="cols c3" style="margin-top:22px">
+    <div><h3>Sin sleep_for</h3><p>La ventana entre leer y escribir es de nanosegundos. Casi todas las ejecuciones imprimen 1000.</p><p style="margin-top:12px">De vez en cuando el planificador interrumpe justo ahí, y el bug aparece.</p></div>
+    <div><h3>Con sleep_for</h3><p>La pausa agranda la ventana. Mientras un hilo duerme, otros escriben, y sus escrituras se pierden al despertar.</p><p style="margin-top:12px">El bug deja de ser raro y se vuelve reproducible.</p></div>
+    <div><h3>Consejo práctico</h3><p>En pruebas y depuración, un retardo deliberado en las zonas sospechosas expone muchos errores de concurrencia.</p><p style="margin-top:12px">Se quitan antes de entregar.</p></div>
+  </div>
+  <div class="strong-foot">Un test que pasa 99 veces de 100 no demuestra nada sobre un programa concurrente.</div>
+</section>
+
+<!-- ============ BLOQUE 3 ============ -->
+<section class="slide divider" data-title="Proteger con mutex" data-block="3 · std::mutex">
+  <h1 class="cover">Proteger con mutex</h1>
+  <div class="cover-sub">std::mutex y sus variantes</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="Usar un mutex en cuatro pasos" data-block="3 · std::mutex">
+  <h2>Usar un mutex en cuatro pasos</h2>
+  <div class="cols c4" style="margin-top:20px">
+    <div><div class="num">1</div><h3>Incluir</h3><pre class="code sm">#include &lt;mutex&gt;</pre><p class="small muted" style="margin-top:10px">El mismo encabezado trae timed_mutex, lock_guard, unique_lock y scoped_lock.</p></div>
+    <div><div class="num">2</div><h3>Crear</h3><pre class="code sm">std::mutex _mutex;</pre><p class="small muted" style="margin-top:10px">Como miembro privado de la clase que guarda el dato.</p></div>
+    <div><div class="num">3</div><h3>Bloquear</h3><pre class="code sm">_mutex.lock();</pre><p class="small muted" style="margin-top:10px">Antes de la primera lectura o escritura del dato protegido.</p></div>
+    <div><div class="num">4</div><h3>Liberar</h3><pre class="code sm">_mutex.unlock();</pre><p class="small muted" style="margin-top:10px">En cuanto termina la operación; ni antes ni mucho después.</p></div>
+  </div>
+  <div class="strong-foot">Así de simple es la API. Lo difícil es decidir qué proteger y por cuánto tiempo.</div>
+</section>
+
+<section class="slide" data-title="WaitingVehicles con mutex" data-block="3 · std::mutex">
+  <h2>WaitingVehicles con mutex</h2>
+  <div class="split">
+    <pre class="code sm" data-src="mutexClass" data-hl="6,8,12,14,18"></pre>
+    <div>
+      <h3>pushBack</h3>
+      <p>Bloquea antes de emplace_back y libera después. Ahora el vector real se usa sin riesgo.</p>
+      <h3 style="margin-top:22px">printSize también bloquea</h3>
+      <p>Por dos razones: evitar una carrera entre <code>size()</code> y una escritura simultánea, y reservar la consola para que otro hilo no mezcle su salida.</p>
+      <p style="margin-top:22px;font-weight:700">Resultado: 1000 vehículos, en todas las ejecuciones.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Los cuatro tipos de mutex" data-block="3 · std::mutex">
+  <h2>Los cuatro tipos de mutex</h2>
+  <table class="t">
+    <thead><tr><th style="width:250px">Tipo</th><th>Qué agrega</th><th style="width:300px">Cuándo se usa</th></tr></thead>
+    <tbody>
+      <tr><td><code><b>mutex</b></code></td><td>lock(), unlock() y try_lock(), que retorna de inmediato si el mutex no está libre</td><td>El caso general</td></tr>
+      <tr><td><code><b>recursive_mutex</b></code></td><td>El mismo hilo puede adquirirlo varias veces; debe liberarlo igual número de veces</td><td>Funciones que se llaman entre sí bajo el cerrojo</td></tr>
+      <tr><td><code><b>timed_mutex</b></code></td><td>try_lock_for(duración) y try_lock_until(instante): intenta durante un tiempo y se rinde</td><td>Cuando esperar indefinidamente no es aceptable</td></tr>
+      <tr><td><code><b>recursive_timed_mutex</b></code></td><td>Combinación de los dos anteriores</td><td>Recursión con límite de espera</td></tr>
+    </tbody>
+  </table>
+  <div class="strong-foot">recursive_mutex suele ser síntoma de un diseño que conviene revisar antes de usarlo.</div>
+</section>
+
+<section class="slide" data-title="Ejercicio 1 · timed_mutex con reintentos" data-block="3 · std::mutex">
+  <h2>Ejercicio 1 · timed_mutex con reintentos</h2>
+  <p class="muted" style="margin:-12px 0 20px">Individual, sobre example_2.cpp</p>
+  <ul class="b">
+    <li>Reemplacen <code>std::mutex</code> por <code>std::timed_mutex</code>.</li>
+    <li>En pushBack, usen <code>try_lock_for</code> en lugar de lock, hasta que tenga éxito o se alcance un máximo de intentos (por ejemplo, 3).</li>
+    <li>Si un intento falla, impriman un error con el id del vehículo y duerman el hilo antes de reintentar.</li>
+    <li>Para exponer los problemas de tiempo, agreguen un <code>sleep_for</code> de varios milisegundos antes de liberar el cerrojo.</li>
+    <li>Experimenten con los tiempos y registren cuántos vehículos quedan en el vector.</li>
+  </ul>
+  <p class="small muted" style="margin-top:14px">Van a necesitar un getter getID() en Vehicle para imprimir el id.</p>
+</section>
+
+<section class="slide" data-title="Ejercicio 1 · Una solución" data-block="3 · std::mutex" data-init="questions">
+  <h2>Ejercicio 1 · Una solución</h2>
+  <div class="split" style="grid-template-columns:1.35fr 1fr">
+    <pre class="code sm" data-src="timedSolution"></pre>
+    <div>
+      <h3>Tres preguntas <span class="small muted" style="font-weight:400">(clic para ver la respuesta)</span></h3>
+      <div class="q"><strong>¿Por qué es seguro usar v.getID() en el else, si v se mueve en el if?</strong><div class="reveal-a">El move solo ocurre en la rama que tuvo éxito, y después se sale con break.</div></div>
+      <div class="q"><strong>Si los tres intentos fallan, ¿qué le pasa al vehículo?</strong><div class="reveal-a">Se pierde en silencio: el vector termina con menos de 1000.</div></div>
+      <div class="q"><strong>Los mensajes de error, ¿están protegidos?</strong><div class="reveal-a">No. El cout del else corre sin el cerrojo, así que los mensajes pueden mezclarse.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Experimento: mover los tiempos" data-block="3 · std::mutex" data-init="timed">
+  <h2>Experimento: mover los tiempos</h2>
+  <div class="split" style="grid-template-columns:1fr 1fr;gap:56px">
+    <div>
+      <div class="slider"><span>sleep_for antes del unlock</span><input type="range" id="tmHold" min="0" max="20" step="1" value="10"><output>10 ms</output></div>
+      <div class="slider"><span>timeout de try_lock_for</span><input type="range" id="tmTimeout" min="10" max="300" step="10" value="100"><output>100 ms</output></div>
+      <div class="slider"><span>pausa entre intentos</span><input type="range" id="tmBack" min="0" max="300" step="10" value="100"><output>100 ms</output></div>
+      <div class="slider"><span>intentos máximos</span><input type="range" id="tmTries" min="1" max="6" step="1" value="3"><output>3</output></div>
+      <div class="big" id="tmNum" style="margin-top:22px;font-size:88px">0</div>
+      <p class="muted">vehículos de 1000 terminan en el vector</p>
+      <p id="tmTime" class="small" style="margin-top:8px"></p>
+    </div>
+    <div>
+      <h3>¿En qué intento entró cada vehículo?</h3>
+      <div class="bars" id="tmBars"></div>
+      <div class="barlab" id="tmLabs"></div>
+      <p class="small muted" style="margin-top:18px">Modelo: 1000 hilos arrancan casi a la vez y el mutex atiende en orden de llegada. Un mutex real no garantiza ese orden, así que en su máquina los números cambian, pero la tendencia es la misma.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BLOQUE 4 ============ -->
+<section class="slide divider" data-title="Deadlock 1" data-block="4 · Deadlock 1">
+  <h1 class="cover">Deadlock 1</h1>
+  <div class="cover-sub">El cerrojo que nunca se libera</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="¿Una excepción bajo el cerrojo?" data-block="4 · Deadlock 1">
+  <h2>¿Una excepción bajo el cerrojo?</h2>
+  <div class="split">
+    <pre class="code sm" data-src="divOriginal"></pre>
+    <div>
+      <p class="lead" style="font-size:21px">Si una excepción salta entre lock y unlock, el unlock nunca se ejecuta.</p>
+      <p style="margin-top:16px">El mutex queda bloqueado para siempre y ningún otro hilo puede liberarlo. El programa, casi con seguridad, se congela.</p>
+      <p class="muted" style="margin-top:22px">En el ejemplo, once tareas dividen 50.0 por un denominador entre −5 y +5. Si es cero se lanza invalid_argument, se captura, se imprime y la función retorna.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Todavía sin mutex: la salida es un caos" data-block="4 · Deadlock 1">
+  <h2>Todavía sin mutex: la salida es un caos</h2>
+  <div class="term" style="font-size:14px">12.5
+
+for denom = for denom = for denom = -1-5-2, the result is , the result is for denom = , the result is for denom
+ = 1Exception from thread: Division by zero!, the result is for denom = -3, the result is -4, the result is
+12.512.5
+12.5
+12.512.5
+for denom = 2, the result is for denom = 5, the result is 10
+10
+for denom = 3, the result is for denom = 10
+4, the result is 10
+<span class="dim">Process exited with code 0.</span></div>
+  <div class="cols c2" style="margin-top:26px">
+    <div><h3>Problema 1 · carrera sobre result</h3><p>Todos los hilos escriben la variable global <code>result</code>. El sleep_for entre la división y la impresión deja que otro hilo la sobrescriba: por eso 12.5 y 10 aparecen repetidos.</p></div>
+    <div><h3>Problema 2 · la consola compartida</h3><p>Varios hilos escriben en std::cout a la vez. Las piezas de cada línea se intercalan y los mensajes quedan partidos.</p></div>
+  </div>
+  <aside class="notes">El texto original dice que result se pasa por referencia; en realidad es una variable global.</aside>
+</section>
+
+<section class="slide" data-title="Ejercicio 2 · Proteger la consola y result" data-block="4 · Deadlock 1">
+  <h2>Ejercicio 2 · Proteger la consola y result</h2>
+  <p class="muted" style="margin:-12px 0 20px">En parejas, 15 minutos</p>
+  <p class="lead">Modifiquen divideByNumber para que la consola y la variable global result queden protegidas con un mutex.</p>
+  <div class="cols c3" style="margin-top:36px">
+    <div><h3>Antes de codificar</h3><p>¿Cuántos mutex hacen falta? ¿Uno para result y otro para cout, o uno solo?</p></div>
+    <div><h3>lock y unlock</h3><p>Marquen en papel las líneas exactas. Piensen en <b>todos</b> los caminos por los que la función puede terminar.</p></div>
+    <div><h3>Qué verificar</h3><p>Que cada línea de salida sea legible y que el resultado impreso corresponda a su denominador.</p></div>
+  </div>
+</section>
+
+<section class="slide" data-title="Una solución que parece correcta" data-block="4 · Deadlock 1" data-init="questions">
+  <h2>Una solución que parece correcta</h2>
+  <div class="split" style="grid-template-columns:1.35fr 1fr">
+    <pre class="code sm" data-src="divNaive" data-hlred="17"></pre>
+    <div>
+      <h3>Busquen el error</h3>
+      <p>Protege result y protege la consola. Para denominadores distintos de cero funciona perfecto.</p>
+      <div class="q" style="margin-top:18px"><strong>¿Qué camino de salida no pasa por unlock?</strong><div class="reveal-a">El return dentro del catch. Cuando denom es 0, la función sale con el mutex tomado. Este es el primer tipo de deadlock.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Simulación: qué pasa cuando llega denom = 0" data-block="4 · Deadlock 1" data-init="dl1">
+  <h2>Simulación: qué pasa cuando llega denom = 0</h2>
+  <div class="ctrl" style="margin-bottom:18px">
+    <div class="seg" id="dl1Mode"><button data-m="manual" class="on">lock() y unlock() a mano</button><button data-m="guard">std::lock_guard</button></div>
+    <button class="btn" id="dl1Run">Ejecutar</button>
+    <label class="chk"><input type="checkbox" id="dl1Last"> que denom = 0 llegue último al cerrojo</label>
+  </div>
+  <div class="split" style="grid-template-columns:1fr 1fr">
+    <div>
+      <div style="display:flex;gap:14px;align-items:center;margin-bottom:16px"><span class="mutexbox free" id="dl1Mutex"><span class="lamp" id="dl1Lamp"></span><span id="dl1MutexT">mtx libre</span></span></div>
+      <div id="dl1Chips" style="display:flex;flex-wrap:wrap;gap:10px"></div>
+      <p id="dl1Verdict" style="margin-top:22px;font-size:21px;font-weight:700;min-height:60px"></p>
+    </div>
+    <div class="term" id="dl1Term" style="height:330px;overflow:hidden"></div>
+  </div>
+  <aside class="notes">Detalle traicionero: si el hilo con denom = 0 llega último, los demás ya terminaron y el programa sale. Destruir un std::mutex tomado es comportamiento indefinido, pero en la práctica no se nota. El bug depende del orden de planificación.</aside>
+</section>
+
+<section class="slide" data-title="Dos formas de corregirlo" data-block="4 · Deadlock 1">
+  <h2>Dos formas de corregirlo</h2>
+  <div class="cols c2">
+    <div><h3>Liberar en cada salida</h3><pre class="code sm" data-src="divFixManual" data-hlgreen="4"></pre><p style="margin-top:14px">Funciona, pero depende de no olvidar ningún camino de salida, hoy ni en la próxima modificación.</p></div>
+    <div><h3>Que el cerrojo se libere solo</h3><pre class="code sm" data-src="divFixGuard" data-hlgreen="3"></pre><p style="margin-top:14px">El destructor de <code>lck</code> libera el mutex pase lo que pase. Es el tema del bloque 6.</p></div>
+  </div>
+</section>
+
+<!-- ============ BLOQUE 5 ============ -->
+<section class="slide divider" data-title="Deadlock 2" data-block="5 · Deadlock 2">
+  <h1 class="cover">Deadlock 2</h1>
+  <div class="cover-sub">Espera circular</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="Dos hilos, dos mutex, orden opuesto" data-block="5 · Deadlock 2">
+  <h2>Dos hilos, dos mutex, orden opuesto</h2>
+  <div class="split" style="grid-template-columns:.9fr 1.1fr">
+    <pre class="code xs" data-src="dl2Raw" data-hl="5,7,14,16"></pre>
+    <div>
+      <h3>Lo que imprime</h3>
+      <div class="term">Thread AThread B<span class="pulse">▌</span></div>
+      <p style="margin-top:14px">Nunca aparece «Finished» y el programa no retorna.</p>
+      <h3 style="margin-top:28px">Fíjense en el orden</h3>
+      <p><code><b>ThreadA</b></code> toma mutex2 y después pide mutex1</p>
+      <p><code><b>ThreadB</b></code> toma mutex1 y después pide mutex2</p>
+      <p class="small muted" style="margin-top:22px">Además, cada hilo «protege» cout con un mutex distinto, así que la consola no está protegida. Por eso las dos líneas se pegaron.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Cada uno tiene lo que el otro necesita" data-block="5 · Deadlock 2" data-init="dl2" data-dl2="raw">
+  <h2>Cada uno tiene lo que el otro necesita</h2>
+  <div class="split r" style="grid-template-columns:1fr 1.15fr;gap:36px">
+    <div>
+      <table class="t stepper dl2steps" style="font-size:15px">
+        <thead><tr><th>Paso</th><th>ThreadA</th><th>ThreadB</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="ctrl" style="margin-top:14px"><button class="btn" data-act="step">Siguiente paso</button><button class="btn" data-act="play">Reproducir</button><button class="btn" data-act="reset">Reiniciar</button></div>
+      <p class="dl2verdict" style="margin-top:16px;font-weight:700;min-height:52px"></p>
+    </div>
+    <div class="dl2svg"></div>
+  </div>
+  <aside class="notes">El texto original dice que ThreadA bloquea mutex 1 y ThreadB mutex 2, pero el código hace lo contrario. Aquí se sigue el código. En el diagrama original, Thread 1 corresponde a ThreadB y Thread 2 a ThreadA.</aside>
+</section>
+
+<!-- ============ BLOQUE 6 · LOCKS ============ -->
+<section class="slide divider" data-title="Locks para evitar deadlocks" data-block="6 · Locks">
+  <h1 class="cover">Locks para<br>evitar deadlocks</h1>
+  <div class="cover-sub">lock_guard, unique_lock y std::lock</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="No llamar a lock() directamente" data-block="6 · Locks">
+  <h2>No llamar a lock() directamente</h2>
+  <p class="lead">«Trabajar bajo el cerrojo» bloquea el acceso de otros hilos al recurso. Solo el hilo que adquirió el lock puede liberar el mutex y dar a los demás la oportunidad de tomarlo.</p>
+  <div class="cols c2" style="margin-top:36px">
+    <div><h3>El riesgo</h3><p>Si mientras trabaja bajo el cerrojo el hilo lanza una excepción, sale de la sección crítica sin llamar a unlock. Ningún otro hilo puede volver a adquirir el mutex.</p><p style="margin-top:12px">Es exactamente lo que vimos en divideByNumber.</p></div>
+    <div><h3>La regla</h3><p>En la práctica, las llamadas directas a <code>lock()</code> y <code>unlock()</code> se evitan a toda costa.</p><p style="margin-top:12px">En su lugar se usa un objeto que ata el cerrojo a su propio tiempo de vida.</p></div>
+  </div>
+  <div class="strong-foot">La pregunta deja de ser «¿me acordé de liberar?» y pasa a ser «¿cuándo termina este ámbito?».</div>
+</section>
+
+<section class="slide" data-title="std::lock_guard: el cerrojo vive lo que vive el objeto" data-block="6 · Locks" data-init="raii">
+  <h2>std::lock_guard: el cerrojo vive lo que vive el objeto</h2>
+  <div class="split" style="grid-template-columns:1.3fr 1fr">
+    <pre class="code sm" data-src="guardFull" id="raiiCode"></pre>
+    <div>
+      <div class="ctrl" style="margin-bottom:14px">
+        <div class="seg" id="raiiPath"><button data-p="ok" class="on">denom = 3</button><button data-p="zero">denom = 0</button></div>
+      </div>
+      <div class="ctrl" style="margin-bottom:18px"><button class="btn" data-act="step">Siguiente línea</button><button class="btn" data-act="play">Reproducir</button><button class="btn" data-act="reset">Reiniciar</button></div>
+      <span class="mutexbox free" id="raiiMutex"><span class="lamp" id="raiiLamp"></span><span id="raiiMutexT">mtx libre</span></span>
+      <p id="raiiTxt" style="margin-top:18px;min-height:120px"></p>
+      <p class="small muted">Se adquiere en la construcción y se libera en la destrucción. Es imposible olvidar el unlock, y hay seguridad ante excepciones.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Ejercicio 3 · Reducir el alcance del cerrojo" data-block="6 · Locks">
+  <h2>Ejercicio 3 · Reducir el alcance del cerrojo</h2>
+  <p class="lead">Con lock_guard al inicio de la función, el mutex queda tomado durante toda la ejecución, incluso en caminos que no tocan el recurso compartido.</p>
+  <div class="card" style="margin-top:30px;max-width:980px;border-color:#000">
+    <h3>Consigna</h3>
+    <p>Cambien el código para que el mutex esté bloqueado <b>solo</b> mientras se modifica result y se imprime el resultado.</p>
+  </div>
+  <div class="cols c2" style="margin-top:30px">
+    <div><h3>Pista</h3><p>Un par de llaves <code>{ }</code> crea un ámbito. El lock_guard muere al cerrarlas.</p></div>
+    <div><h3>Pregunta para defender</h3><p>¿Qué hilos ya no necesitan tomar el cerrojo después del cambio?</p></div>
+  </div>
+</section>
+
+<section class="slide" data-title="Ejercicio 3 · Solución" data-block="6 · Locks" data-init="questions">
+  <h2>Ejercicio 3 · Solución</h2>
+  <div class="split" style="grid-template-columns:1.35fr 1fr">
+    <pre class="code sm" data-src="guardScoped" data-hlgreen="6,10"></pre>
+    <div>
+      <p>El lock_guard vive dentro del <code>if</code>. Se construye justo antes de escribir result y se destruye al cerrar la llave, después de imprimir.</p>
+      <div class="q" style="margin-top:20px"><strong>¿Qué hilo ya no toma el cerrojo?</strong><div class="reveal-a">El de denom = 0: lanza la excepción sin haber entrado nunca en la sección crítica.</div></div>
+      <div class="q"><strong>¿Queda algo sin proteger?</strong><div class="reveal-a">El cout del catch. El mensaje de la excepción puede mezclarse con la salida de otro hilo que esté bajo el cerrojo.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="std::unique_lock: control fino" data-block="6 · Locks">
+  <h2>std::unique_lock: control fino</h2>
+  <p class="lead">Con lock_guard el mutex se bloquea una sola vez, y la única forma de liberarlo es terminar el ámbito del objeto. ¿Y si hace falta soltarlo en medio?</p>
+  <div class="cols c2" style="margin-top:34px">
+    <div>
+      <h3>Lo que se mantiene</h3>
+      <p>Igual que lock_guard, unique_lock libera el mutex en su destructor. La seguridad ante excepciones sigue intacta.</p>
+    </div>
+    <div>
+      <h3>Lo que agrega</h3>
+      <p>Métodos <code>lock()</code> y <code>unlock()</code> para soltar y retomar el cerrojo, bloqueo diferido, bloqueo con tiempo límite, transferencia de propiedad con move y uso con variables de condición, que veremos más adelante.</p>
+    </div>
+  </div>
+  <div class="strong-foot">Útil cuando pasa mucho tiempo entre dos accesos al recurso crítico y otros hilos esperan.</div>
+</section>
+
+<section class="slide" data-title="Soltar el cerrojo durante el trabajo no crítico" data-block="6 · Locks" data-init="gantt">
+  <h2>Soltar el cerrojo durante el trabajo no crítico</h2>
+  <div class="split" style="grid-template-columns:1.05fr .95fr;gap:30px">
+    <pre class="code xs" data-src="uniqueFull" data-hl="3,9,12"></pre>
+    <div>
+      <div class="ctrl" style="margin-bottom:12px">
+        <div class="seg" id="gMode"><button data-m="guard" class="on">lock_guard todo el tiempo</button><button data-m="unique">unique_lock con unlock</button></div>
+        <button class="btn" id="gRun">Reproducir</button>
+      </div>
+      <div class="legend" style="margin-bottom:14px"><span><i style="background:#C3C3FF;border:1.5px solid #6B6BD6"></i>bajo el cerrojo</span><span><i style="background:#F2F2F3;border:1.5px solid #B9B9BD"></i>sin cerrojo</span><span><i style="background:repeating-linear-gradient(135deg,#FDECEA 0 5px,#F7C7C2 5px 10px);border:1.5px solid #E7A39C"></i>esperando</span></div>
+      <div style="padding-left:96px"><div class="gantt" id="gChart"></div></div>
+      <p id="gTxt" style="margin-top:14px;font-size:19px;font-weight:700"></p>
+      <p class="small muted">Seis hilos; cada tramo del código dura 100 ms. Modelo con atención en orden de llegada.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Cuatro formas de construir un unique_lock" data-block="6 · Locks">
+  <h2>Cuatro formas de construir un unique_lock</h2>
+  <div class="cols c2" style="gap:26px 40px">
+    <div><h3>1 · Sin mutex asociado</h3><pre class="code sm" data-src="ul1"></pre><p class="small" style="margin-top:8px">Constructor por defecto. Se le asigna un mutex después, por ejemplo con move.</p></div>
+    <div><h3>2 · Asociado pero sin bloquear</h3><pre class="code sm" data-src="ul2"></pre><p class="small" style="margin-top:8px">Bloqueo diferido: el mutex queda libre hasta llamar a lock().</p></div>
+    <div><h3>3 · Intentar y seguir</h3><pre class="code sm" data-src="ul3"></pre><p class="small" style="margin-top:8px">Si no pudo bloquear, queda sin cerrojo y el hilo no espera.</p></div>
+    <div><h3>4 · Intentar durante un tiempo</h3><pre class="code sm" data-src="ul4"></pre><p class="small" style="margin-top:8px">Con timed_mutex: por un periodo o hasta un instante.</p></div>
+  </div>
+  <aside class="notes">owns_lock() dice si el objeto tiene el cerrojo en ese momento. Las opciones 3 y 4 obligan a revisarlo antes de tocar el recurso.</aside>
+</section>
+
+<section class="slide" data-title="Los locks solos no evitan la espera circular" data-block="6 · Locks">
+  <h2>Los locks solos no evitan la espera circular</h2>
+  <div class="split" style="grid-template-columns:1fr 1fr">
+    <pre class="code sm" data-src="dl2Guard" data-hlred="5,7,12,14"></pre>
+    <div>
+      <p class="lead" style="font-size:21px">Mismo programa de Deadlock 2, con lock_guard en lugar de lock() y unlock().</p>
+      <div class="term" style="margin-top:22px">Thread AThread B<span class="pulse">▌</span></div>
+      <p style="margin-top:18px">Sigue colgado. lock_guard y unique_lock garantizan que el mutex se libere, pero no deciden en qué orden se toman dos mutex distintos.</p>
+      <p style="margin-top:14px;font-weight:700">RAII resuelve Deadlock 1. No resuelve Deadlock 2.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="std::lock: tomar los dos a la vez" data-block="6 · Locks" data-init="dl2" data-dl2="stdlock">
+  <h2>std::lock: tomar los dos a la vez</h2>
+  <div class="split" style="grid-template-columns:1fr 1.15fr;gap:30px">
+    <div>
+      <pre class="code xs" data-src="dl2StdLock" data-hlgreen="3,10"></pre>
+      <table class="t stepper dl2steps" style="font-size:14px;margin-top:12px">
+        <thead><tr><th>Paso</th><th>ThreadA</th><th>ThreadB</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div>
+      <div class="ctrl" style="margin-bottom:6px"><button class="btn" data-act="step">Siguiente paso</button><button class="btn" data-act="play">Reproducir</button><button class="btn" data-act="reset">Reiniciar</button></div>
+      <div class="dl2svg"></div>
+      <p class="dl2verdict" style="margin-top:4px;font-weight:700;min-height:48px"></p>
+    </div>
+  </div>
+  <aside class="notes">std::adopt_lock le dice a lock_guard que el mutex ya está bloqueado: no vuelve a bloquearlo, solo se encarga de liberarlo al destruirse.</aside>
+</section>
+
+<section class="slide" data-title="Cómo funciona std::lock y su versión moderna" data-block="6 · Locks">
+  <h2>Cómo funciona std::lock y su versión moderna</h2>
+  <div class="cols c3" style="gap:30px">
+    <div>
+      <h3>Qué hace std::lock</h3>
+      <p class="small" style="font-size:17px">Bloquea todos los mutex que recibe, o ninguno. Usa un algoritmo que evita el deadlock: toma uno, intenta los demás con try_lock y, si alguno falla, suelta lo que tenía y reintenta.</p>
+      <p class="small" style="font-size:17px;margin-top:10px">El resultado es equivalente a tomar siempre en el mismo orden, sin importar el orden de los argumentos.</p>
+    </div>
+    <div>
+      <h3>Con unique_lock</h3>
+      <pre class="code xs" data-src="lockDefer"></pre>
+      <p class="small" style="margin-top:8px">defer_lock crea los objetos sin bloquear; std::lock los bloquea juntos.</p>
+    </div>
+    <div>
+      <h3>C++17: scoped_lock</h3>
+      <pre class="code xs" data-src="scopedLock"></pre>
+      <p class="small" style="margin-top:8px">Hace std::lock y RAII en una línea. Es la opción recomendada hoy.</p>
+    </div>
+  </div>
+  <aside class="notes">Corrección al texto original: std::lock no recibe objetos lock_guard (no tienen lock()). Recibe mutex u objetos como unique_lock creados con defer_lock. En el ejemplo, std::lock bloquea los mutex y después lock_guard los adopta.</aside>
+</section>
+
+<section class="slide" data-title="Qué herramienta usar" data-block="6 · Locks">
+  <h2>Qué herramienta usar</h2>
+  <table class="t">
+    <thead><tr><th style="width:320px">Herramienta</th><th>Cuándo</th><th style="width:250px">Riesgo que evita</th></tr></thead>
+    <tbody>
+      <tr><td><code>mtx.lock() / unlock()</code></td><td>Casi nunca. Solo para entender el mecanismo.</td><td>Ninguno</td></tr>
+      <tr><td><code>std::lock_guard</code></td><td>La opción por defecto para un solo mutex en un ámbito</td><td>Olvidar el unlock</td></tr>
+      <tr><td><code>std::unique_lock</code></td><td>Soltar y retomar, bloqueo diferido o con tiempo, variables de condición</td><td>Olvidar el unlock</td></tr>
+      <tr><td><code>std::lock</code> + <code>adopt_lock</code></td><td>Varios mutex a la vez, antes de C++17</td><td>Espera circular</td></tr>
+      <tr><td><code>std::scoped_lock</code></td><td>Uno o varios mutex, desde C++17</td><td>Ambos</td></tr>
+    </tbody>
+  </table>
+  <div class="strong-foot">Regla práctica: evitar tener varios mutex a la vez. Casi siempre se puede. Cuando no, std::lock o scoped_lock.</div>
+</section>
+
+
+<!-- ============ BLOQUE 7 · MONITOR ============ -->
+<section class="slide divider" data-title="El patrón monitor" data-block="7 · Monitor">
+  <h1 class="cover">El patrón monitor</h1>
+  <div class="cover-sub">Hacia una cola de mensajes concurrente</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="Un objeto que atiende de a un método" data-block="7 · Monitor" data-init="monDiagram">
+  <h2>Un objeto que atiende de a un método</h2>
+  <div class="split" style="grid-template-columns:.85fr 1.15fr;gap:48px;align-items:center">
+    <div>
+      <p class="lead" style="font-size:22px">Un <b>monitor</b> es un patrón de diseño que sincroniza la ejecución concurrente de métodos para que <b>un solo método a la vez</b> corra dentro del objeto.</p>
+      <p style="margin-top:18px">Los hilos clientes no ven el mutex: llaman a métodos normales. El objeto se protege a sí mismo.</p>
+      <p class="muted" style="margin-top:18px">Es un paso previo a una cola de mensajes concurrente: intercambio de datos controlado y de grano fino entre hilos.</p>
+    </div>
+    <div class="mon" id="monViz">
+      <div class="mon-clients" id="monClients"></div>
+      <div class="mon-obj">
+        <div class="mon-head"><span>WaitingVehicles</span><span class="mutexbox free" id="monMutex" style="font-size:14px;padding:5px 10px"><span class="lamp" id="monLamp"></span><span id="monMutexT">_mutex libre</span></span></div>
+        <div class="mon-method" data-mm="push"><code>pushBack(Vehicle &amp;&amp;v)</code><span class="mon-inside"></span></div>
+        <div class="mon-method" data-mm="print"><code>printIDs()</code><span class="mon-inside"></span></div>
+        <div class="mon-vec-label">_vehicles</div>
+        <div class="mon-vec" id="monVec"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Qué problema resuelve" data-block="7 · Monitor">
+  <h2>Qué problema resuelve</h2>
+  <div class="cols c3" style="margin-top:22px">
+    <div><h3>La observación</h3><p>Muchas aplicaciones tienen objetos cuyos métodos son invocados a la vez por varios hilos clientes.</p><p style="margin-top:12px">Esos métodos suelen modificar el estado del objeto, por ejemplo agregando datos a un vector interno.</p></div>
+    <div><h3>La idea</h3><p>Sincronizar el acceso a los métodos del objeto, de modo que solo uno pueda ejecutarse en cada momento.</p><p style="margin-top:12px">Datos, mutex y métodos viven juntos. Nadie de afuera toca el vector directamente.</p></div>
+    <div><h3>Lo que viene después</h3><p>Un monitor también permite que sus métodos coordinen el orden de ejecución entre ellos.</p><p style="margin-top:12px">Esa coordinación es la que hoy nos va a faltar, y la que resuelven las variables de condición.</p></div>
+  </div>
+  <div class="strong-foot">WaitingVehicles ya estaba cerca de ser un monitor. Ahora lo terminamos de construir.</div>
+</section>
+
+<section class="slide" data-title="main: diez hilos escriben en el monitor" data-block="7 · Monitor">
+  <h2>main: diez hilos escriben en el monitor</h2>
+  <div class="split" style="grid-template-columns:1.25fr 1fr">
+    <pre class="code xs" data-src="monMain" data-hl="4,12,16"></pre>
+    <ul class="b" style="margin-top:4px">
+      <li>El monitor se crea como <code>shared_ptr</code>: todos los hilos usan el mismo objeto y todos lo modifican.</li>
+      <li>Los hilos no devuelven datos, así que el vector guarda <code>future&lt;void&gt;</code> solo para esperarlos.</li>
+      <li><code>emplace_back</code> construye cada future en su lugar dentro del vector.</li>
+      <li>Cada tarea recibe la función miembro, el shared_ptr y el vehículo por <b>move</b>.</li>
+      <li><code>wait()</code> al final evita que main termine antes que los hilos.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" data-title="WaitingVehicles como monitor" data-block="7 · Monitor">
+  <h2>WaitingVehicles como monitor</h2>
+  <div class="split" style="grid-template-columns:1.25fr 1fr">
+    <pre class="code sm" data-src="monClass" data-hl="7,15,20,24"></pre>
+    <div>
+      <h3>pushBack</h3>
+      <p>Crea el lock_guard, imprime, mueve el vehículo al vector y simula trabajo con <code>sleep_for</code>. Toca un solo objeto: el recién agregado.</p>
+      <h3 style="margin-top:22px">printIDs</h3>
+      <p>Toma el mismo mutex y recorre <b>todo</b> el vector. Por eso también necesita el cerrojo: una escritura en medio del recorrido invalidaría la iteración.</p>
+      <p class="small muted" style="margin-top:22px">Los dos métodos comparten un único <code>_mutex</code>. Eso es lo que convierte a la clase en monitor.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Ejecución: de a uno y todo al final" data-block="7 · Monitor" data-init="monRun">
+  <h2>Ejecución: de a uno y todo al final</h2>
+  <div class="ctrl" style="margin-bottom:16px">
+    <div class="seg" id="mrMode"><button data-m="inside" class="on">sleep_for bajo el cerrojo</button><button data-m="outside">sleep_for fuera del cerrojo</button></div>
+    <button class="btn" id="mrRun">Ejecutar</button>
+    <span id="mrClock" class="mono" style="font-size:15px;margin-left:8px">0,0 s</span>
+  </div>
+  <div class="split" style="grid-template-columns:1.1fr .9fr;gap:34px">
+    <div>
+      <div class="legend" style="margin-bottom:10px"><span><i style="background:#C3C3FF;border:1.5px solid #6B6BD6"></i>bajo el cerrojo</span><span><i style="background:#F2F2F3;border:1.5px solid #B9B9BD"></i>sin cerrojo</span><span><i style="background:repeating-linear-gradient(135deg,#FDECEA 0 5px,#F7C7C2 5px 10px);border:1.5px solid #E7A39C"></i>esperando</span></div>
+      <div style="padding-left:96px;position:relative"><div class="gantt mini" id="mrChart"></div></div>
+      <p id="mrTxt" style="margin-top:12px;font-weight:700;min-height:28px"></p>
+    </div>
+    <div class="term" id="mrTerm" style="height:420px;overflow:hidden;font-size:13px"></div>
+  </div>
+  <aside class="notes">Recrea la grabación de consola del material (el GIF). Ahí los vehículos aparecen en orden 0 a 9, pero un std::mutex no garantiza orden de llegada: en otra ejecución el orden puede cambiar. La salida sale de a una cada medio segundo porque el sleep_for está bajo el cerrojo.</aside>
+</section>
+
+<section class="slide" data-title="La limitación: main espera a todos" data-block="7 · Monitor">
+  <h2>La limitación: main espera a todos</h2>
+  <div class="cmp">
+    <div class="cmp-row"><h3>Monitor con printIDs al final</h3>
+      <div class="cmp-track" data-kind="batch"></div>
+      <p class="small">main no ve ningún dato hasta que el último hilo termina. Recibe todo de golpe.</p></div>
+    <div class="cmp-row"><h3>Sistema interactivo</h3>
+      <div class="cmp-track" data-kind="live"></div>
+      <p class="small">main reacciona a cada dato en cuanto llega, sin esperar a que los demás hilos terminen.</p></div>
+  </div>
+  <div class="strong-foot">Un sistema interactivo reacciona a los eventos cuando ocurren. Eso es lo que le agregamos al monitor.</div>
+</section>
+
+<section class="slide" data-title="Bucle de sondeo: dataIsAvailable y popBack" data-block="7 · Monitor">
+  <h2>Bucle de sondeo: dataIsAvailable y popBack</h2>
+  <div class="split" style="grid-template-columns:1.25fr 1fr">
+    <pre class="code xs" data-src="pollClass" data-hl="1,7,20"></pre>
+    <div>
+      <p><code><b>dataIsAvailable()</b></code> devuelve true si hay vehículos en el vector. Reemplaza a printIDs.</p>
+      <p style="margin-top:14px"><code><b>popBack()</b></code> saca el último vehículo y lo devuelve. Los datos se <b>mueven</b> del vector a main, no se copian.</p>
+      <p style="margin-top:14px"><code><b>pushBack()</b></code> ahora duerme <b>antes</b> de tomar el cerrojo: los hilos trabajan en paralelo y solo se turnan para escribir.</p>
+      <p class="small muted" style="margin-top:20px">Sobre el comentario de RVO: devolver una variable local permite que el compilador omita la copia, pero no está garantizado. Si no la omite, se usa el constructor de movimiento. Copia no hay en ningún caso.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="main pregunta sin parar" data-block="7 · Monitor">
+  <h2>main pregunta sin parar</h2>
+  <div class="split" style="grid-template-columns:1.2fr 1fr">
+    <pre class="code xs" data-src="pollMain" data-hl="12,14,16"></pre>
+    <div>
+      <p>Un <code>while (true)</code> consulta al monitor una y otra vez. Cuando hay un vehículo, lo saca y lo imprime.</p>
+      <p style="margin-top:14px">El bucle va <b>antes</b> de esperar los futures: ahora main lee mientras los hilos todavía escriben.</p>
+      <p style="margin-top:14px">A esto se le llama <b>sondeo</b> o <i>polling</i>: preguntar periódicamente si algo cambió, en lugar de que te avisen.</p>
+      <p class="small muted" style="margin-top:20px">El texto del material menciona printSize; en este ejemplo el método que se reemplaza es printIDs.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Simulación del bucle de sondeo" data-block="7 · Monitor" data-init="poll">
+  <h2>Simulación del bucle de sondeo</h2>
+  <div class="ctrl" style="margin-bottom:16px">
+    <button class="btn" id="plRun">Ejecutar</button>
+    <button class="btn" id="plStop">Detener con Ctrl+C</button>
+    <span class="small muted">Tiempo ralentizado 15 veces</span>
+  </div>
+  <div class="split" style="grid-template-columns:1.05fr .95fr;gap:34px">
+    <div>
+      <h3 style="font-size:17px">Hilos trabajadores</h3>
+      <div id="plWorkers" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px"></div>
+      <h3 style="font-size:17px">_vehicles <span class="small muted" style="font-weight:400">(popBack saca el último)</span></h3>
+      <div class="mon-vec" id="plVec" style="margin-bottom:18px"></div>
+      <div class="card" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:center">
+        <div><div class="small muted">vueltas del while (estimado)</div><div class="mono" id="plPolls" style="font-size:26px;font-weight:700">0</div></div>
+        <div><div class="small muted">uso de un núcleo por main</div><div class="cpu"><i id="plCpu"></i></div><div class="mono small" id="plCpuT">0 %</div></div>
+      </div>
+      <p id="plTxt" style="margin-top:14px;font-weight:700;min-height:56px"></p>
+    </div>
+    <div class="term" id="plTerm" style="height:440px;overflow:hidden;font-size:13px"></div>
+  </div>
+  <aside class="notes">El conteo de vueltas es una estimación del orden de magnitud: un bucle con un lock y un unlock por vuelta da del orden de decenas de millones de vueltas por segundo en una CPU actual.</aside>
+</section>
+
+<section class="slide" data-title="Lo que revela la salida" data-block="7 · Monitor">
+  <h2>Lo que revela la salida</h2>
+  <div class="split" style="grid-template-columns:.95fr 1.05fr;gap:40px">
+    <div class="term" style="font-size:13.5px">Spawning threads...
+Collecting results...
+   Vehicle #0 will be added to the queue
+   Vehicle #0 has been removed from the queue
+   Vehicle #5 will be added to the queue
+   Vehicle #7 will be added to the queue
+   Vehicle #4 will be added to the queue
+   Vehicle #4 has been removed from the queue
+   Vehicle #7 has been removed from the queue
+   Vehicle #5 has been removed from the queue
+   Vehicle #2 will be added to the queue
+   Vehicle #6 will be added to the queue
+   Vehicle #1 will be added to the queue
+   Vehicle #3 will be added to the queue
+<span class="err">   Vehicle #   Vehicle #3 has been removed from the queue
+8 will be added to the queue</span>
+   Vehicle #9 will be added to the queue
+   Vehicle #9 has been removed from the queue
+   Vehicle #8 has been removed from the queue
+   Vehicle #1 has been removed from the queue
+   Vehicle #6 has been removed from the queue
+   Vehicle #2 has been removed from the queue<span class="pulse">▌</span></div>
+    <div>
+      <div class="q"><strong>1 · El programa no termina</strong><div class="reveal-a show">Ya no llegan vehículos, pero el while (true) no tiene condición de salida. Los futures nunca se esperan.</div></div>
+      <div class="q"><strong>2 · Espera activa</strong><div class="reveal-a show">Mientras la cola está vacía, main gira sin descanso y ocupa un núcleo completo sin hacer nada útil.</div></div>
+      <div class="q"><strong>3 · La línea mezclada</strong><div class="reveal-a show">Los hilos imprimen bajo el mutex del monitor, pero el cout de main está fuera de él. La consola vuelve a ser un recurso sin proteger.</div></div>
+      <div class="q"><strong>4 · No es una cola</strong><div class="reveal-a show">popBack saca el último: 4, 7, 5. Cuando se acumulan datos, el orden es de pila, no de llegada.</div></div>
+    </div>
+  </div>
+  <aside class="notes">Pregunta extra para defensa oral: dataIsAvailable y popBack toman el cerrojo por separado. Con un solo consumidor funciona; con dos consumidores, ambos pueden ver true y el segundo llamaría a back() sobre un vector vacío, que es comportamiento indefinido. Es el patrón «revisar y después actuar».</aside>
+</section>
+
+<section class="slide" data-title="Ejercicio 4 · Un contador de vehículos" data-block="7 · Monitor">
+  <h2>Ejercicio 4 · Un contador de vehículos</h2>
+  <p class="muted" style="margin:-12px 0 20px">Individual, sobre el ejemplo del bucle de sondeo</p>
+  <ul class="b">
+    <li>Agreguen a WaitingVehicles un contador que aumente con cada vehículo agregado y disminuya con cada vehículo retirado.</li>
+    <li>Terminen el while en cuanto el contador llegue a cero.</li>
+    <li>Protejan el contador: también lo usan varios hilos a la vez.</li>
+    <li>Introduzcan un pequeño retardo entre lanzar los hilos y empezar a recolectar. Si no, la cola está vacía al inicio y el programa termina antes de tiempo.</li>
+    <li>Al final de main, impriman cuántos vehículos quedaron en el vector.</li>
+  </ul>
+  <div class="card" style="margin-top:24px;max-width:900px"><p><b>Antes de programar:</b> ¿el contador puede llegar a cero mientras todavía hay hilos que no escribieron?</p></div>
+</section>
+
+<section class="slide" data-title="Ejercicio 4 · Solución propuesta" data-block="7 · Monitor">
+  <h2>Ejercicio 4 · Solución propuesta</h2>
+  <div class="cols c2" style="gap:30px">
+    <pre class="code xs" data-src="counterClass" data-hl="4,7,14,23,28"></pre>
+    <pre class="code xs" data-src="counterMain" data-hl="9,11,12,18"></pre>
+  </div>
+</section>
+
+<section class="slide" data-title="Tres observaciones sobre la solución" data-block="7 · Monitor" data-init="questions">
+  <h2>Tres observaciones sobre la solución</h2>
+  <p class="lead" style="margin-bottom:22px">Termina y está protegida. Antes de darla por buena, tres preguntas. <span class="small muted">Clic para ver la respuesta.</span></p>
+  <div class="q"><strong>¿Aporta algo _numVehicles que no dé _vehicles.size()?</strong><div class="reveal-a">No. Los dos cambian en los mismos métodos bajo el mismo mutex, así que siempre valen lo mismo. El contador es redundante: basta con devolver _vehicles.size().</div></div>
+  <div class="q"><strong>¿Qué pasa si main vacía la cola cuando hay hilos que todavía no escribieron?</strong><div class="reveal-a">El contador llega a cero, main duerme 200 ms y sale del bucle. Los vehículos que lleguen después quedan en el vector sin procesar. Por eso se imprime cuántos quedaron.</div></div>
+  <div class="q"><strong>El enunciado pide un retardo entre lanzar y recolectar. ¿Dónde está?</strong><div class="reveal-a">La solución pone los 200 ms después de que el contador llega a cero, no antes de empezar. Con el retardo antes del bucle, los diez vehículos ya están en la cola cuando main empieza a leer.</div></div>
+  <div class="strong-foot">Un contador no sabe cuántos datos faltan por llegar. Solo sabe cuántos hay ahora.</div>
+</section>
+
+<section class="slide" data-title="Simulación: ¿cuántos vehículos quedan?" data-block="7 · Monitor" data-init="counter">
+  <h2>Simulación: ¿cuántos vehículos quedan?</h2>
+  <div class="split" style="grid-template-columns:.85fr 1.15fr;gap:44px">
+    <div>
+      <div class="slider" style="grid-template-columns:190px 1fr 70px"><span>retardo antes de recolectar</span><input type="range" id="ctDelay" min="0" max="250" step="10" value="0"><output>0 ms</output></div>
+      <div class="slider" style="grid-template-columns:190px 1fr 70px"><span>dispersión de llegadas</span><input type="range" id="ctSpread" min="0" max="40" step="1" value="4"><output>4 ms</output></div>
+      <div class="ctrl" style="margin:14px 0 20px"><button class="btn" id="ctOnce">Ejecutar una vez</button><button class="btn" id="ctMany">Repetir 200 veces</button></div>
+      <div class="term" id="ctTerm" style="min-height:0">Finished : ? vehicle(s) left in the queue</div>
+      <p id="ctStats" style="margin-top:16px;font-size:18px;min-height:80px"></p>
+    </div>
+    <div>
+      <div class="ctline" id="ctLine"></div>
+      <div class="legend" style="margin-top:34px"><span><i style="background:#C3C3FF;border:1.5px solid #6B6BD6;border-radius:50%"></i>llegó y main lo retiró</span><span><i style="background:#D92D20;border-radius:50%"></i>llegó y quedó en la cola</span></div>
+      <p class="small muted" style="margin-top:14px">Cada hilo duerme 100 ms y escribe. La dispersión representa cuánto varían esos tiempos. main revisa el contador después de cada retiro. Modelo simplificado.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Cuatro versiones, cuatro comportamientos" data-block="7 · Monitor">
+  <h2>Cuatro versiones, cuatro comportamientos</h2>
+  <table class="t">
+    <thead><tr><th>Versión</th><th style="width:210px">main reacciona a cada dato</th><th style="width:190px">Termina bien</th><th style="width:220px">CPU libre mientras espera</th></tr></thead>
+    <tbody>
+      <tr><td>Monitor con printIDs al final</td><td>No</td><td>Sí</td><td>Sí, bloqueado en wait()</td></tr>
+      <tr><td>Bucle de sondeo con while (true)</td><td>Sí</td><td>No</td><td>No, un núcleo al 100 %</td></tr>
+      <tr><td>Sondeo con contador (Ejercicio 4)</td><td>Sí</td><td>A veces deja datos sin procesar</td><td>No</td></tr>
+      <tr><td>Monitor con variable de condición</td><td>Sí</td><td>Sí</td><td>Sí, el hilo duerme hasta que lo avisan</td></tr>
+    </tbody>
+  </table>
+  <div class="strong-foot">La última fila es el bloque que sigue: std::condition_variable y la cola de mensajes concurrente.</div>
+</section>
+
+<!-- ============ BLOQUE 8 · COLA DE MENSAJES ============ -->
+<section class="slide divider" data-title="Cola de mensajes concurrente" data-block="8 · Cola de mensajes">
+  <h1 class="cover">Cola de mensajes<br>concurrente</h1>
+  <div class="cover-sub">Variables de condición</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="Del sondeo a esperar una señal" data-block="8 · Cola de mensajes">
+  <h2>Del sondeo a esperar una señal</h2>
+  <p class="lead" style="margin-bottom:28px">En lugar de preguntar sin parar, el hilo principal debería bloquearse y esperar a que alguien le avise que hay datos nuevos.</p>
+  <div class="cols c3">
+    <div class="card"><h3>Bucle de sondeo</h3><p>Mantiene el procesador ocupado todo el tiempo preguntando si llegó algo.</p><p class="small muted" style="margin-top:10px">Funciona, pero desperdicia un núcleo.</p></div>
+    <div class="card"><h3>promise y future</h3><p>Bloquean y esperan una señal, pero se usan <b>una sola vez</b>. Después de get(), el future ya no sirve.</p><p class="small muted" style="margin-top:10px">Necesitamos una señal reutilizable.</p></div>
+    <div class="card" style="border-color:#000"><h3>std::condition_variable</h3><p>Un hilo se bloquea en <code>wait()</code> hasta que otro lo libera con <code>notify_one()</code> o <code>notify_all()</code>. Se puede usar una y otra vez.</p></div>
+  </div>
+  <div class="strong-foot">La variable de condición es una pieza de bajo nivel. Con ella se construyen protocolos de comunicación más completos.</div>
+</section>
+
+<section class="slide" data-title="wait, notify_one y notify_all" data-block="8 · Cola de mensajes" data-init="cvNotify">
+  <h2>wait, notify_one y notify_all</h2>
+  <div class="split" style="grid-template-columns:1fr 1fr;gap:56px;align-items:start">
+    <div>
+      <p><code><b>wait()</b></code> bloquea al hilo que la llama hasta que otro hilo lo libere.</p>
+      <p style="margin-top:14px"><code><b>notify_one()</b></code> despierta a un solo hilo de los que están esperando.</p>
+      <p style="margin-top:14px"><code><b>notify_all()</b></code> despierta a todos los hilos que esperan, de una vez.</p>
+      <div class="ctrl" style="margin-top:30px">
+        <button class="btn" id="cnOne">notify_one()</button>
+        <button class="btn" id="cnAll">notify_all()</button>
+        <button class="btn" id="cnReset">Todos a wait()</button>
+      </div>
+      <p id="cnTxt" style="margin-top:22px;font-weight:700;min-height:60px"></p>
+    </div>
+    <div>
+      <div class="cvbox" id="cnCv"><span class="mono">_cond</span><span class="small muted" id="cnCount">3 hilos esperando</span></div>
+      <div id="cnChips" style="display:grid;grid-template-columns:1fr;gap:12px;margin-top:22px"></div>
+      <div class="term" id="cnLog" style="margin-top:22px;height:120px;overflow:hidden;font-size:13px"></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Una variable de condición no tiene memoria" data-block="8 · Cola de mensajes" data-init="cvOrder">
+  <h2>Una variable de condición no tiene memoria</h2>
+  <div class="split" style="grid-template-columns:1fr 1.1fr;gap:48px">
+    <div>
+      <p class="lead" style="font-size:21px">No guarda datos ni recuerda notificaciones. Un aviso que llega cuando nadie espera se pierde.</p>
+      <div class="seg" id="coMode" style="margin-top:26px"><button data-m="ok" class="on">wait antes de notify</button><button data-m="lost">notify antes de wait</button></div>
+      <div class="ctrl" style="margin-top:14px"><button class="btn" id="coRun">Reproducir</button></div>
+      <p id="coTxt" style="margin-top:22px;font-weight:700;min-height:80px"></p>
+      <p class="muted">Por eso, en protocolos reales, la variable de condición siempre va junto a un <b>estado compartido</b> que se puede revisar por separado. Notificar solo significa: «vuelve a revisar ese estado».</p>
+    </div>
+    <div id="coSvg"></div>
+  </div>
+</section>
+
+<section class="slide" data-title="Las intercalaciones de un protocolo simple" data-block="8 · Cola de mensajes" data-init="cvInterleave">
+  <h2>Las intercalaciones de un protocolo simple</h2>
+  <div class="split" style="grid-template-columns:1.05fr 1fr;gap:36px">
+    <div id="ilSvg"></div>
+    <div>
+      <p class="small" style="margin-bottom:12px">Cuatro operaciones atómicas. Consumidor: <b>C1</b> revisa <code>!dataIsAvailable</code>, <b>C2</b> llama a <code>wait()</code>. Productor: <b>P1</b> pone <code>dataIsAvailable = true</code>, <b>P2</b> llama a <code>notify_one()</code>. Elijan una fila.</p>
+      <table class="t" id="ilTable" style="font-size:15px">
+        <thead><tr><th>Orden</th><th>Qué pasa</th></tr></thead>
+        <tbody>
+          <tr data-p="s1" tabindex="0"><td class="mono">C1 C2 P1 P2</td><td>Escenario 1: espera y despierta</td></tr>
+          <tr data-p="s2" tabindex="0"><td class="mono">P1 P2 C1</td><td>Escenario 2: ve true y no espera</td></tr>
+          <tr data-p="s3" tabindex="0"><td class="mono">P1 C1 P2</td><td>Ve true; el aviso se pierde sin daño</td></tr>
+          <tr data-p="s4" tabindex="0"><td class="mono">C1 P1 C2 P2</td><td>Leyó false, pero el aviso llega después de wait</td></tr>
+          <tr data-p="bad" tabindex="0"><td class="mono">C1 P1 P2 C2</td><td><b>Leyó false, el aviso llega antes de wait</b></td></tr>
+        </tbody>
+      </table>
+      <div class="ctrl" style="margin-top:14px"><button class="btn" data-act="step">Siguiente paso</button><button class="btn" data-act="play">Reproducir</button><button class="btn" data-act="reset">Reiniciar</button></div>
+      <p id="ilTxt" style="margin-top:14px;font-weight:700;min-height:70px"></p>
+    </div>
+  </div>
+  <aside class="notes">Si el consumidor revisa después de P1, ve true y nunca llama a wait: por eso esas órdenes tienen tres operaciones. Además, en este protocolo dataIsAvailable no está protegido por un mutex, así que también hay carrera de datos sobre el booleano. En los diagramas originales ambos hilos aparecen como «Thread 1»; aquí se rotulan consumidor y productor.</aside>
+</section>
+
+<section class="slide" data-title="El hueco entre revisar y esperar" data-block="8 · Cola de mensajes">
+  <h2>El hueco entre revisar y esperar</h2>
+  <div class="cols c2" style="margin-top:14px;gap:48px">
+    <div>
+      <h3>Por qué falla la última fila</h3>
+      <p>El consumidor lee false y, antes de llamar a wait, el planificador le quita el procesador. En ese hueco el productor pone true y notifica a nadie.</p>
+      <p style="margin-top:14px">Revisar y esperar son dos pasos que el planificador puede separar. Cuando por fin llama a wait, el aviso ya pasó y no vuelve.</p>
+    </div>
+    <div>
+      <h3>La idea rápida que no sirve</h3>
+      <p>«Hagamos la revisión y el wait bajo un mutex». Así nadie se mete en medio, pero el consumidor se duerme <b>con el mutex tomado</b>.</p>
+      <p style="margin-top:14px">El productor ya no puede cambiar dataIsAvailable ni notificar. Nadie despierta al consumidor: otro deadlock.</p>
+    </div>
+  </div>
+  <div class="strong-foot">Hace falta revisar bajo el cerrojo y que wait lo suelte y se duerma en un solo paso atómico.</div>
+  <aside class="notes">El objetivo de discutir estos casos fallidos en detalle es mostrar lo complejo que es el comportamiento concurrente, incluso con un protocolo tan simple.</aside>
+</section>
+
+<section class="slide" data-title="wait(lock): soltar y dormir en un paso" data-block="8 · Cola de mensajes" data-init="cvLock">
+  <h2>wait(lock): soltar y dormir en un paso</h2>
+  <div class="split" style="grid-template-columns:1fr 1.1fr;gap:36px">
+    <div>
+      <div class="seg" id="lkMode"><button data-m="good" class="on">wait suelta el cerrojo</button><button data-m="bad">wait no lo suelta</button></div>
+      <table class="t stepper" id="lkSteps" style="font-size:15px;margin-top:16px"><tbody></tbody></table>
+      <div class="ctrl" style="margin-top:14px"><button class="btn" data-act="step">Siguiente paso</button><button class="btn" data-act="play">Reproducir</button><button class="btn" data-act="reset">Reiniciar</button></div>
+      <p id="lkTxt" style="margin-top:14px;font-weight:700;min-height:56px"></p>
+    </div>
+    <div id="lkSvg"></div>
+  </div>
+  <aside class="notes">Las barras rojas indican que el hilo tiene el mutex. Es la versión redibujada del diagrama con barras rojas del material.</aside>
+</section>
+
+<section class="slide" data-title="Por qué unique_lock y no lock_guard" data-block="8 · Cola de mensajes">
+  <h2>Por qué unique_lock y no lock_guard</h2>
+  <div class="split" style="grid-template-columns:1fr 1fr;gap:48px">
+    <div>
+      <p class="lead" style="font-size:21px">wait() recibe el cerrojo como argumento porque tiene que <b>soltarlo</b> al dormirse y <b>volver a tomarlo</b> al despertar.</p>
+      <p style="margin-top:18px">lock_guard no tiene unlock() ni lock(): solo libera en su destructor. unique_lock sí puede soltarse y retomarse, que es lo que wait hace por dentro.</p>
+      <p style="margin-top:18px;font-weight:700">Antes y después de wait, el hilo tiene el cerrojo. Solo dentro de wait está libre.</p>
+    </div>
+    <div>
+      <h3>Lo que wait(uLock) hace por dentro</h3>
+      <pre class="code sm" data-src="cvInside"></pre>
+      <p class="small muted" style="margin-top:10px">Pseudocódigo. Soltar y dormir ocurre de forma atómica: ningún aviso puede colarse entre los dos.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="WaitingVehicles con variable de condición: pasos 1 y 2" data-block="8 · Cola de mensajes">
+  <h2>Pasos 1 y 2: agregar y notificar</h2>
+  <div class="cols c2" style="gap:44px">
+    <div>
+      <h3>1 · La variable de condición es un miembro más</h3>
+      <pre class="code" data-src="cvMembers" data-hl="3"></pre>
+      <p style="margin-top:14px">Vive junto al mutex, dentro del monitor. Los clientes nunca la ven.</p>
+    </div>
+    <div>
+      <h3>2 · Notificar después de agregar</h3>
+      <pre class="code sm" data-src="cvNotify" data-hlgreen="5"></pre>
+      <p style="margin-top:14px">Primero se cambia el estado compartido, después se avisa.</p>
+      <p class="small muted" style="margin-top:14px">En la captura del material falta el paréntesis: <code>_cond.notify_one;</code> no llama a nada. Tiene que ser <code>notify_one()</code>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Paso 3: esperar y los despertares espurios" data-block="8 · Cola de mensajes" data-init="spurious">
+  <h2>Paso 3: esperar y los despertares espurios</h2>
+  <div class="split" style="grid-template-columns:1fr 1fr;gap:40px">
+    <div>
+      <div class="seg" id="spMode"><button data-m="if" class="on">if (_vehicles.empty())</button><button data-m="while">while (_vehicles.empty())</button></div>
+      <pre class="code sm" id="spCode" style="margin-top:14px"></pre>
+      <p class="small muted" style="margin-top:12px">De vez en cuando el sistema despierta a un hilo sin que nadie haya notificado. Es un despertar espurio.</p>
+    </div>
+    <div>
+      <div class="ctrl" style="margin-bottom:14px"><button class="btn" data-act="step">Siguiente paso</button><button class="btn" data-act="reset">Reiniciar</button></div>
+      <h3 style="font-size:17px">_vehicles</h3>
+      <div class="mon-vec" id="spVec" style="margin-bottom:16px"></div>
+      <span class="mutexbox free" id="spMutex"><span class="lamp" id="spLamp"></span><span id="spMutexT">_mutex libre</span></span>
+      <p id="spTxt" style="margin-top:18px;min-height:110px;font-size:19px"></p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Paso 3 simplificado: wait con predicado" data-block="8 · Cola de mensajes">
+  <h2>Paso 3 simplificado: wait con predicado</h2>
+  <div class="cols c2" style="gap:44px">
+    <div>
+      <h3>wait revisa y repite por nosotros</h3>
+      <pre class="code sm" data-src="cvPredRight" data-hlgreen="2"></pre>
+      <p style="margin-top:12px">La lambda devuelve true cuando se puede seguir: hay elementos. Por eso la expresión va negada.</p>
+      <h3 style="margin-top:22px">Es exactamente esto</h3>
+      <pre class="code sm" data-src="cvEquiv"></pre>
+    </div>
+    <div>
+      <h3>Cuidado con la versión del material</h3>
+      <pre class="code sm" data-src="cvPredWrong" data-hlred="2"></pre>
+      <p style="margin-top:12px">La lambda no tiene <code>return</code>, así que no compila como predicado. Y la condición está al revés: esperaría hasta que el vector quede vacío.</p>
+      <p style="margin-top:18px;font-weight:700">Cuando wait retorna, el vector tiene al menos un elemento y el hilo tiene el cerrojo. Sin carrera de datos. Al salir del ámbito, el cerrojo se libera solo.</p>
+    </div>
+  </div>
+  <aside class="notes">El código completo del material sí trae la versión correcta con return !_vehicles.empty(). La captura suelta del paso 3 es la que tiene el error.</aside>
+</section>
+
+<section class="slide" data-title="Código completo de WaitingVehicles" data-block="8 · Cola de mensajes">
+  <h2>El código completo</h2>
+  <div class="cols c2" style="gap:30px">
+    <pre class="code xs" data-src="cvFullClass" data-hl="7,9,20,24"></pre>
+    <pre class="code xs" data-src="cvFullMain" data-hl="16"></pre>
+  </div>
+  <aside class="notes">Faltan dos encabezados en el material: &lt;condition_variable&gt; para std::condition_variable y &lt;algorithm&gt; para std::for_each. Suelen llegar de forma transitiva, pero no es portable.</aside>
+</section>
+
+<section class="slide" data-title="Simulación: main duerme en lugar de girar" data-block="8 · Cola de mensajes" data-init="cvRun">
+  <h2>Simulación: main duerme en lugar de girar</h2>
+  <div class="ctrl" style="margin-bottom:16px">
+    <button class="btn" id="crRun">Ejecutar</button>
+    <button class="btn" id="crStop">Detener con Ctrl+C</button>
+    <span class="small muted">Tiempo ralentizado 15 veces</span>
+  </div>
+  <div class="split" style="grid-template-columns:1.05fr .95fr;gap:34px">
+    <div>
+      <h3 style="font-size:17px">Hilos productores</h3>
+      <div id="crWorkers" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px"></div>
+      <h3 style="font-size:17px">_vehicles</h3>
+      <div class="mon-vec" id="crVec" style="margin-bottom:16px"></div>
+      <div class="card" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:center">
+        <div><div class="small muted">estado de main</div><div id="crState" style="font-size:18px;font-weight:700">—</div></div>
+        <div><div class="small muted">veces que despertó</div><div class="mono" id="crWakes" style="font-size:26px;font-weight:700">0</div></div>
+        <div><div class="small muted">uso de CPU por main</div><div class="cpu"><i id="crCpu"></i></div><div class="mono small" id="crCpuT">0 %</div></div>
+      </div>
+      <p id="crTxt" style="margin-top:14px;font-weight:700;min-height:56px"></p>
+    </div>
+    <div class="term" id="crTerm" style="height:440px;overflow:hidden;font-size:13px"></div>
+  </div>
+</section>
+
+<section class="slide" data-title="Lo que muestra la salida" data-block="8 · Cola de mensajes">
+  <h2>Lo que muestra la salida</h2>
+  <div class="split" style="grid-template-columns:.95fr 1.05fr;gap:40px">
+    <div class="term" style="font-size:13.5px">Spawning threads...
+Collecting results...
+   Vehicle #0 will be added to the queue
+   Vehicle #1 will be added to the queue
+   Vehicle #2 will be added to the queue
+   Vehicle #4 will be added to the queue
+   Vehicle #6 will be added to the queue
+   Vehicle #7 will be added to the queue
+   Vehicle #8 will be added to the queue
+   Vehicle #8 has been removed from the queue
+   Vehicle #7 has been removed from the queue
+   Vehicle #6 has been removed from the queue
+   Vehicle #4 has been removed from the queue
+   Vehicle #2 has been removed from the queue
+   Vehicle #1 has been removed from the queue
+   Vehicle #0 has been removed from the queue
+   Vehicle #3 will be added to the queue
+   Vehicle #5 will be added to the queue
+   Vehicle #3 has been removed from the queue
+   Vehicle #5 has been removed from the queue
+   Vehicle #9 will be added to the queue
+   Vehicle #9 has been removed from the queue<span class="pulse">▌</span></div>
+    <div>
+      <div class="q"><strong>Ya no hay espera activa</strong><div class="reveal-a show">Mientras la cola está vacía, main duerme dentro de wait. El procesador queda libre.</div></div>
+      <div class="q"><strong>Llegan en ráfagas</strong><div class="reveal-a show">Siete vehículos entran antes de que main alcance a despertar y tomar el cerrojo. Cuando lo toma, el predicado ya es true y sigue sin volver a dormir.</div></div>
+      <div class="q"><strong>Salen al revés</strong><div class="reveal-a show">8, 7, 6, 4, 2, 1, 0: popBack saca el último. Sigue siendo una pila.</div></div>
+      <div class="q"><strong>Y todavía no termina</strong><div class="reveal-a show">while (true) no tiene salida. main queda dormido para siempre esperando un vehículo que no llega. «Finished!» nunca se imprime.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Ejercicio 5 · Una cola de mensajes genérica" data-block="8 · Cola de mensajes">
+  <h2>Ejercicio 5 · Una cola de mensajes genérica</h2>
+  <div class="split" style="grid-template-columns:1fr 1fr;gap:40px">
+    <div>
+      <p style="margin-bottom:14px">WaitingVehicles es código genérico: con pocos cambios puede pasar casi cualquier tipo de dato entre hilos.</p>
+      <ul class="b">
+        <li>Conviertan la clase en plantilla con <code>template&lt;class T&gt;</code> y llámenla <code>MessageQueue</code>.</li>
+        <li>Reemplacen <code>std::vector</code> por <code>std::deque</code> para recibir en orden de llegada (FIFO). Llámenla <code>_messages</code>.</li>
+        <li>Adapten pushBack a plantillas y llámenlo <code>send</code>. Lo mismo con popBack, que pasa a ser <code>receive</code>.</li>
+        <li>Prueben la cola con el main de la derecha.</li>
+      </ul>
+    </div>
+    <pre class="code xs" data-src="mqMain" data-hl="3,9,15"></pre>
+  </div>
+</section>
+
+<section class="slide" data-title="Ejercicio 5 · Solución y el detalle del FIFO" data-block="8 · Cola de mensajes" data-init="questions">
+  <h2>Ejercicio 5 · Solución y el detalle del FIFO</h2>
+  <div class="split" style="grid-template-columns:1.1fr 1fr;gap:36px">
+    <pre class="code xs" data-src="mqClass" data-hlred="9,10"></pre>
+    <div>
+      <p>La clase compila y funciona. Pero hay una diferencia entre lo que pide el enunciado y lo que hace el código. <span class="small muted">Clic en cada pregunta.</span></p>
+      <div class="q" style="margin-top:12px"><strong>¿La cola entrega en orden de llegada?</strong><div class="reveal-a">No. Usa back() y pop_back(): saca el último, igual que el vector. Cambiar a deque no alcanza; hay que sacar por el frente.</div></div>
+      <div class="q"><strong>¿Qué dos líneas lo corrigen?</strong><div class="reveal-a"><code>T msg = std::move(_messages.front());</code> y <code>_messages.pop_front();</code>. Eso es lo que justifica usar deque.</div></div>
+      <div class="q"><strong>¿Qué encabezados faltan?</strong><div class="reveal-a">&lt;condition_variable&gt; y &lt;deque&gt;. Incluye &lt;queue&gt;, que trae deque de forma indirecta, pero conviene incluir lo que se usa.</div></div>
+      <div class="q"><strong>¿Termina el programa?</strong><div class="reveal-a">No: el while (true) de main sigue sin condición de salida. Queda dormido en receive() después del último mensaje.</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-title="Simulación: LIFO frente a FIFO" data-block="8 · Cola de mensajes" data-init="fifo">
+  <h2>Simulación: LIFO frente a FIFO</h2>
+  <div class="ctrl" style="margin-bottom:18px">
+    <div class="seg" id="ffMode"><button data-m="lifo" class="on">back() y pop_back()</button><button data-m="fifo">front() y pop_front()</button></div>
+    <button class="btn" id="ffRun">Ejecutar</button>
+    <span class="small muted">Los mensajes llegan más rápido de lo que main los procesa</span>
+  </div>
+  <div class="split" style="grid-template-columns:1.1fr .9fr;gap:40px">
+    <div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;color:#6E6E73;margin-bottom:6px"><span>frente</span><span>_messages</span><span>final</span></div>
+      <div class="mon-vec" id="ffDeque" style="min-height:56px;justify-content:flex-start"></div>
+      <h3 style="margin-top:28px">Orden en que main los recibe</h3>
+      <div id="ffOut" style="display:flex;flex-wrap:wrap;gap:8px;min-height:44px"></div>
+      <p id="ffTxt" style="margin-top:22px;font-weight:700;min-height:56px"></p>
+    </div>
+    <div class="term" id="ffTerm" style="height:400px;overflow:hidden;font-size:13px"></div>
+  </div>
+</section>
+
+<section class="slide" data-title="Reglas para usar variables de condición" data-block="8 · Cola de mensajes">
+  <h2>Reglas para usar variables de condición</h2>
+  <table class="t">
+    <thead><tr><th style="width:420px">Regla</th><th>Por qué</th></tr></thead>
+    <tbody>
+      <tr><td>Siempre junto a un estado compartido</td><td>La variable de condición no recuerda avisos. El estado sí.</td></tr>
+      <tr><td>Revisar el estado bajo el mismo mutex</td><td>Cierra el hueco entre revisar y esperar.</td></tr>
+      <tr><td>Usar <code>unique_lock</code> y pasárselo a <code>wait</code></td><td>wait lo suelta al dormir y lo retoma al despertar, en un paso atómico.</td></tr>
+      <tr><td>Esperar con predicado, nunca con <code>if</code></td><td>Los despertares espurios existen; hay que volver a revisar.</td></tr>
+      <tr><td>Cambiar el estado y después notificar</td><td>Quien despierta tiene que encontrar el dato ya listo.</td></tr>
+      <tr><td><code>notify_one</code> si basta uno, <code>notify_all</code> si todos deben revisar</td><td>Despertar a todos sin necesidad hace que compitan por el mismo cerrojo.</td></tr>
+    </tbody>
+  </table>
+</section>
+<!-- ============ BLOQUE 9 ============ -->
+<section class="slide divider" data-title="Prevención y conexión con IA" data-block="9 · Prevención">
+  <h1 class="cover">Prevención</h1>
+  <div class="cover-sub">Y por qué importa en IA</div>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+<section class="slide" data-title="Las cuatro condiciones de un deadlock" data-block="9 · Prevención">
+  <h2>Las cuatro condiciones de un deadlock</h2>
+  <p class="lead" style="margin-bottom:22px">Se necesitan las cuatro a la vez (Coffman, 1971). Romper una basta.</p>
+  <table class="t">
+    <thead><tr><th style="width:220px">Condición</th><th>En Deadlock 2</th><th>Cómo se rompe</th></tr></thead>
+    <tbody>
+      <tr><td>Exclusión mutua</td><td>Cada mutex lo tiene un solo hilo</td><td>No compartir el dato: copias o datos por hilo</td></tr>
+      <tr><td>Retener y esperar</td><td>A retiene mutex2 mientras pide mutex1</td><td>Tomar todos los cerrojos juntos: std::lock, scoped_lock</td></tr>
+      <tr><td>Sin expropiación</td><td>Nadie puede quitarle el mutex a otro hilo</td><td>try_lock_for: rendirse y soltar lo que se tiene</td></tr>
+      <tr><td>Espera circular</td><td>A espera a B y B espera a A</td><td>Orden global: todos piden mutex1 antes que mutex2</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="slide" data-title="Por qué importa en un curso de GPU" data-block="9 · Prevención">
+  <h2>Por qué importa en un curso de GPU</h2>
+  <div class="cols c3" style="margin-top:20px">
+    <div><h3>Servir modelos</h3><p>Un servidor de inferencia recibe peticiones en varios hilos y las encola para armar el batch que va a la GPU.</p><p style="margin-top:12px">Esa cola es un MessageQueue: los hilos que arman el batch duermen en wait hasta que llega una petición.</p></div>
+    <div><h3>Varias GPU</h3><p>Si un proceso llama a all_reduce sobre el tensor A y luego B, y otro lo hace en orden inverso, el entrenamiento se cuelga.</p><p style="margin-top:12px">Es Deadlock 2 con otra ropa.</p></div>
+    <div><h3>Dentro de la GPU</h3><p>En un kernel CUDA, miles de hilos no pueden hacer fila para un mutex.</p><p style="margin-top:12px">La estrategia cambia: diseñar para que cada hilo escriba su propia posición. Lo vemos en la unidad de CUDA.</p></div>
+  </div>
+  <div class="strong-foot">Primero dominamos el problema donde se puede depurar paso a paso: en la CPU.</div>
+</section>
+
+<section class="slide" data-title="Ideas para llevarse" data-block="9 · Prevención">
+  <h2>Ideas para llevarse</h2>
+  <ul class="b" style="margin-top:0">
+    <li>Un mutex es un protocolo: protege solo si todo acceso lo respeta, incluidas las lecturas.</li>
+    <li>Una carrera de datos puede dar un resultado incorrecto sin error y con código de salida 0.</li>
+    <li>Deadlock 1: un camino de salida sin unlock deja el cerrojo tomado para siempre. lock_guard y unique_lock lo evitan.</li>
+    <li>El cerrojo debe cubrir el recurso crítico y nada más. unique_lock permite soltarlo en medio.</li>
+    <li>Deadlock 2: dos hilos que piden los mismos mutex en orden opuesto se bloquean. RAII no alcanza: std::lock o scoped_lock.</li>
+    <li>Un monitor junta datos, mutex y métodos. Preguntar sin parar si hay datos gasta CPU y no sabe cuándo terminar.</li>
+    <li>Una variable de condición no recuerda avisos: va con un estado compartido, revisado bajo el mismo mutex y con predicado.</li>
+  </ul>
+  <div class="cover-foot">Jose Jesus CP</div>
+</section>
+
+</div><!-- /stage -->
+<div id="progress"></div>
+<div id="hint">← → navegar · M índice · F pantalla completa · N notas</div>
+<div id="index"><h2>Índice</h2><ol id="indexList"></ol></div>
+<div id="notesPane"></div>
+
+<script>
+/* =====================================================================
+   CÓDIGO FUENTE DE LOS EJEMPLOS
+   ===================================================================== */
+const CODE = {
+raceClasses:
+`class Vehicle
+{
+public:
+    Vehicle(int id) : _id(id) {}
+private:
+    int _id;
+};
+
+class WaitingVehicles
+{
+public:
+    WaitingVehicles() : _tmpVehicles(0) {}
+    void printSize()
+    {
+        std::cout << "#vehicles = " << _tmpVehicles << std::endl;
+    }
+    void pushBack(Vehicle &&v)
+    {
+        //_vehicles.push_back(std::move(v)); // data race
+        int oldNum = _tmpVehicles;
+        std::this_thread::sleep_for(std::chrono::microseconds(1));
+        _tmpVehicles = oldNum + 1;
+    }
+private:
+    std::vector<Vehicle> _vehicles;
+    int _tmpVehicles;
+};`,
+
+raceMain:
+`int main()
+{
+    std::shared_ptr<WaitingVehicles> queue(new WaitingVehicles);
+    std::vector<std::future<void>> futures;
+    for (int i = 0; i < 1000; ++i)
+    {
+        Vehicle v(i);
+        futures.emplace_back(std::async(std::launch::async,
+                             &WaitingVehicles::pushBack, queue, std::move(v)));
+    }
+    std::for_each(futures.begin(), futures.end(), [](std::future<void> &ftr) {
+        ftr.wait();
+    });
+    queue->printSize();
+    return 0;
+}`,
+
+racePush:
+`void pushBack(Vehicle &&v)
+{
+    //_vehicles.push_back(std::move(v));
+    int oldNum = _tmpVehicles;          // leer
+    std::this_thread::sleep_for(
+        std::chrono::microseconds(1));  // esperar
+    _tmpVehicles = oldNum + 1;          // escribir
+}`,
+
+mutexClass:
+`class WaitingVehicles
+{
+public:
+    void printSize()
+    {
+        _mutex.lock();
+        std::cout << "#vehicles = " << _vehicles.size() << std::endl;
+        _mutex.unlock();
+    }
+    void pushBack(Vehicle &&v)
+    {
+        _mutex.lock();
+        _vehicles.emplace_back(std::move(v));
+        _mutex.unlock();
+    }
+private:
+    std::vector<Vehicle> _vehicles;
+    std::mutex _mutex;
+};`,
+
+timedSolution:
+`std::timed_mutex _mutex;   // miembro privado
+
+void pushBack(Vehicle &&v) {
+    for (size_t i = 0; i < 3; ++i) {
+        if (_mutex.try_lock_for(std::chrono::milliseconds(100))) {
+            _vehicles.emplace_back(std::move(v));
+            //std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            _mutex.unlock();
+            break;
+        } else {
+            std::cout << "Error! Vehicle #" << v.getID()
+                      << " could not be added to the vector" << std::endl;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+}`,
+
+divOriginal:
+`double result;
+
+void printResult(int denom)
+{
+    std::cout << "for denom = " << denom
+              << ", the result is " << result << std::endl;
+}
+
+void divideByNumber(double num, double denom)
+{
+    try {
+        if (denom != 0) {
+            result = num / denom;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            printResult(denom);
+        } else {
+            throw std::invalid_argument(
+                "Exception from thread: Division by zero!");
+        }
+    } catch (const std::invalid_argument &e) {
+        std::cout << e.what() << std::endl;
+        return;
+    }
+}`,
+
+divNaive:
+`std::mutex mtx;
+
+void divideByNumber(double num, double denom)
+{
+    mtx.lock();
+    try {
+        if (denom != 0) {
+            result = num / denom;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            printResult(denom);
+        } else {
+            throw std::invalid_argument(
+                "Exception from thread: Division by zero!");
+        }
+    } catch (const std::invalid_argument &e) {
+        std::cout << e.what() << std::endl;
+        return;          // sale sin mtx.unlock()
+    }
+    mtx.unlock();
+}`,
+
+divFixManual:
+`catch (const std::invalid_argument &e)
+{
+    std::cout << e.what() << std::endl;
+    mtx.unlock();    // antes de salir
+    return;
+}`,
+
+divFixGuard:
+`void divideByNumber(double num, double denom)
+{
+    std::lock_guard<std::mutex> lck(mtx);
+    try { /* ... igual ... */ }
+    catch (const std::invalid_argument &e)
+    {
+        std::cout << e.what() << std::endl;
+        return;   // el destructor de lck libera mtx
+    }
+}             // o aquí, al salir del ámbito`,
+
+dl2Raw:
+`std::mutex mutex1, mutex2;
+
+void ThreadA()
+{
+    mutex2.lock();
+    std::cout << "Thread A" << std::endl;
+    mutex1.lock();
+    mutex2.unlock();
+    mutex1.unlock();
+}
+
+void ThreadB()
+{
+    mutex1.lock();
+    std::cout << "Thread B" << std::endl;
+    mutex2.lock();
+    mutex1.unlock();
+    mutex2.unlock();
+}
+
+void ExecuteThreads()
+{
+    std::thread t1(ThreadA);
+    std::thread t2(ThreadB);
+    t1.join();
+    t2.join();
+    std::cout << "Finished" << std::endl;
+}`,
+
+guardFull:
+`void divideByNumber(double num, double denom)
+{
+    std::lock_guard<std::mutex> lck(mtx);
+    try
+    {
+        if (denom != 0)
+        {
+            result = num / denom;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            printResult(denom);
+        }
+        else
+        {
+            throw std::invalid_argument(
+                "Exception from thread: Division by zero!");
+        }
+    }
+    catch (const std::invalid_argument &e)
+    {
+        std::cout << e.what() << std::endl;
+        return;
+    }
+}`,
+
+guardScoped:
+`void divideByNumber(double num, double denom)
+{
+    try
+    {
+        if (denom != 0) {
+            std::lock_guard<std::mutex> lck(mtx);
+            result = num / denom;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            printResult(denom);
+        }   // lck se destruye aquí: unlock
+        else {
+            throw std::invalid_argument(
+                "Exception from thread: Division by zero!");
+        }
+    }
+    catch (const std::invalid_argument &e)
+    {
+        std::cout << e.what() << std::endl;
+        return;
+    }
+}`,
+
+uniqueFull:
+`void divideByNumber(double num, double denom)
+{
+    std::unique_lock<std::mutex> lck(mtx);
+    try {
+        if (denom != 0) {
+            result = num / denom;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            printResult(denom);
+            lck.unlock();
+            // do something outside of the lock
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            lck.lock();
+            // do something else under the lock
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        } else {
+            throw std::invalid_argument(
+                "Exception from thread: Division by zero!");
+        }
+    } catch (const std::invalid_argument &e) {
+        std::cout << e.what() << std::endl;
+        return;
+    }
+}`,
+
+ul1:
+`std::unique_lock<std::mutex> lck;
+// lck.owns_lock() == false`,
+ul2:
+`std::unique_lock<std::mutex> lck(mtx, std::defer_lock);
+// ... trabajo sin cerrojo ...
+lck.lock();`,
+ul3:
+`std::unique_lock<std::mutex> lck(mtx, std::try_to_lock);
+if (lck.owns_lock()) { /* sección crítica */ }`,
+ul4:
+`std::unique_lock<std::timed_mutex> lck(tmtx,
+        std::chrono::milliseconds(50));
+if (lck.owns_lock()) { /* sección crítica */ }`,
+
+dl2Guard:
+`std::mutex mutex1, mutex2;
+
+void ThreadA()
+{
+    std::lock_guard<std::mutex> lock2(mutex2);
+    std::cout << "Thread A" << std::endl;
+    std::lock_guard<std::mutex> lock1(mutex1);
+}
+
+void ThreadB()
+{
+    std::lock_guard<std::mutex> lock1(mutex1);
+    std::cout << "Thread B" << std::endl;
+    std::lock_guard<std::mutex> lock2(mutex2);
+}`,
+
+dl2StdLock:
+`void ThreadA()
+{
+    std::lock(mutex1, mutex2);
+    std::lock_guard<std::mutex> lock2(mutex2, std::adopt_lock);
+    std::cout << "Thread A" << std::endl;
+    std::lock_guard<std::mutex> lock1(mutex1, std::adopt_lock);
+}
+void ThreadB()
+{
+    std::lock(mutex1, mutex2);
+    std::lock_guard<std::mutex> lock1(mutex1, std::adopt_lock);
+    std::cout << "Thread B" << std::endl;
+    std::lock_guard<std::mutex> lock2(mutex2, std::adopt_lock);
+}`,
+
+lockDefer:
+`std::unique_lock<std::mutex>
+    lk1(mutex1, std::defer_lock);
+std::unique_lock<std::mutex>
+    lk2(mutex2, std::defer_lock);
+std::lock(lk1, lk2);
+// ambos bloqueados; se liberan
+// al destruirse lk1 y lk2`,
+
+scopedLock:
+`void ThreadA()
+{
+    std::scoped_lock lck(mutex1,
+                         mutex2);
+    std::cout << "Thread A"
+              << std::endl;
+}   // libera ambos`
+};
+
+/* =====================================================================
+   RESALTADO DE C++
+   ===================================================================== */
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const TOK = /(\/\/.*$|\/\*.*?\*\/)|("(?:[^"\\]|\\.)*")|(^\s*#\w+.*$)|(\b\d+(?:\.\d+)?\b)|(\bstd\b)|(\b(?:void|int|double|size_t|const|bool|auto|class|public|private)\b)|(\b(?:if|else|for|try|catch|throw|return|break|new|while)\b)|(\b(?:Vehicle|WaitingVehicles)\b)|(\b[A-Za-z_]\w*(?=\s*\())/g;
+function hlLine(line){
+  let out='', last=0, m;
+  TOK.lastIndex=0;
+  while((m=TOK.exec(line))){
+    out += esc(line.slice(last,m.index));
+    const cls = m[1]?'com':m[2]?'str':m[3]?'pre':m[4]?'num':m[5]?'std':m[6]?'ty':m[7]?'kw':m[8]?'std':'fn';
+    out += `<span class="tk-${cls}">${esc(m[0])}</span>`;
+    last = m.index + m[0].length;
+    if (m[0].length===0) TOK.lastIndex++;
+  }
+  return out + esc(line.slice(last));
+}
+function renderCode(pre){
+  const src = pre.dataset.src ? CODE[pre.dataset.src] : pre.textContent;
+  const lines = src.split('\n');
+  pre.innerHTML = lines.map((l,i)=>`<span class="ln" data-n="${i+1}">${hlLine(l)||' '}</span>`).join('');
+  const mark = (attr, cls) => (pre.getAttribute(attr)||'').split(',').filter(Boolean)
+      .forEach(n => { const el = pre.querySelector(`.ln[data-n="${n.trim()}"]`); if (el) el.classList.add(cls); });
+  mark('data-hl','hl'); mark('data-hlred','hl-red'); mark('data-hlgreen','hl-green');
+}
+/* renderCode se llama en el arranque, después de registrar todo el código */
+
+/* =====================================================================
+   NAVEGACIÓN
+   ===================================================================== */
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const stage = document.getElementById('stage');
+const slides = [...document.querySelectorAll('.slide')];
+const COMPONENTS = {};
+let cur = -1;
+
+function fit(){
+  const s = Math.min(innerWidth/1280, innerHeight/720) * (innerWidth < 700 ? 1 : 0.97);
+  stage.style.transform = `translate(-50%,-50%) scale(${s})`;
+}
+stage.style.transformOrigin = 'center';
+addEventListener('resize', fit); fit();
+// un botón con foco dentro de una diapositiva desplazada puede hacer scroll del escenario
+stage.addEventListener('scroll', ()=>{ stage.scrollLeft=0; stage.scrollTop=0; });
+
+slides.forEach((s,i)=>{
+  if (i===0) return;
+  const p = document.createElement('div');
+  p.className='pager';
+  p.innerHTML = `<span>${s.dataset.block||''}</span><span>${i+1}</span>`;
+  s.appendChild(p);
+});
+
+const idx = document.getElementById('indexList');
+slides.forEach((s,i)=>{
+  const li=document.createElement('li');
+  li.textContent = s.dataset.title || ('Diapositiva '+(i+1));
+  li.onclick = ()=>{ go(i); toggleIndex(false); };
+  idx.appendChild(li);
+});
+function toggleIndex(force){
+  const el=document.getElementById('index');
+  const open = force===undefined ? !el.classList.contains('open') : force;
+  el.classList.toggle('open', open);
+  [...idx.children].forEach((li,i)=>li.classList.toggle('cur', i===cur));
+}
+const notesPane = document.getElementById('notesPane');
+function updateNotes(){
+  const n = slides[cur].querySelector('.notes');
+  notesPane.textContent = n ? n.textContent.trim() : 'Sin notas para esta diapositiva.';
+}
+
+function go(n){
+  n = Math.max(0, Math.min(slides.length-1, n));
+  if (n===cur) return;
+  if (cur>=0){
+    const old = slides[cur];
+    old.classList.remove('active');
+    if (old._comp && old._comp.leave) old._comp.leave();
+  }
+  slides.forEach((s,i)=>s.classList.toggle('past', i<n));
+  cur = n;
+  const s = slides[n];
+  s.classList.add('active');
+  const name = s.dataset.init;
+  if (name && COMPONENTS[name]){
+    if (!s._comp) s._comp = COMPONENTS[name](s);
+    if (s._comp.enter) s._comp.enter();
+  }
+  if (n===0 && COMPONENTS.hero){ if(!s._comp) s._comp = COMPONENTS.hero(s); s._comp.enter(); }
+  document.getElementById('progress').style.width = ((n+1)/slides.length*100)+'%';
+  history.replaceState(null,'','#'+(n+1));
+  updateNotes();
+}
+
+addEventListener('keydown', e=>{
+  const tag = e.target.tagName;
+  if (tag==='INPUT' && (e.key==='ArrowLeft'||e.key==='ArrowRight')) return;
+  if (e.key==='ArrowRight'||e.key==='PageDown'){ go(cur+1); e.preventDefault(); }
+  else if (e.key==='ArrowLeft'||e.key==='PageUp'){ go(cur-1); e.preventDefault(); }
+  else if (e.key===' ' && tag!=='BUTTON' && tag!=='INPUT'){ go(cur+(e.shiftKey?-1:1)); e.preventDefault(); }
+  else if (e.key==='Home') go(0);
+  else if (e.key==='End') go(slides.length-1);
+  else if (e.key==='m'||e.key==='M') toggleIndex();
+  else if (e.key==='Escape') toggleIndex(false);
+  else if (e.key==='n'||e.key==='N') notesPane.classList.toggle('open');
+  else if (e.key==='f'||e.key==='F'){
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  }
+});
+
+stage.addEventListener('click', e=>{
+  if (e.target.closest('button,input,label,pre,.q,svg,table,.seg,.term,.bars,.gantt,.chip,.mutexbox,a')) return;
+  const r = stage.getBoundingClientRect();
+  go(cur + ((e.clientX - r.left) < r.width*0.25 ? -1 : 1));
+});
+let tx=null;
+addEventListener('touchstart', e=>{ tx=e.touches[0].clientX; }, {passive:true});
+addEventListener('touchend', e=>{
+  if (tx===null) return;
+  const dx = e.changedTouches[0].clientX - tx; tx=null;
+  if (Math.abs(dx)>60 && !e.target.closest('input')) go(cur + (dx<0?1:-1));
+});
+
+/* utilidades compartidas */
+const sleep = ms => new Promise(r=>setTimeout(r, REDUCED ? Math.min(ms,60) : ms));
+function countUp(el, to, ms=700){
+  const from = parseInt(el.textContent)||0, t0=performance.now();
+  if (REDUCED){ el.textContent=to; return; }
+  const tick = t=>{ const k=Math.min(1,(t-t0)/ms), e=1-Math.pow(1-k,3);
+    el.textContent = Math.round(from+(to-from)*e); if(k<1) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+}
+function stepRows(tbody, k){
+  [...tbody.rows].forEach((r,i)=>{ r.classList.toggle('seen', i<k); r.classList.toggle('now', i===k-1); });
+}
+function segOn(root, sel, val){ root.querySelectorAll(sel+' button').forEach(b=>b.classList.toggle('on', b.dataset.m===val||b.dataset.p===val)); }
+</script>
+
+<script>
+/* =====================================================================
+   BLOQUE 7 · CÓDIGO DEL PATRÓN MONITOR
+   ===================================================================== */
+Object.assign(CODE, {
+monMain:
+`int main()
+{
+    // create monitor object as a shared pointer
+    std::shared_ptr<WaitingVehicles> queue(new WaitingVehicles);
+
+    std::cout << "Spawning threads..." << std::endl;
+    std::vector<std::future<void>> futures;
+    for (int i = 0; i < 10; ++i)
+    {
+        // create a new Vehicle instance and move it into the queue
+        Vehicle v(i);
+        futures.emplace_back(std::async(std::launch::async,
+                             &WaitingVehicles::pushBack, queue, std::move(v)));
+    }
+    std::for_each(futures.begin(), futures.end(), [](std::future<void> &ftr) {
+        ftr.wait();
+    });
+    std::cout << "Collecting results..." << std::endl;
+    queue->printIDs();
+    return 0;
+}`,
+
+monClass:
+`class WaitingVehicles
+{
+public:
+    WaitingVehicles() {}
+    void printIDs()
+    {
+        std::lock_guard<std::mutex> myLock(_mutex);
+        for (auto &v : _vehicles)
+            std::cout << "   Vehicle #" << v.getID()
+                      << " is now waiting in the queue" << std::endl;
+    }
+    void pushBack(Vehicle &&v)
+    {
+        // perform vector modification under the lock
+        std::lock_guard<std::mutex> uLock(_mutex);
+        std::cout << "   Vehicle #" << v.getID()
+                  << " will be added to the queue" << std::endl;
+        _vehicles.emplace_back(std::move(v));
+        // simulate some work
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+private:
+    std::vector<Vehicle> _vehicles;
+    std::mutex _mutex;
+};`,
+
+pollClass:
+`bool dataIsAvailable()
+{
+    std::lock_guard<std::mutex> myLock(_mutex);
+    return !_vehicles.empty();
+}
+
+Vehicle popBack()
+{
+    // perform vector modification under the lock
+    std::lock_guard<std::mutex> uLock(_mutex);
+    // remove last vector element from queue
+    Vehicle v = std::move(_vehicles.back());
+    _vehicles.pop_back();
+    return v; // will not be copied due to RVO
+}
+
+void pushBack(Vehicle &&v)
+{
+    // simulate some work
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // perform vector modification under the lock
+    std::lock_guard<std::mutex> uLock(_mutex);
+    std::cout << "   Vehicle #" << v.getID()
+              << " will be added to the queue" << std::endl;
+    _vehicles.emplace_back(std::move(v));
+}`,
+
+pollMain:
+`int main()
+{
+    std::shared_ptr<WaitingVehicles> queue(new WaitingVehicles);
+    std::cout << "Spawning threads..." << std::endl;
+    std::vector<std::future<void>> futures;
+    for (int i = 0; i < 10; ++i) {
+        Vehicle v(i);
+        futures.emplace_back(std::async(std::launch::async,
+                             &WaitingVehicles::pushBack, queue, std::move(v)));
+    }
+    std::cout << "Collecting results..." << std::endl;
+    while (true)
+    {
+        if (queue->dataIsAvailable())
+        {
+            Vehicle v = queue->popBack();
+            std::cout << "   Vehicle #" << v.getID()
+                      << " has been removed from the queue" << std::endl;
+        }
+    }
+    std::for_each(futures.begin(), futures.end(), [](std::future<void> &ftr) {
+        ftr.wait();
+    });
+    std::cout << "Finished processing queue" << std::endl;
+    return 0;
+}`,
+
+counterClass:
+`class WaitingVehicles
+{
+public:
+    WaitingVehicles() : _numVehicles(0) {}
+    int getNumVehicles() {
+        std::lock_guard<std::mutex> uLock(_mutex);
+        return _numVehicles;
+    }
+    // dataIsAvailable() igual que antes
+    Vehicle popBack() {
+        std::lock_guard<std::mutex> uLock(_mutex);
+        Vehicle v = std::move(_vehicles.back());
+        _vehicles.pop_back();
+        --_numVehicles;
+        return v;
+    }
+    void pushBack(Vehicle &&v) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::lock_guard<std::mutex> uLock(_mutex);
+        std::cout << "   Vehicle #" << v.getID()
+                  << " will be added to the queue" << std::endl;
+        _vehicles.emplace_back(std::move(v));
+        ++_numVehicles;
+    }
+private:
+    std::vector<Vehicle> _vehicles;
+    std::mutex _mutex;
+    int _numVehicles;
+};`,
+
+counterMain:
+`std::cout << "Collecting results..." << std::endl;
+while (true)
+{
+    if (queue->dataIsAvailable())
+    {
+        Vehicle v = queue->popBack();
+        std::cout << "   Vehicle #" << v.getID()
+                  << " has been removed from the queue" << std::endl;
+        if (queue->getNumVehicles() <= 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            break;
+        }
+    }
+}
+std::for_each(futures.begin(), futures.end(),
+              [](std::future<void> &ftr) { ftr.wait(); });
+std::cout << "Finished : " << queue->getNumVehicles()
+          << " vehicle(s) left in the queue" << std::endl;`
+});
+
+/* =====================================================================
+   MONITOR: diagrama vivo, un método a la vez
+   ===================================================================== */
+COMPONENTS.monDiagram = (s)=>{
+  const clients = s.querySelector('#monClients'), vec = s.querySelector('#monVec');
+  const box = s.querySelector('#monMutex'), lamp = s.querySelector('#monLamp'), mt = s.querySelector('#monMutexT');
+  const names = ['hilo 1','hilo 2','hilo 3','hilo 4','main'];
+  clients.innerHTML = names.map((n,i)=>`<span class="chip" data-c="${i}">${n}</span>`).join('');
+  let timer=null, phase=0, count=0, owner=null;
+  const chip = i => clients.querySelector(`[data-c="${i}"]`);
+  const row = m => s.querySelector(`[data-mm="${m}"]`);
+  function release(){
+    s.querySelectorAll('.mon-method').forEach(r=>{ r.classList.remove('active'); r.querySelector('.mon-inside').textContent=''; });
+    names.forEach((_,i)=>chip(i).classList.remove('run','wait'));
+    vec.querySelectorAll('.slot').forEach(x=>x.classList.remove('flash'));
+    box.classList.add('free'); lamp.classList.remove('taken'); mt.textContent='_mutex libre';
+  }
+  function acquire(){
+    const isPrint = count>0 && count%4===0;
+    const who = isPrint ? 4 : Math.floor(Math.random()*4);
+    const m = isPrint ? 'print' : 'push';
+    names.forEach((_,i)=>{ if (i!==who && Math.random()<0.45 && i!==4) chip(i).classList.add('wait'); });
+    chip(who).classList.add('run');
+    row(m).classList.add('active'); row(m).querySelector('.mon-inside').textContent = names[who]+' dentro';
+    box.classList.remove('free'); lamp.classList.add('taken'); mt.textContent='_mutex: '+names[who];
+    if (isPrint){ vec.querySelectorAll('.slot').forEach(x=>x.classList.add('flash')); }
+    else {
+      if (vec.children.length>=7) vec.innerHTML='';
+      const sl=document.createElement('span'); sl.className='slot'; sl.textContent='#'+count; vec.appendChild(sl);
+    }
+    count++;
+  }
+  function tick(){ if (phase%2===0) acquire(); else release(); phase++; }
+  return {
+    enter(){ vec.innerHTML=''; count=0; phase=0; release(); tick(); if(!REDUCED) timer=setInterval(tick, 850); },
+    leave(){ clearInterval(timer); }
+  };
+};
+
+/* =====================================================================
+   MONITOR: ejecución de printIDs al final (recrea la grabación de consola)
+   ===================================================================== */
+COMPONENTS.monRun = (s)=>{
+  let mode='inside', raf=null;
+  const chart=s.querySelector('#mrChart'), term=s.querySelector('#mrTerm'), clock=s.querySelector('#mrClock'), txt=s.querySelector('#mrTxt');
+  const XMAX = 5600;
+  function plan(){
+    const lanes=[], ev=[{t:0, l:'Spawning threads...'}];
+    if (mode==='inside'){
+      for (let i=0;i<10;i++){
+        const segs=[]; if (i) segs.push({a:0,b:500*i,c:'wait'}); segs.push({a:500*i,b:500*i+500,c:'crit'});
+        lanes.push({name:'hilo '+i, segs}); ev.push({t:500*i+1, l:`   Vehicle #${i} will be added to the queue`});
+      }
+      lanes.unshift({name:'main', segs:[{a:0,b:5000,c:'wait'},{a:5000,b:5120,c:'crit'}]});
+      ev.push({t:5001, l:'Collecting results...'});
+      for (let i=0;i<10;i++) ev.push({t:5010+i*10, l:`   Vehicle #${i} is now waiting in the queue`});
+      ev.push({t:5150, l:'<span class="dim">Process exited with code 0.</span>'});
+      return {lanes, ev, end:5300};
+    }
+    for (let i=0;i<10;i++){
+      const a=i*12, segs=[]; if (i) segs.push({a:0,b:a,c:'wait'});
+      segs.push({a, b:a+12, c:'crit'}, {a:a+12, b:a+512, c:'free'});
+      lanes.push({name:'hilo '+i, segs}); ev.push({t:a+1, l:`   Vehicle #${i} will be added to the queue`});
+    }
+    lanes.unshift({name:'main', segs:[{a:0,b:620,c:'wait'},{a:620,b:740,c:'crit'}]});
+    ev.push({t:621, l:'Collecting results...'});
+    for (let i=0;i<10;i++) ev.push({t:630+i*10, l:`   Vehicle #${i} is now waiting in the queue`});
+    ev.push({t:780, l:'<span class="dim">Process exited with code 0.</span>'});
+    return {lanes, ev, end:900};
+  }
+  function run(){
+    cancelAnimationFrame(raf);
+    const P = plan();
+    chart.innerHTML = P.lanes.map(l=>`<div class="glane"><span class="gname">${l.name}</span>${
+      l.segs.map(g=>`<div class="gseg ${g.c}" data-a="${g.a}" data-b="${g.b}" style="left:${g.a/XMAX*100}%;width:0;display:none"></div>`).join('')}</div>`).join('')
+      + `<div style="position:relative;height:18px;font-size:12px;color:#6E6E73;white-space:nowrap">${[0,1,2,3,4,5].map(v=>`<span style="position:absolute;left:${v*1000/XMAX*100}%;transform:translateX(${v?'-50%':'0'})">${v} s</span>`).join('')}</div>`
+      + `<div class="playhead" id="mrHead"></div>`;
+    term.innerHTML=''; txt.textContent='';
+    const segs=[...chart.querySelectorAll('.gseg')], head=chart.querySelector('#mrHead');
+    let shown=0; const t0=performance.now();
+    const frame = now=>{
+      const t = REDUCED ? P.end : now - t0;
+      segs.forEach(g=>{ const a=+g.dataset.a, b=+g.dataset.b; g.style.display = t>a ? '' : 'none'; g.style.width = (Math.max(0, Math.min(b,t)-a)/XMAX*100)+'%'; });
+      head.style.left = (Math.min(t,P.end)/XMAX*100)+'%';
+      while (shown<P.ev.length && P.ev[shown].t<=t){ term.innerHTML += P.ev[shown].l+'\n'; shown++; term.scrollTop=term.scrollHeight; }
+      clock.textContent = (Math.min(t,P.end)/1000).toFixed(1).replace('.',',')+' s';
+      if (t < P.end) raf = requestAnimationFrame(frame);
+      else txt.textContent = mode==='inside'
+        ? 'Unos 5 s: cada hilo retiene el cerrojo mientras duerme, así que los diez van en fila.'
+        : 'Menos de 1 s: los hilos solo se turnan para escribir y duermen en paralelo.';
+    };
+    raf = requestAnimationFrame(frame);
+  }
+  s.querySelectorAll('#mrMode button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; segOn(s,'#mrMode',mode); run(); });
+  s.querySelector('#mrRun').onclick=run;
+  let first=true;
+  return { enter(){ if(first){ first=false; run(); } }, leave(){ cancelAnimationFrame(raf); } };
+};
+
+/* =====================================================================
+   COMPARACIÓN: lote frente a reactivo (estático)
+   ===================================================================== */
+document.querySelectorAll('.cmp-track').forEach(tr=>{
+  const arr = [0.4,0.9,1.6,2.1,2.9,3.4,4.1,4.6,5.3,5.8].map(v=>v/6.4*100);
+  let html = `<span class="lab" style="top:6px">hilos</span><span class="lab" style="top:36px">main</span>`;
+  arr.forEach(x=> html += `<span class="blk" style="top:4px;left:${x}%;width:2.4%;background:#FFFFBF;border:1.5px solid #B8B24A"></span>`);
+  if (tr.dataset.kind==='batch'){
+    html += `<span class="blk" style="top:36px;left:0;width:93%;background:repeating-linear-gradient(135deg,#FDECEA 0 6px,#F7C7C2 6px 12px);border:1.5px solid #E7A39C"></span>`;
+    html += `<span class="blk" style="top:36px;left:93.5%;width:6%;background:#C3C3FF;border:1.5px solid #6B6BD6"></span>`;
+  } else {
+    arr.forEach(x=> html += `<span class="blk" style="top:36px;left:${x+2.6}%;width:2.4%;background:#C3C3FF;border:1.5px solid #6B6BD6"></span>`);
+  }
+  tr.innerHTML = html;
+});
+
+/* =====================================================================
+   SONDEO: diez trabajadores, main girando en while (true)
+   ===================================================================== */
+COMPONENTS.poll = (s)=>{
+  const SCALE = 15;
+  const W=s.querySelector('#plWorkers'), vec=s.querySelector('#plVec'), term=s.querySelector('#plTerm'),
+        polls=s.querySelector('#plPolls'), cpu=s.querySelector('#plCpu'), cpuT=s.querySelector('#plCpuT'), txt=s.querySelector('#plTxt');
+  let raf=null, running=false;
+  const fmt = n => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,'\u2009');
+  function line(h){ term.innerHTML += h+'\n'; term.scrollTop = term.scrollHeight; }
+  function reset(){
+    cancelAnimationFrame(raf); running=false;
+    W.innerHTML = [...Array(10)].map((_,i)=>`<span class="chip" data-w="${i}" style="min-width:52px">#${i}</span>`).join('');
+    vec.innerHTML=''; term.innerHTML=''; polls.textContent='0'; cpu.style.width='0'; cpuT.textContent='0 %'; txt.textContent=''; txt.style.color='';
+  }
+  function run(){
+    reset(); running=true;
+    const arrivals = [...Array(10)].map((_,i)=>({id:i, t:100 + i*0.3 + Math.random()*28})).sort((a,b)=>a.t-b.t);
+    const stack=[]; let ai=0, nextPop=null, removed=0, n=0, emptyNoted=false;
+    W.querySelectorAll('.chip').forEach(c=>{ c.classList.add('sleep'); });
+    line('Spawning threads...'); line('Collecting results...');
+    cpu.style.width='100%'; cpuT.textContent='100 %';
+    let last=performance.now(); const t0=last;
+    const frame = now=>{
+      if (!running) return;
+      const t = (now - t0)/SCALE;               // ms simulados
+      n += (now-last)/SCALE * 20000; last=now;   // ~20 millones de vueltas por segundo
+      polls.textContent = fmt(n);
+      while (ai<arrivals.length && arrivals[ai].t<=t){
+        const a=arrivals[ai++]; const c=W.querySelector(`[data-w="${a.id}"]`);
+        c.classList.remove('sleep'); c.classList.add('run'); setTimeout(()=>{ c.classList.remove('run'); c.classList.add('done'); }, 380);
+        stack.push(a.id);
+        const sl=document.createElement('span'); sl.className='slot'; sl.dataset.id=a.id; sl.textContent='#'+a.id; vec.appendChild(sl);
+        line(`   Vehicle #${a.id} will be added to the queue`);
+        if (nextPop===null) nextPop = t + 3;
+      }
+      if (nextPop!==null && t>=nextPop && stack.length){
+        const id=stack.pop(); removed++;
+        const sl=vec.querySelector(`[data-id="${id}"]`); sl.classList.add('out'); setTimeout(()=>sl.remove(), 300);
+        line(`   Vehicle #${id} has been removed from the queue`);
+        nextPop = stack.length ? t + 3 : null;
+      }
+      if (nextPop===null && stack.length) nextPop = t + 3;
+      if (removed===10 && !emptyNoted){
+        emptyNoted=true;
+        txt.textContent='La cola quedó vacía y no llegará nada más, pero while (true) sigue girando. El programa no termina.';
+        txt.style.color='#D92D20';
+        line('<span class="dim">(sin más salida)</span><span class="pulse">▌</span>');
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+  }
+  s.querySelector('#plRun').onclick = run;
+  s.querySelector('#plStop').onclick = ()=>{
+    if (!running) return;
+    running=false; cancelAnimationFrame(raf);
+    term.innerHTML = term.innerHTML.replace('<span class="pulse">▌</span>','');
+    line('^C'); cpu.style.width='0'; cpuT.textContent='0 %';
+    txt.textContent='Hubo que matar el proceso desde afuera. Los futures nunca se esperaron y «Finished» nunca se imprimió.';
+    txt.style.color='#000';
+  };
+  reset();
+  return { leave(){ running=false; cancelAnimationFrame(raf); } };
+};
+
+/* =====================================================================
+   CONTADOR (EJERCICIO 4): ¿cuántos vehículos quedan?
+   ===================================================================== */
+function simulateCounter(delay, spread){
+  const P = [...Array(10)].map((_,i)=>({id:i, t:100 + i*0.15 + Math.random()*spread, popT:null}));
+  const pushedBy = t => P.filter(p=>p.t<=t).length;
+  let t = 1 + delay, popped = 0, breakAt = null;
+  for (let guard=0; guard<100; guard++){
+    const avail = P.filter(p=>p.t<=t && p.popT===null);
+    if (avail.length){
+      avail.sort((a,b)=>b.t-a.t)[0].popT = t;       // popBack: el último que llegó
+      popped++; t += 0.05 + Math.random()*0.5;      // imprimir + getNumVehicles
+      if (pushedBy(t) - popped <= 0){ breakAt = t; break; }
+    } else {
+      const next = P.filter(p=>p.t>t).sort((a,b)=>a.t-b.t)[0];
+      t = next.t + 0.01;                            // sondeo hasta que llega algo
+    }
+  }
+  return { P, start: 1+delay, breakAt, left: 10 - popped };
+}
+COMPONENTS.counter = (s)=>{
+  const dl=s.querySelector('#ctDelay'), sp=s.querySelector('#ctSpread'), line=s.querySelector('#ctLine'),
+        term=s.querySelector('#ctTerm'), stats=s.querySelector('#ctStats');
+  const XMAX = 420, px = v => (v/XMAX*100)+'%';
+  function draw(r){
+    let h = `<span class="lab" style="top:20px">pushBack</span><span class="lab" style="top:220px">main</span>`;
+    [0,100,200,300,400].forEach(v=> h += `<span class="ax" style="left:${px(v)}">${v} ms</span>`);
+    if (r.start>2) h += `<span class="zone" style="top:216px;left:0;width:${px(r.start)};background:#F2F2F3;border:1.5px solid #B9B9BD"></span><span style="position:absolute;top:244px;left:4px;font-size:12px;color:#6E6E73">retardo</span>`;
+    r.P.forEach((p,i)=>{ h += `<span class="dot ${p.popT===null?'left':''}" style="left:${px(p.t)};top:${24+i*17}px" title="Vehicle #${p.id}"></span>`;
+      if (p.popT!==null) h += `<span class="tick" style="left:${px(p.popT)};top:218px"></span>`; });
+    if (r.breakAt!==null){
+      const end = Math.min(r.breakAt+200, XMAX);
+      h += `<span class="brk" style="left:${px(r.breakAt)}"></span>`;
+      h += `<span class="zone" style="top:216px;left:${px(r.breakAt)};width:${px(end-r.breakAt)};background:repeating-linear-gradient(135deg,#FDECEA 0 6px,#F7C7C2 6px 12px);border:1.5px solid #E7A39C"></span>`;
+      h += `<span style="position:absolute;top:246px;left:calc(${px(r.breakAt)} + 6px);font-size:12px;font-weight:700;color:#D92D20;white-space:nowrap">contador = 0 → sleep 200 ms → break</span>`;
+    }
+    line.innerHTML = h;
+    term.innerHTML = `Finished : ${r.left} vehicle(s) left in the queue`;
+    term.style.color = r.left ? '#FF8A80' : '#8FE3A8';
+  }
+  function once(){
+    dl.nextElementSibling.textContent = dl.value+' ms'; sp.nextElementSibling.textContent = sp.value+' ms';
+    draw(simulateCounter(+dl.value, +sp.value)); stats.textContent='';
+  }
+  function many(){
+    let bad=0, sum=0;
+    for (let k=0;k<200;k++){ const r=simulateCounter(+dl.value, +sp.value); if (r.left){ bad++; sum+=r.left; } }
+    stats.innerHTML = `En <b>${bad} de 200</b> ejecuciones quedaron vehículos sin procesar` + (bad ? `, en promedio ${(sum/bad).toFixed(1)}.` : '.');
+  }
+  [dl,sp].forEach(x=>x.addEventListener('input', once));
+  s.querySelector('#ctOnce').onclick=once;
+  s.querySelector('#ctMany').onclick=()=>{ once(); many(); };
+  let first=true;
+  return { enter(){ if(first){ first=false; once(); } } };
+};
+</script>
+
+<script>
+/* =====================================================================
+   BLOQUE 8 · CÓDIGO DE LA COLA DE MENSAJES
+   ===================================================================== */
+Object.assign(CODE, {
+cvInside:
+`// pseudocódigo de _cond.wait(uLock)
+uLock.unlock();         // soltar el cerrojo...
+dormir_hasta_aviso();   // ...y dormir, en un solo paso
+uLock.lock();           // al despertar, retomarlo`,
+
+cvMembers:
+`private:
+    std::mutex _mutex;
+    std::condition_variable _cond;`,
+
+cvNotify:
+`// add vector to queue
+std::cout << "   Vehicle #" << v.getID()
+          << " will be added to the queue" << std::endl;
+_vehicles.emplace_back(std::move(v));
+_cond.notify_one(); // notify client after pushing`,
+
+cvPredRight:
+`std::unique_lock<std::mutex> uLock(_mutex);
+_cond.wait(uLock, [this] { return !_vehicles.empty(); });`,
+
+cvEquiv:
+`// _cond.wait(uLock, pred) equivale a:
+while (!pred())
+    _cond.wait(uLock);`,
+
+cvPredWrong:
+`std::unique_lock<std::mutex> uLock(_mutex);
+_cond.wait(uLock, [this] { _vehicles.empty(); });`,
+
+spIf:
+`Vehicle popBack()
+{
+    std::unique_lock<std::mutex> uLock(_mutex);
+    if (_vehicles.empty())
+        _cond.wait(uLock);
+    Vehicle v = std::move(_vehicles.back());
+    _vehicles.pop_back();
+    return v;
+}`,
+
+spWhile:
+`Vehicle popBack()
+{
+    std::unique_lock<std::mutex> uLock(_mutex);
+    while (_vehicles.empty())
+        _cond.wait(uLock);
+    Vehicle v = std::move(_vehicles.back());
+    _vehicles.pop_back();
+    return v;
+}`,
+
+cvFullClass:
+`class WaitingVehicles
+{
+public:
+    Vehicle popBack()
+    {
+        // perform vector modification under the lock
+        std::unique_lock<std::mutex> uLock(_mutex);
+        // pass unique lock to condition variable
+        _cond.wait(uLock, [this] { return !_vehicles.empty(); });
+        // remove last vector element from queue
+        Vehicle v = std::move(_vehicles.back());
+        _vehicles.pop_back();
+        return v;
+    }
+    void pushBack(Vehicle &&v)
+    {
+        // simulate some work
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // perform vector modification under the lock
+        std::lock_guard<std::mutex> uLock(_mutex);
+        std::cout << "   Vehicle #" << v.getID()
+                  << " will be added to the queue" << std::endl;
+        _vehicles.push_back(std::move(v));
+        _cond.notify_one(); // notify client after pushing
+    }
+private:
+    std::mutex _mutex;
+    std::condition_variable _cond;
+    std::vector<Vehicle> _vehicles;
+};`,
+
+cvFullMain:
+`int main()
+{
+    std::shared_ptr<WaitingVehicles> queue(new WaitingVehicles);
+    std::cout << "Spawning threads..." << std::endl;
+    std::vector<std::future<void>> futures;
+    for (int i = 0; i < 10; ++i)
+    {
+        Vehicle v(i);
+        futures.emplace_back(std::async(std::launch::async,
+            &WaitingVehicles::pushBack, queue, std::move(v)));
+    }
+    std::cout << "Collecting results..." << std::endl;
+    while (true)
+    {
+        // popBack wakes up when a new element is available
+        Vehicle v = queue->popBack();
+        std::cout << "   Vehicle #" << v.getID()
+                  << " has been removed from the queue" << std::endl;
+    }
+    std::for_each(futures.begin(), futures.end(),
+                  [](std::future<void> &ftr) { ftr.wait(); });
+    std::cout << "Finished!" << std::endl;
+    return 0;
+}`,
+
+mqMain:
+`int main()
+{
+    std::shared_ptr<MessageQueue<int>> queue(new MessageQueue<int>);
+    std::cout << "Spawning threads..." << std::endl;
+    std::vector<std::future<void>> futures;
+    for (int i = 0; i < 10; ++i)
+    {
+        int message = i;
+        futures.emplace_back(std::async(std::launch::async,
+            &MessageQueue<int>::send, queue, std::move(message)));
+    }
+    std::cout << "Collecting results..." << std::endl;
+    while (true)
+    {
+        int message = queue->receive();
+        std::cout << "   Message #" << message
+                  << " has been removed from the queue" << std::endl;
+    }
+    std::for_each(futures.begin(), futures.end(),
+                  [](std::future<void> &ftr) { ftr.wait(); });
+    std::cout << "Finished!" << std::endl;
+    return 0;
+}`,
+
+mqClass:
+`template <class T>
+class MessageQueue
+{
+public:
+    T receive()
+    {
+        std::unique_lock<std::mutex> uLock(_mutex);
+        _cond.wait(uLock, [this] { return !_messages.empty(); });
+        T msg = std::move(_messages.back());
+        _messages.pop_back();
+        return msg; // RVO
+    }
+    void send(T &&msg)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::lock_guard<std::mutex> uLock(_mutex);
+        std::cout << "   Message " << msg
+                  << " has been sent to the queue" << std::endl;
+        _messages.push_back(std::move(msg));
+        _cond.notify_one();
+    }
+private:
+    std::mutex _mutex;
+    std::condition_variable _cond;
+    std::deque<T> _messages;
+};`
+});
+
+/* =====================================================================
+   DIAGRAMA DE SECUENCIA GENÉRICO (dos carriles, tiempo hacia abajo)
+   ===================================================================== */
+function seqDiagram(el, o){
+  const NS='http://www.w3.org/2000/svg', W=600, TOP=o.top||112, ROW=o.row||62, BH=o.bh||44, BW=o.bw||250;
+  const H = TOP + o.rows*ROW + 40, X = o.laneX || [165, 435];
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-height:${o.maxH||500}px">
+    <defs><marker id="sqa-${o.id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#000"/></marker></defs>
+    <text x="${X[0]}" y="26" text-anchor="middle" font-size="21">${o.names[0]}</text>
+    <text x="${X[1]}" y="26" text-anchor="middle" font-size="21">${o.names[1]}</text>
+    <line x1="${X[0]}" y1="38" x2="${X[0]}" y2="${H-14}" stroke="#000" stroke-width="1.5" marker-end="url(#sqa-${o.id})"/>
+    <line x1="${X[1]}" y1="38" x2="${X[1]}" y2="${H-14}" stroke="#000" stroke-width="1.5" marker-end="url(#sqa-${o.id})"/>
+    <rect x="30" y="52" width="540" height="42" fill="#fff" stroke="#000" stroke-width="1.5"/>
+    <text class="sq-top" x="300" y="80" text-anchor="middle" font-size="18" font-family="Menlo,Consolas,monospace"></text>
+    <g class="sq-bars"></g><g class="sq-boxes"></g></svg>`;
+  const svg = el.querySelector('svg'), boxes = svg.querySelector('.sq-boxes'), bars = svg.querySelector('.sq-bars'), top = svg.querySelector('.sq-top');
+  const FILL = { c:['#FFFFBF','#000'], p:['#C3C3FF','#000'], bad:['#FDECEA','#D92D20'], ok:['#E3F4EA','#1F8A4C'], ghost:['#fff','#B9B9BD'] };
+  return {
+    clear(){ boxes.innerHTML=''; bars.innerHTML=''; },
+    top(t){ top.textContent = t; },
+    box(lane, row, text, kind, pulse){
+      const [f,s] = FILL[kind||(lane?'p':'c')];
+      const x = X[lane]-BW/2, y = TOP + row*ROW;
+      const g = document.createElementNS(NS,'g');
+      g.innerHTML = `<rect x="${x}" y="${y}" width="${BW}" height="${BH}" rx="12" fill="${f}" stroke="${s}" stroke-width="${kind==='bad'||kind==='ok'?2.5:1.5}"/>
+        <text x="${X[lane]}" y="${y+BH/2+6}" text-anchor="middle" font-size="17" fill="${kind==='bad'?'#D92D20':'#000'}">${text}</text>`;
+      if (pulse) g.classList.add('pulse');
+      g.style.opacity=0; g.style.transition='opacity .3s';
+      boxes.appendChild(g); requestAnimationFrame(()=>g.style.opacity=1);
+    },
+    bar(lane, r0, r1, open){
+      const x = X[lane] + BW/2 + 8, y0 = TOP + r0*ROW + 4, y1 = TOP + r1*ROW + BH - 4;
+      const r = document.createElementNS(NS,'rect');
+      r.setAttribute('x',x); r.setAttribute('y',y0); r.setAttribute('width',16); r.setAttribute('height',Math.max(8,y1-y0));
+      r.setAttribute('fill', open ? '#F28B82' : '#E8261C'); if (open) { r.setAttribute('stroke','#D92D20'); r.setAttribute('stroke-dasharray','4 3'); }
+      bars.appendChild(r);
+    },
+    note(lane, row, text, color){
+      const t = document.createElementNS(NS,'text');
+      const right = lane===0;
+      t.setAttribute('x', right ? X[0]+BW/2+34 : X[1]-BW/2-12); t.setAttribute('y', TOP + row*ROW + BH/2 + 5);
+      t.setAttribute('text-anchor', right ? 'start' : 'end'); t.setAttribute('font-size','14'); t.setAttribute('fill', color||'#6E6E73');
+      t.textContent = text; boxes.appendChild(t);
+    }
+  };
+}
+function bindStepper(s, n, render, ms=1200){
+  let k=0, timer=null;
+  const stop=()=>{ clearInterval(timer); timer=null; };
+  const api = {
+    get k(){ return k; }, set(v){ k=v; render(k); }, stop,
+    step(){ stop(); k = k>=n() ? 0 : k+1; render(k); },
+    reset(){ stop(); k=0; render(k); },
+    play(){ stop(); k=0; render(k); timer=setInterval(()=>{ if(k>=n()) return stop(); k++; render(k); }, REDUCED?300:ms); }
+  };
+  const b = a => s.querySelector(`[data-act=${a}]`);
+  if (b('step')) b('step').onclick = ()=>api.step();
+  if (b('reset')) b('reset').onclick = ()=>api.reset();
+  if (b('play')) b('play').onclick = ()=>api.play();
+  return api;
+}
+
+/* =====================================================================
+   notify_one frente a notify_all
+   ===================================================================== */
+COMPONENTS.cvNotify = (s)=>{
+  const chips=s.querySelector('#cnChips'), log=s.querySelector('#cnLog'), txt=s.querySelector('#cnTxt'), count=s.querySelector('#cnCount');
+  const st=['wait','wait','wait']; let timers=[];
+  const L = h => { log.innerHTML += h+'\n'; log.scrollTop=log.scrollHeight; };
+  function render(){
+    chips.innerHTML = st.map((x,i)=>{
+      const label = x==='wait' ? 'dormido en wait()' : x==='wake' ? 'despierto: revisa el estado' : x==='lock' ? 'esperando el cerrojo' : 'trabajando';
+      const cls = x==='wait' ? 'sleep' : x==='wake' ? 'run' : x==='lock' ? 'wait' : '';
+      return `<span class="chip ${cls}" style="justify-content:space-between;width:100%;padding:10px 14px"><span>consumidor ${i+1}</span><span style="font-weight:400">${label}</span></span>`;
+    }).join('');
+    const n = st.filter(x=>x==='wait').length;
+    count.textContent = n===1 ? '1 hilo esperando' : n+' hilos esperando';
+  }
+  function wake(ids){
+    ids.forEach((i,j)=>{
+      st[i] = j===0 ? 'wake' : 'lock';
+      timers.push(setTimeout(()=>{ st[i]='wake'; render(); }, 700*j));
+      timers.push(setTimeout(()=>{ st[i]='work'; render(); }, 700*j + 650));
+    });
+    render();
+  }
+  s.querySelector('#cnOne').onclick=()=>{
+    const i = st.indexOf('wait');
+    if (i<0){ txt.textContent='Nadie estaba esperando: la notificación se pierde.'; txt.style.color='#D92D20'; L('<span class="err">notify_one() → nadie esperaba, aviso perdido</span>'); return; }
+    txt.textContent=`Despierta un solo hilo: el consumidor ${i+1}. Los demás siguen dormidos.`; txt.style.color='#000';
+    L(`notify_one() → despierta consumidor ${i+1}`); wake([i]);
+  };
+  s.querySelector('#cnAll').onclick=()=>{
+    const ids = st.map((x,i)=>x==='wait'?i:-1).filter(i=>i>=0);
+    if (!ids.length){ txt.textContent='Nadie estaba esperando: la notificación se pierde.'; txt.style.color='#D92D20'; L('<span class="err">notify_all() → nadie esperaba, aviso perdido</span>'); return; }
+    txt.textContent='Despiertan todos a la vez, pero compiten por el mismo cerrojo: entran de a uno.'; txt.style.color='#000';
+    L(`notify_all() → despierta ${ids.length} hilo${ids.length>1?'s':''}`); wake(ids);
+  };
+  s.querySelector('#cnReset').onclick=()=>{ timers.forEach(clearTimeout); timers=[]; st.fill('wait'); txt.textContent=''; L('<span class="dim">los tres vuelven a wait()</span>'); render(); };
+  render();
+  return { leave(){ timers.forEach(clearTimeout); } };
+};
+
+/* =====================================================================
+   Sin memoria: wait antes o después de notify
+   ===================================================================== */
+COMPONENTS.cvOrder = (s)=>{
+  let mode='ok', timers=[];
+  const txt=s.querySelector('#coTxt');
+  const D = seqDiagram(s.querySelector('#coSvg'), {id:'co', names:['consumidor','productor'], rows:4, maxH:470});
+  function run(){
+    timers.forEach(clearTimeout); timers=[]; D.clear(); txt.textContent=''; D.top('_cond');
+    const steps = mode==='ok' ? [
+      ()=>D.box(0,0,'wait()','c'),
+      ()=>{ D.box(1,1,'notify_one()','p'); },
+      ()=>{ D.box(0,2,'wake_up()','ok'); txt.textContent='El hilo ya esperaba cuando llegó el aviso: despierta y sigue.'; txt.style.color='#1F8A4C'; }
+    ] : [
+      ()=>{ D.box(1,0,'notify_one()','p'); D.note(1,0,'nadie escucha'); },
+      ()=>{ D.box(0,1,'wait()','c'); },
+      ()=>{ D.box(0,2,'dormido para siempre','bad',true); txt.textContent='El aviso llegó antes de que alguien esperara y se perdió. El hilo queda bloqueado indefinidamente.'; txt.style.color='#D92D20'; }
+    ];
+    steps.forEach((f,i)=>timers.push(setTimeout(f, (REDUCED?80:900)*i)));
+  }
+  s.querySelectorAll('#coMode button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; segOn(s,'#coMode',mode); run(); });
+  s.querySelector('#coRun').onclick=run;
+  let first=true;
+  return { enter(){ if(first){ first=false; run(); } }, leave(){ timers.forEach(clearTimeout); } };
+};
+
+/* =====================================================================
+   Las cinco intercalaciones de check / wait / set / notify
+   ===================================================================== */
+COMPONENTS.cvInterleave = (s)=>{
+  const P = {
+    s1:[{l:0,t:'C1 · lee false'},{l:0,t:'C2 · wait()',w:1},{l:1,t:'P1 · data = true',v:1},{l:1,t:'P2 · notify_one()',n:1},{l:0,t:'wake_up()',k:'ok',end:'ok'}],
+    s2:[{l:1,t:'P1 · data = true',v:1},{l:1,t:'P2 · notify_one()',n:1},{l:0,t:'C1 · lee true'},{l:0,t:'sigue sin esperar',k:'ok',end:'ok2'}],
+    s3:[{l:1,t:'P1 · data = true',v:1},{l:0,t:'C1 · lee true'},{l:1,t:'P2 · notify_one()',n:1},{l:0,t:'sigue sin esperar',k:'ok',end:'ok3'}],
+    s4:[{l:0,t:'C1 · lee false'},{l:1,t:'P1 · data = true',v:1},{l:0,t:'C2 · wait()',w:1},{l:1,t:'P2 · notify_one()',n:1},{l:0,t:'wake_up()',k:'ok',end:'ok4'}],
+    bad:[{l:0,t:'C1 · lee false'},{l:1,t:'P1 · data = true',v:1},{l:1,t:'P2 · notify_one()',n:1},{l:0,t:'C2 · wait()',w:1},{l:0,t:'dormido para siempre',k:'bad',pulse:1,end:'bad'}]
+  };
+  const V = {
+    ok:  ['El consumidor ya estaba en wait cuando llegó el aviso. Despierta y sigue.', '#1F8A4C'],
+    ok2: ['El dato ya estaba listo. El aviso se perdió, pero no hacía falta: el estado compartido llevó el mensaje.', '#1F8A4C'],
+    ok3: ['Leyó true antes del aviso. Tampoco espera, y el aviso perdido no causa daño.', '#1F8A4C'],
+    ok4: ['Leyó false, pero alcanzó a entrar en wait antes del aviso. Despierta.', '#1F8A4C'],
+    bad: ['Leyó false y el aviso llegó antes de su wait. Se duerme esperando algo que ya pasó: bloqueado para siempre.', '#D92D20']
+  };
+  let preset='s1';
+  const D = seqDiagram(s.querySelector('#ilSvg'), {id:'il', names:['consumidor','productor'], rows:5, maxH:520});
+  const txt=s.querySelector('#ilTxt'), rows=[...s.querySelectorAll('#ilTable tbody tr')];
+  function render(k){
+    const steps=P[preset]; D.clear(); let val=false, waiting=false;
+    steps.slice(0,k).forEach((st,i)=>{
+      if (st.v) val=true;
+      let note=null;
+      if (st.n && !waiting) note='nadie espera: se pierde';
+      if (st.w) waiting=true;
+      if (st.k==='ok' && st.t==='wake_up()') waiting=false;
+      D.box(st.l, i, st.t, st.k, st.pulse);
+      if (note) D.note(st.l, i, note, '#D92D20');
+    });
+    D.top('dataIsAvailable = ' + val);
+    rows.forEach(r=>r.classList.toggle('now', r.dataset.p===preset));
+    const end = k===steps.length ? V[steps[k-1].end] : null;
+    txt.textContent = end ? end[0] : ''; txt.style.color = end ? end[1] : '#000';
+  }
+  const stp = bindStepper(s, ()=>P[preset].length, render, 1100);
+  rows.forEach(r=>{
+    const pick=()=>{ preset=r.dataset.p; stp.play(); };
+    r.style.cursor='pointer'; r.onclick=pick; r.onkeydown=e=>{ if(e.key==='Enter'){ pick(); e.stopPropagation(); } };
+  });
+  render(0);
+  return { enter(){ if(stp.k===0) stp.play(); }, leave(){ stp.stop(); } };
+};
+
+/* =====================================================================
+   wait(lock) suelta el cerrojo · la idea rápida que no sirve
+   ===================================================================== */
+COMPONENTS.cvLock = (s)=>{
+  const MODES = {
+    good: {
+      steps:[
+        {l:0,t:'lock_mutex',d:'El consumidor toma el cerrojo.'},
+        {l:0,t:'vacío → wait(lock)',d:'Revisa bajo el cerrojo: vacío. wait suelta el cerrojo y duerme, todo en un paso.'},
+        {l:1,t:'lock_mutex',d:'El productor puede tomar el cerrojo porque está libre.'},
+        {l:1,t:'agrega el dato',d:'Cambia el estado compartido.'},
+        {l:1,t:'notify_one()',d:'Avisa. El consumidor está en wait, así que el aviso no se pierde.'},
+        {l:1,t:'exit scope',d:'lock_guard libera el cerrojo.'},
+        {l:0,t:'wake_up',d:'wait despierta y vuelve a tomar el cerrojo antes de retornar.',k:'ok'},
+        {l:0,t:'saca y exit scope',d:'Saca el dato con el cerrojo tomado y lo libera al salir del ámbito.'}
+      ],
+      bars:[{l:0,a:0,b:1},{l:1,a:2,b:5},{l:0,a:6,b:7}],
+      owner:['consumidor','libre','productor','productor','productor','libre','consumidor','libre'],
+      end:['Sin hueco entre revisar y esperar, y sin dormir con el cerrojo tomado.', '#1F8A4C']
+    },
+    bad: {
+      steps:[
+        {l:0,t:'lock_mutex',d:'El consumidor toma el cerrojo.'},
+        {l:0,t:'vacío → wait()',d:'Revisa y espera, pero la espera no suelta el cerrojo.'},
+        {l:1,t:'lock_mutex',d:'El productor intenta tomar el cerrojo y se bloquea.',k:'bad'},
+        {l:0,t:'dormido con el cerrojo',d:'Nadie puede agregar datos ni notificar.',k:'bad',pulse:1}
+      ],
+      bars:[{l:0,a:0,b:3,open:1}],
+      owner:['consumidor','consumidor','consumidor','consumidor'],
+      end:['Deadlock: el consumidor espera un aviso que solo puede dar alguien que necesita su cerrojo.', '#D92D20']
+    }
+  };
+  let mode='good';
+  const tbody=s.querySelector('#lkSteps tbody'), txt=s.querySelector('#lkTxt');
+  const D = seqDiagram(s.querySelector('#lkSvg'), {id:'lk', names:['consumidor','productor'], rows:8, row:56, bh:40, bw:230, maxH:520});
+  function fillTable(){ tbody.innerHTML = MODES[mode].steps.map((st,i)=>`<tr><td style="width:34px">${i+1}</td><td>${st.d}</td></tr>`).join(''); }
+  function render(k){
+    const M=MODES[mode]; D.clear(); stepRows(tbody,k);
+    M.steps.slice(0,k).forEach((st,i)=>D.box(st.l,i,st.t,st.k,st.pulse&&k===M.steps.length));
+    M.bars.forEach(b=>{ if (k>b.a) D.bar(b.l, b.a, Math.min(b.b, k-1), b.open); });
+    D.top('_mutex: ' + (k ? M.owner[k-1] : 'libre'));
+    const end = k===M.steps.length ? M.end : null;
+    txt.textContent = end ? end[0] : ''; txt.style.color = end ? end[1] : '#000';
+  }
+  const stp = bindStepper(s, ()=>MODES[mode].steps.length, render, 1100);
+  s.querySelectorAll('#lkMode button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; segOn(s,'#lkMode',mode); fillTable(); stp.play(); });
+  fillTable(); render(0);
+  return { leave(){ stp.stop(); } };
+};
+
+/* =====================================================================
+   Despertares espurios: if frente a while
+   ===================================================================== */
+COMPONENTS.spurious = (s)=>{
+  const STEPS = {
+    if: [
+      {l:3, m:1, v:[], t:'main toma el cerrojo.'},
+      {l:4, m:1, v:[], t:'El vector está vacío: la condición es true.'},
+      {l:5, m:0, v:[], t:'wait suelta el cerrojo y duerme.'},
+      {l:5, m:1, v:[], t:'Despertar espurio: nadie notificó, pero el sistema lo despierta y wait retoma el cerrojo.', c:'hl-red'},
+      {l:6, m:1, v:[], t:'Con if no se vuelve a revisar: back() sobre un vector vacío. Comportamiento indefinido.', c:'hl-red', bad:1}
+    ],
+    while: [
+      {l:3, m:1, v:[], t:'main toma el cerrojo.'},
+      {l:4, m:1, v:[], t:'El vector está vacío: la condición es true.'},
+      {l:5, m:0, v:[], t:'wait suelta el cerrojo y duerme.'},
+      {l:5, m:1, v:[], t:'Despertar espurio: wait retoma el cerrojo sin que haya datos.', c:'hl-red'},
+      {l:4, m:1, v:[], t:'while vuelve a revisar: sigue vacío.'},
+      {l:5, m:0, v:[], t:'Vuelve a dormir y suelta el cerrojo.'},
+      {l:5, m:0, v:[3], t:'Un productor agrega el vehículo #3 y notifica.'},
+      {l:5, m:1, v:[3], t:'wait despierta y retoma el cerrojo.'},
+      {l:4, m:1, v:[3], t:'Revisa otra vez: ya no está vacío. Sale del while.'},
+      {l:6, m:1, v:[], t:'Saca el vehículo con el cerrojo tomado. Sin carrera y sin sorpresas.', c:'hl-green', good:1}
+    ]
+  };
+  let mode='if';
+  const pre=s.querySelector('#spCode'), vec=s.querySelector('#spVec'), box=s.querySelector('#spMutex'), lamp=s.querySelector('#spLamp'), mt=s.querySelector('#spMutexT'), txt=s.querySelector('#spTxt');
+  function setCode(){ pre.dataset.src = mode==='if' ? 'spIf' : 'spWhile'; renderCode(pre); }
+  function render(k){
+    pre.querySelectorAll('.ln').forEach(l=>l.classList.remove('hl','hl-red','hl-green'));
+    const st = k ? STEPS[mode][k-1] : null;
+    if (st){ pre.querySelector(`.ln[data-n="${st.l}"]`).classList.add(st.c||'hl'); }
+    vec.innerHTML = (st ? st.v : []).map(v=>`<span class="slot">#${v}</span>`).join('') || '<span class="small muted" style="padding:0 6px">vacío</span>';
+    const taken = st && st.m;
+    box.classList.toggle('free', !taken); lamp.classList.toggle('taken', !!taken);
+    mt.textContent = taken ? '_mutex: main' : (st ? '_mutex libre (main dentro de wait)' : '_mutex libre');
+    txt.textContent = st ? st.t : 'Avancen paso a paso.';
+    txt.style.color = st && st.bad ? '#D92D20' : st && st.good ? '#1F8A4C' : '#000';
+  }
+  const stp = bindStepper(s, ()=>STEPS[mode].length, render);
+  s.querySelectorAll('#spMode button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; segOn(s,'#spMode',mode); setCode(); stp.reset(); });
+  setCode(); render(0);
+  return { leave(){ stp.stop(); } };
+};
+
+/* =====================================================================
+   main bloqueado en wait: ejecución completa
+   ===================================================================== */
+COMPONENTS.cvRun = (s)=>{
+  const SCALE=15;
+  const W=s.querySelector('#crWorkers'), vec=s.querySelector('#crVec'), term=s.querySelector('#crTerm'), state=s.querySelector('#crState'),
+        wakesEl=s.querySelector('#crWakes'), cpu=s.querySelector('#crCpu'), cpuT=s.querySelector('#crCpuT'), txt=s.querySelector('#crTxt');
+  let raf=null, running=false;
+  const line = h => { term.innerHTML += h+'\n'; term.scrollTop=term.scrollHeight; };
+  function setCpu(on){ cpu.style.width = on?'100%':'0'; cpuT.textContent = on?'100 %':'0 %'; }
+  function reset(){
+    cancelAnimationFrame(raf); running=false;
+    W.innerHTML = [...Array(10)].map((_,i)=>`<span class="chip" data-w="${i}" style="min-width:52px">#${i}</span>`).join('');
+    vec.innerHTML=''; term.innerHTML=''; wakesEl.textContent='0'; state.textContent='—'; setCpu(false); txt.textContent=''; txt.style.color='';
+  }
+  function run(){
+    reset(); running=true;
+    const arr=[...Array(10)].map((_,i)=>({id:i, t:100 + i*0.3 + Math.random()*28})).sort((a,b)=>a.t-b.t);
+    const stack=[]; let ai=0, awake=false, wakeAt=null, nextPop=null, removed=0, wakes=0, done=false;
+    W.querySelectorAll('.chip').forEach(c=>c.classList.add('sleep'));
+    line('Spawning threads...'); line('Collecting results...');
+    state.textContent='dormido en wait'; state.style.color='#6B6BD6';
+    const t0=performance.now();
+    const frame = now=>{
+      if (!running) return;
+      const t=(now-t0)/SCALE;
+      while (ai<arr.length && arr[ai].t<=t){
+        const a=arr[ai++], c=W.querySelector(`[data-w="${a.id}"]`);
+        c.classList.remove('sleep'); c.classList.add('run'); setTimeout(()=>{ c.classList.remove('run'); c.classList.add('done'); }, 380);
+        stack.push(a.id);
+        const sl=document.createElement('span'); sl.className='slot'; sl.dataset.id=a.id; sl.textContent='#'+a.id; vec.appendChild(sl);
+        line(`   Vehicle #${a.id} will be added to the queue`);
+        if (!awake && wakeAt===null) wakeAt = t + 2.5;       // notify_one → despertar y retomar el cerrojo
+      }
+      if (!awake && wakeAt!==null && t>=wakeAt){
+        awake=true; wakeAt=null; wakes++; wakesEl.textContent=wakes;
+        state.textContent='despierto'; state.style.color='#1F8A4C'; setCpu(true); nextPop = t + 2.5;
+      }
+      if (awake && nextPop!==null && t>=nextPop){
+        if (stack.length){
+          const id=stack.pop(); removed++;
+          const sl=vec.querySelector(`[data-id="${id}"]`); sl.classList.add('out'); setTimeout(()=>sl.remove(), 300);
+          line(`   Vehicle #${id} has been removed from the queue`);
+          nextPop = t + 2.5;
+        }
+        if (!stack.length){                                   // el predicado es false: vuelve a dormir
+          awake=false; nextPop=null; state.textContent='dormido en wait'; state.style.color='#6B6BD6'; setCpu(false);
+        }
+      }
+      if (removed===10 && !awake && !done){
+        done=true;
+        txt.textContent='main duerme en wait: el procesador queda libre. Pero while (true) no termina y «Finished!» no se imprime.';
+        line('<span class="dim">(main dormido en popBack)</span><span class="pulse">▌</span>');
+      }
+      raf=requestAnimationFrame(frame);
+    };
+    raf=requestAnimationFrame(frame);
+  }
+  s.querySelector('#crRun').onclick=run;
+  s.querySelector('#crStop').onclick=()=>{
+    if (!running) return; running=false; cancelAnimationFrame(raf);
+    term.innerHTML = term.innerHTML.replace('<span class="pulse">▌</span>',''); line('^C'); setCpu(false);
+    state.textContent='terminado a la fuerza'; state.style.color='#000';
+    txt.textContent='Hubo que detenerlo desde afuera, igual que antes. La diferencia: esta vez no consumía CPU mientras esperaba.';
+  };
+  reset();
+  return { leave(){ running=false; cancelAnimationFrame(raf); } };
+};
+
+/* =====================================================================
+   deque: back()/pop_back() frente a front()/pop_front()
+   ===================================================================== */
+COMPONENTS.fifo = (s)=>{
+  let mode='lifo', timers=[];
+  const dq=s.querySelector('#ffDeque'), out=s.querySelector('#ffOut'), term=s.querySelector('#ffTerm'), txt=s.querySelector('#ffTxt');
+  const line = h => { term.innerHTML += h+'\n'; term.scrollTop=term.scrollHeight; };
+  function run(){
+    timers.forEach(clearTimeout); timers=[];
+    dq.innerHTML=''; out.innerHTML=''; term.innerHTML=''; txt.textContent='';
+    const q=[]; const sp = REDUCED ? 0.15 : 1;
+    line('Spawning threads...'); line('Collecting results...');
+    for (let i=0;i<10;i++){
+      timers.push(setTimeout(()=>{
+        q.push(i);
+        const sl=document.createElement('span'); sl.className='slot'; sl.dataset.id=i; sl.textContent=i; dq.appendChild(sl);
+        line(`   Message ${i} has been sent to the queue`);
+      }, (300 + i*170)*sp));
+    }
+    let received=0;
+    const take = ()=>{
+      if (!q.length){ timers.push(setTimeout(take, 60*sp)); return; }
+      const id = mode==='lifo' ? q.pop() : q.shift();
+      const sl = dq.querySelector(`[data-id="${id}"]`); sl.classList.add('flash');
+      timers.push(setTimeout(()=>{ sl.remove(); }, 200*sp));
+      const c=document.createElement('span'); c.className='slot'; c.textContent=id; out.appendChild(c);
+      line(`   Message #${id} has been removed from the queue`);
+      received++;
+      if (received<10) timers.push(setTimeout(take, 520*sp));
+      else {
+        const order=[...out.children].map(x=>+x.textContent), sorted=order.every((v,i)=>v===i);
+        txt.textContent = sorted ? 'Salen en el mismo orden en que llegaron: ahora sí es FIFO.' : 'Llegaron 0, 1, 2… y salen desordenados. Usar deque no alcanza si se sigue sacando por atrás.';
+        txt.style.color = sorted ? '#1F8A4C' : '#D92D20';
+      }
+    };
+    timers.push(setTimeout(take, 480*sp));
+  }
+  s.querySelectorAll('#ffMode button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; segOn(s,'#ffMode',mode); run(); });
+  s.querySelector('#ffRun').onclick=run;
+  let first=true;
+  return { enter(){ if(first){ first=false; run(); } }, leave(){ timers.forEach(clearTimeout); } };
+};
+</script>
+
+<script>
+/* =====================================================================
+   PORTADA: dos carriles que se turnan el mutex
+   ===================================================================== */
+COMPONENTS.hero = (s)=>{
+  const segs = s.querySelector('#heroSegs'), tok = s.querySelector('#heroToken');
+  const NS='http://www.w3.org/2000/svg', X0=80, SLOT=86, N=5, LY=[40,170];
+  let timer=null, k=0;
+  function rect(x,y,w,cls){
+    const r=document.createElementNS(NS,'rect');
+    r.setAttribute('x',x); r.setAttribute('y',y-13); r.setAttribute('width',w); r.setAttribute('height',26); r.setAttribute('rx',5);
+    if (cls==='crit'){ r.setAttribute('fill','#C3C3FF'); r.setAttribute('stroke','#6B6BD6'); }
+    else { r.setAttribute('fill','#FDECEA'); r.setAttribute('stroke','#E7A39C'); r.setAttribute('stroke-dasharray','4 3'); }
+    r.setAttribute('stroke-width','1.5'); r.style.opacity=0; r.style.transition='opacity .4s';
+    segs.appendChild(r); requestAnimationFrame(()=>r.style.opacity=1);
+  }
+  function place(i){
+    const lane = i%2, x = X0 + i*SLOT;
+    rect(x+2, LY[lane], SLOT-6, 'crit');
+    rect(x+2, LY[1-lane], SLOT-6, 'wait');
+    tok.setAttribute('transform', `translate(${x+SLOT/2},${(LY[0]+LY[1])/2 + (lane? 40:-40)})`);
+  }
+  function tick(){
+    if (k===N){ segs.innerHTML=''; k=0; }
+    place(k++);
+  }
+  return {
+    enter(){ segs.innerHTML=''; k=0;
+      if (REDUCED){ for(let i=0;i<N;i++) place(i); return; }
+      tick(); timer=setInterval(tick, 1300); },
+    leave(){ clearInterval(timer); }
+  };
+};
+
+/* =====================================================================
+   PROTOCOLO DEL MUTEX (diagrama 1 animado)
+   ===================================================================== */
+COMPONENTS.protocol = (s)=>{
+  const $ = id => s.querySelector('#'+id);
+  const tbody = s.querySelector('#protoSteps tbody');
+  let k=0, timer=null;
+  const set = (id, on) => { $(id).classList.toggle('off', !on); };
+  function render(){
+    stepRows(tbody, k);
+    const p2 = $('p2');
+    set('p1', k>=1 && k<4); set('p1L', k>=1 && k<4);
+    set('pAccess', k===2 || k===3 || k===5); set('pAccessL', k===2 || k===3 || k===5);
+    set('p2', k>=3); set('p2L', k>=3);
+    p2.classList.toggle('red', k===3 || k===4);
+    p2.classList.toggle('pulse', k===3 || k===4);
+    p2.setAttribute('marker-end', k===5 ? 'url(#ah)' : 'url(#ahr)');
+    $('p2L').textContent = k===5 ? 'under the lock' : 'is blocked';
+    $('pMutex').classList.toggle('taken', (k>=1 && k<4) || k===5);
+    $('pMutexT').textContent = k===0 ? 'mutex' : (k<4 ? 'mutex · Thread 1' : k===4 ? 'mutex libre' : 'mutex · Thread 2');
+  }
+  function stop(){ clearInterval(timer); timer=null; }
+  s.querySelector('[data-act=step]').onclick = ()=>{ stop(); k = k>=5 ? 0 : k+1; render(); };
+  s.querySelector('[data-act=reset]').onclick = ()=>{ stop(); k=0; render(); };
+  s.querySelector('[data-act=play]').onclick = ()=>{
+    stop(); k=0; render();
+    timer = setInterval(()=>{ if (k>=5) return stop(); k++; render(); }, 1300);
+  };
+  render();
+  return { enter(){ }, leave: stop };
+};
+
+/* =====================================================================
+   CARRERA DE DATOS: 1000 tareas simuladas
+   ===================================================================== */
+function simulateRace(mode){
+  if (mode==='deferred' || mode==='mutex') return 1000;
+  const N=1000, ev=[]; let t=0;
+  for (let i=0;i<N;i++){
+    t += 0.1;                                   // costo de lanzar cada hilo
+    const st = t + Math.random()*0.02;
+    let w;
+    if (mode==='async'){ w = 0.06 + Math.random()*0.02; if (Math.random()<0.012) w += 0.05 + Math.random()*0.4; }
+    else { w = 0.00003; if (Math.random()<0.0003) w = 0.1 + Math.random()*0.2; }  // expropiación rara
+    ev.push([st,0,i],[st+w,1,i]);
+  }
+  ev.sort((a,b)=>a[0]-b[0]);
+  let c=0; const v=new Array(N);
+  for (const e of ev){ if (e[1]===0) v[e[2]]=c; else c=v[e[2]]+1; }
+  return c;
+}
+COMPONENTS.race = (s)=>{
+  let mode='deferred'; const hist=[];
+  const num=s.querySelector('#raceNum'), txt=s.querySelector('#raceTxt'), bars=s.querySelector('#raceBars'), term=s.querySelector('#raceTerm');
+  const TXT = {
+    deferred:'Las tareas se ejecutan en serie, en el hilo que llama a wait. Cada una inserta un vehículo. Resultado exacto.',
+    async:'Las tareas corren a la vez. Faltan vehículos y el número cambia en cada ejecución. Nadie reporta un error.',
+    nosleep:'Sin la pausa, la ventana entre leer y escribir es mínima. Casi siempre da 1000. Casi.',
+    mutex:'Leer y escribir quedan dentro de la sección crítica. Da 1000 en todas las ejecuciones.'
+  };
+  function drawBars(){
+    bars.innerHTML = hist.map(h=>{
+      const pct = Math.max(2, (h.v-900)/100*100);
+      return `<div class="bar ${h.v<1000?'fail':''}" title="${h.m}: ${h.v}"><b>${h.v}</b><i style="height:0" data-h="${pct}"></i></div>`;
+    }).join('');
+    requestAnimationFrame(()=>requestAnimationFrame(()=>bars.querySelectorAll('i').forEach(i=>i.style.height=i.dataset.h+'%')));
+  }
+  function run(){
+    const v = simulateRace(mode);
+    countUp(num, v);
+    txt.textContent = TXT[mode];
+    hist.push({v, m:mode}); if (hist.length>10) hist.shift();
+    drawBars();
+    term.innerHTML = `#vehicles = ${v}\n<span class="dim">Process exited with code 0.</span>`;
+  }
+  s.querySelectorAll('#raceMode button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; segOn(s,'#raceMode',mode); run(); });
+  s.querySelector('#raceRun').onclick = run;
+  let first=true;
+  return { enter(){ if(first){ first=false; run(); } } };
+};
+
+/* =====================================================================
+   TABLA PASO A PASO GENÉRICA
+   ===================================================================== */
+COMPONENTS.stepper = (s)=>{
+  const tbody = s.querySelector('table.stepper tbody'), end = s.querySelector('.stepper-end');
+  let k=0; const n=tbody.rows.length;
+  const render=()=>{ stepRows(tbody,k); if(end) end.style.opacity = k===n?1:0; };
+  s.querySelector('[data-act=step]').onclick=()=>{ k = k>=n?0:k+1; render(); };
+  s.querySelector('[data-act=reset]').onclick=()=>{ k=0; render(); };
+  render();
+  return {};
+};
+
+/* =====================================================================
+   PREGUNTAS CON RESPUESTA OCULTA
+   ===================================================================== */
+COMPONENTS.questions = (s)=>{
+  s.querySelectorAll('.q').forEach(q=>{
+    q.tabIndex=0;
+    const t=()=>q.querySelector('.reveal-a').classList.toggle('show');
+    q.onclick=t; q.onkeydown=e=>{ if(e.key==='Enter'){ t(); e.stopPropagation(); } };
+  });
+  return {};
+};
+
+/* =====================================================================
+   TIMED_MUTEX: 1000 hilos con reintentos
+   ===================================================================== */
+function simulateTimed(hold, timeout, backoff, tries, N=1000){
+  const heap=[];
+  const push=e=>{ heap.push(e); let i=heap.length-1; while(i>0){ const p=(i-1)>>1; if(heap[p].t<=heap[i].t) break; [heap[p],heap[i]]=[heap[i],heap[p]]; i=p; } };
+  const pop=()=>{ const top=heap[0], last=heap.pop(); if(heap.length){ heap[0]=last; let i=0;
+      for(;;){ const l=2*i+1, r=l+1; let m=i; if(l<heap.length&&heap[l].t<heap[m].t)m=l; if(r<heap.length&&heap[r].t<heap[m].t)m=r; if(m===i)break; [heap[m],heap[i]]=[heap[i],heap[m]]; i=m; } }
+    return top; };
+  for (let i=0;i<N;i++) push({t:i*0.05, k:1});
+  let freeAt=0, lost=0, end=0; const ok=new Array(tries).fill(0);
+  const h = Math.max(hold, 0.02);
+  while (heap.length){
+    const e=pop(), grant=Math.max(e.t, freeAt);
+    if (grant <= e.t + timeout){ ok[e.k-1]++; freeAt = grant + h; end=Math.max(end,freeAt); }
+    else if (e.k < tries) push({t:e.t+timeout+backoff, k:e.k+1});
+    else { lost++; end=Math.max(end, e.t+timeout); }
+  }
+  return {ok, lost, end};
+}
+COMPONENTS.timed = (s)=>{
+  const ids=['tmHold','tmTimeout','tmBack','tmTries'], el={};
+  ids.forEach(id=>el[id]=s.querySelector('#'+id));
+  const bars=s.querySelector('#tmBars'), labs=s.querySelector('#tmLabs'), num=s.querySelector('#tmNum'), time=s.querySelector('#tmTime');
+  function update(){
+    const hold=+el.tmHold.value, T=+el.tmTimeout.value, B=+el.tmBack.value, tries=+el.tmTries.value;
+    el.tmHold.nextElementSibling.textContent = hold+' ms';
+    el.tmTimeout.nextElementSibling.textContent = T+' ms';
+    el.tmBack.nextElementSibling.textContent = B+' ms';
+    el.tmTries.nextElementSibling.textContent = tries;
+    const r = simulateTimed(hold,T,B,tries);
+    const added = r.ok.reduce((a,b)=>a+b,0);
+    countUp(num, added, 450);
+    const vals = [...r.ok, r.lost];
+    bars.innerHTML = vals.map((v,i)=>`<div class="bar ${i===vals.length-1?'fail':''}"><b>${v}</b><i data-h="${Math.max(1,v/10)}"></i></div>`).join('');
+    labs.innerHTML = vals.map((v,i)=>`<span>${i===vals.length-1?'perdidos':(i+1)+'.º'}</span>`).join('');
+    requestAnimationFrame(()=>requestAnimationFrame(()=>bars.querySelectorAll('i').forEach(i=>i.style.height=i.dataset.h+'%')));
+    time.textContent = `En el modelo, el programa tarda unos ${(r.end/1000).toFixed(1)} s en terminar.`;
+  }
+  let t=null;
+  ids.forEach(id=>el[id].addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(update, 60); }));
+  let first=true;
+  return { enter(){ if(first){ first=false; update(); } } };
+};
+
+/* =====================================================================
+   DEADLOCK 1: once hilos, denom = 0 y el cerrojo
+   ===================================================================== */
+COMPONENTS.dl1 = (s)=>{
+  let mode='manual', running=false, token=0;
+  const chipsEl=s.querySelector('#dl1Chips'), term=s.querySelector('#dl1Term'), box=s.querySelector('#dl1Mutex'),
+        lamp=s.querySelector('#dl1Lamp'), mt=s.querySelector('#dl1MutexT'), verdict=s.querySelector('#dl1Verdict'), lastChk=s.querySelector('#dl1Last');
+  const denoms=[-5,-4,-3,-2,-1,0,1,2,3,4,5];
+  const fmt = d => { const v=50/d; return Number.isInteger(v)?String(v):String(+v.toPrecision(6)); };
+  function mutex(state, who){
+    box.classList.toggle('free', state==='free'); box.classList.toggle('stuck', state==='stuck');
+    lamp.classList.toggle('taken', state!=='free');
+    mt.textContent = state==='free' ? 'mtx libre' : state==='stuck' ? `mtx tomado por denom = ${who}, que ya terminó` : `mtx tomado por denom = ${who}`;
+  }
+  function line(html){ term.innerHTML += html+'\n'; term.scrollTop = term.scrollHeight; }
+  function reset(){
+    token++; running=false;
+    chipsEl.innerHTML = denoms.map(d=>`<span class="chip" data-d="${d}">denom ${d}</span>`).join('');
+    term.innerHTML=''; verdict.textContent=''; verdict.style.color=''; mutex('free');
+  }
+  async function run(){
+    reset(); const my=++token; running=true;
+    let order=[...denoms].sort(()=>Math.random()-.5).filter(d=>d!==0);
+    if (lastChk.checked) order.push(0);
+    else order.splice(1+Math.floor(Math.random()*6), 0, 0);
+    const chip = d => chipsEl.querySelector(`[data-d="${d}"]`);
+    denoms.forEach(d=>chip(d).classList.add('wait'));
+    for (let i=0;i<order.length;i++){
+      const d=order[i];
+      await sleep(520); if (my!==token) return;
+      const c=chip(d); c.classList.remove('wait'); c.classList.add('run'); mutex('taken', d);
+      await sleep(520); if (my!==token) return;
+      if (d!==0){
+        line(`for denom = ${d}, the result is ${fmt(d)}`);
+        if (mode==='guard') line(`<span class="dim">  ~lck → unlock</span>`);
+        c.classList.remove('run'); c.classList.add('done'); mutex('free');
+      } else {
+        line(`<span class="err">Exception from thread: Division by zero!</span>`);
+        c.classList.remove('run'); c.classList.add('done');
+        if (mode==='guard'){
+          line(`<span class="okc">  return → ~lck libera mtx</span>`); mutex('free');
+        } else {
+          mutex('stuck', 0);
+          const rest = order.slice(i+1);
+          if (rest.length){
+            await sleep(500); if (my!==token) return;
+            rest.forEach(r=>{ const rc=chip(r); rc.classList.remove('wait'); rc.classList.add('stuck'); });
+            line(`<span class="dim">(no hay más salida; main sigue en ftr.wait())</span><span class="pulse">▌</span>`);
+            verdict.textContent = `Deadlock: ${rest.length} hilo${rest.length>1?'s':''} esperan un mutex que nadie va a liberar.`;
+            verdict.style.color='#D92D20'; running=false; return;
+          }
+        }
+      }
+    }
+    await sleep(400); if (my!==token) return;
+    line(`<span class="dim">Process exited with code 0.</span>`);
+    if (mode==='manual'){ verdict.textContent='Terminó, pero solo porque denom = 0 llegó último. El bug sigue ahí.'; verdict.style.color='#D92D20'; }
+    else { verdict.textContent='Todos terminan. El destructor liberó el mutex también en el camino de la excepción.'; verdict.style.color='#1F8A4C'; }
+    running=false;
+  }
+  s.querySelectorAll('#dl1Mode button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; segOn(s,'#dl1Mode',mode); reset(); });
+  s.querySelector('#dl1Run').onclick=run;
+  reset();
+  return { leave(){ token++; } };
+};
+
+/* =====================================================================
+   DEADLOCK 2: grafo de hilos y mutex, orden opuesto frente a std::lock
+   ===================================================================== */
+const DL2 = {
+  raw: [
+    { a:'mutex2.lock() — lo obtiene', b:'—', E:{Am2:'has'} },
+    { a:'imprime «Thread A»', b:'mutex1.lock() — lo obtiene', E:{Am2:'has', Bm1:'has'} },
+    { a:'mutex1.lock() — espera', b:'imprime «Thread B»', E:{Am2:'has', Bm1:'has', Am1:'want'} },
+    { a:'esperando', b:'mutex2.lock() — espera', E:{Am2:'has', Bm1:'has', Am1:'want', Bm2:'want'} },
+    { a:'esperando para siempre', b:'esperando para siempre', E:{Am2:'has', Bm1:'has', Am1:'want', Bm2:'want'}, end:'bad' }
+  ],
+  stdlock: [
+    { a:'std::lock — obtiene ambos', b:'—', E:{Am1:'has', Am2:'has'} },
+    { a:'adopta e imprime', b:'std::lock — espera', E:{Am1:'has', Am2:'has', Bm1:'want'} },
+    { a:'fin: libera ambos', b:'esperando', E:{Bm1:'want'} },
+    { a:'terminó', b:'std::lock — obtiene ambos', E:{Bm1:'has', Bm2:'has'} },
+    { a:'—', b:'imprime y libera ambos', E:{}, end:'good' }
+  ]
+};
+COMPONENTS.dl2 = (s)=>{
+  const steps = DL2[s.dataset.dl2];
+  const tbody = s.querySelector('.dl2steps tbody'), verdict = s.querySelector('.dl2verdict');
+  tbody.innerHTML = steps.map((st,i)=>`<tr><td>${i+1}</td><td>${st.a}</td><td>${st.b}</td></tr>`).join('');
+  s.querySelector('.dl2svg').innerHTML = `
+  <svg viewBox="0 0 600 420" style="width:100%">
+    <defs>
+      <marker id="k-${s.dataset.dl2}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#000"/></marker>
+      <marker id="r-${s.dataset.dl2}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#D92D20"/></marker>
+    </defs>
+    <line data-e="Am1" x1="120" y1="180" x2="222" y2="92" class="edge off"/>
+    <line data-e="Am2" x1="120" y1="240" x2="222" y2="328" class="edge off"/>
+    <line data-e="Bm1" x1="480" y1="180" x2="378" y2="92" class="edge off"/>
+    <line data-e="Bm2" x1="480" y1="240" x2="378" y2="328" class="edge off"/>
+    <text data-l="Am1" x="120" y="120" class="elabel off" font-size="17"></text>
+    <text data-l="Am2" x="120" y="312" class="elabel off" font-size="17"></text>
+    <text data-l="Bm1" x="410" y="120" class="elabel off" font-size="17"></text>
+    <text data-l="Bm2" x="410" y="312" class="elabel off" font-size="17"></text>
+    <g class="n-mutex" data-m="m1"><rect x="210" y="30" width="180" height="58" rx="29"/><text x="300" y="66" text-anchor="middle" font-size="18">mutex1</text></g>
+    <g class="n-mutex" data-m="m2"><rect x="210" y="332" width="180" height="58" rx="29"/><text x="300" y="368" text-anchor="middle" font-size="18">mutex2</text></g>
+    <g class="n-thread"><rect x="10" y="182" width="150" height="56" rx="12"/><text x="85" y="217" text-anchor="middle" font-size="18">ThreadA</text></g>
+    <g class="n-thread"><rect x="440" y="182" width="150" height="56" rx="12"/><text x="515" y="217" text-anchor="middle" font-size="18">ThreadB</text></g>
+  </svg>`;
+  const svg = s.querySelector('.dl2svg svg');
+  let k=0, timer=null;
+  function render(){
+    stepRows(tbody, k);
+    const E = k ? steps[k-1].E : {};
+    ['Am1','Am2','Bm1','Bm2'].forEach(e=>{
+      const ln = svg.querySelector(`[data-e=${e}]`), lb = svg.querySelector(`[data-l=${e}]`), st = E[e];
+      ln.classList.toggle('off', !st); ln.classList.toggle('red', st==='want'); ln.classList.toggle('pulse', st==='want' && steps[k-1] && steps[k-1].end==='bad');
+      ln.setAttribute('stroke-dasharray', st==='want' ? '10 7' : '');
+      ln.setAttribute('marker-end', st==='want' ? `url(#r-${s.dataset.dl2})` : `url(#k-${s.dataset.dl2})`);
+      lb.classList.toggle('off', !st); lb.textContent = st==='has' ? 'lo tiene' : st==='want' ? 'lo espera' : '';
+      lb.setAttribute('fill', st==='want' ? '#D92D20' : '#000');
+    });
+    ['m1','m2'].forEach(m=>{
+      const owner = E['A'+m]==='has' ? 'A' : E['B'+m]==='has' ? 'B' : null;
+      const g = svg.querySelector(`[data-m=${m}]`);
+      g.classList.toggle('taken', !!owner);
+      g.querySelector('text').textContent = (m==='m1'?'mutex1':'mutex2') + (owner ? ' · '+owner : '');
+    });
+    const end = k===steps.length ? steps[k-1].end : null;
+    verdict.textContent = end==='bad' ? 'Ciclo cerrado: A espera a B y B espera a A. «Finished» nunca se imprime.'
+                        : end==='good' ? 'Sin ciclo: nadie retiene un mutex mientras espera otro. Se imprime «Finished».'
+                        : (s.dataset.dl2==='stdlock' && k===2) ? 'ThreadB espera sin retener nada.' : '';
+    verdict.style.color = end==='bad' ? '#D92D20' : end==='good' ? '#1F8A4C' : '#000';
+  }
+  const stop=()=>{ clearInterval(timer); timer=null; };
+  s.querySelector('[data-act=step]').onclick=()=>{ stop(); k = k>=steps.length?0:k+1; render(); };
+  s.querySelector('[data-act=reset]').onclick=()=>{ stop(); k=0; render(); };
+  s.querySelector('[data-act=play]').onclick=()=>{ stop(); k=0; render(); timer=setInterval(()=>{ if(k>=steps.length) return stop(); k++; render(); }, 1300); };
+  render();
+  return { leave: stop };
+};
+
+/* =====================================================================
+   RAII: recorrer lock_guard línea a línea
+   ===================================================================== */
+COMPONENTS.raii = (s)=>{
+  const PATHS = {
+    ok: [
+      {l:1, m:0, t:'Entra a divideByNumber con denom = 3. El mutex está libre.'},
+      {l:3, m:1, t:'Se construye lck. El constructor de lock_guard bloquea mtx.'},
+      {l:6, m:1, t:'denom != 0: entra al if.'},
+      {l:8, m:1, t:'Escribe result bajo el cerrojo.'},
+      {l:9, m:1, t:'Duerme 1 ms. Los demás hilos esperan.'},
+      {l:10, m:1, t:'Imprime el resultado. Nadie más está usando cout.'},
+      {l:23, m:0, t:'Fin del ámbito: el destructor de lck libera mtx. En el código no hay ningún unlock.', g:1}
+    ],
+    zero: [
+      {l:1, m:0, t:'Entra a divideByNumber con denom = 0. El mutex está libre.'},
+      {l:3, m:1, t:'Se construye lck y bloquea mtx.'},
+      {l:6, m:1, t:'denom == 0: va al else.'},
+      {l:14, m:1, t:'Se lanza invalid_argument. La ejecución salta al catch.', r:1},
+      {l:20, m:1, t:'Imprime el mensaje de la excepción, todavía bajo el cerrojo.'},
+      {l:21, m:1, t:'return: la función empieza a salir.'},
+      {l:21, m:0, t:'Al salir, el destructor de lck libera mtx. El return ya no deja el cerrojo tomado.', g:1}
+    ]
+  };
+  let path='ok', k=0, timer=null;
+  const pre=s.querySelector('#raiiCode'), txt=s.querySelector('#raiiTxt'), box=s.querySelector('#raiiMutex'), lamp=s.querySelector('#raiiLamp'), mt=s.querySelector('#raiiMutexT');
+  function render(){
+    pre.querySelectorAll('.ln').forEach(l=>l.classList.remove('hl','hl-red','hl-green'));
+    const st = k ? PATHS[path][k-1] : null;
+    if (st){ const ln=pre.querySelector(`.ln[data-n="${st.l}"]`); ln.classList.add(st.g?'hl-green':st.r?'hl-red':'hl'); }
+    const taken = st && st.m;
+    box.classList.toggle('free', !taken); lamp.classList.toggle('taken', !!taken);
+    mt.textContent = taken ? 'mtx tomado por lck' : 'mtx libre';
+    txt.textContent = st ? st.t : 'Elijan un camino y avancen línea por línea.';
+  }
+  const stop=()=>{ clearInterval(timer); timer=null; };
+  s.querySelectorAll('#raiiPath button').forEach(b=>b.onclick=()=>{ stop(); path=b.dataset.p; segOn(s,'#raiiPath',path); k=0; render(); });
+  s.querySelector('[data-act=step]').onclick=()=>{ stop(); k = k>=PATHS[path].length?0:k+1; render(); };
+  s.querySelector('[data-act=reset]').onclick=()=>{ stop(); k=0; render(); };
+  s.querySelector('[data-act=play]').onclick=()=>{ stop(); k=0; render(); timer=setInterval(()=>{ if(k>=PATHS[path].length) return stop(); k++; render(); }, 1200); };
+  render();
+  return { leave: stop };
+};
+
+/* =====================================================================
+   GANTT: lock_guard todo el tiempo frente a unique_lock con unlock
+   ===================================================================== */
+function scheduleLocks(plan, nThreads=6){
+  const th = Array.from({length:nThreads}, (_,i)=>({i, t:i*2, seg:0, out:[]}));
+  let freeAt=0;
+  for(;;){
+    th.forEach(x=>{ while (x.seg<plan.length && !plan[x.seg].crit){ x.out.push({a:x.t, b:x.t+plan[x.seg].d, c:'free'}); x.t+=plan[x.seg].d; x.seg++; } });
+    const ready = th.filter(x=>x.seg<plan.length).sort((p,q)=>p.t-q.t || p.i-q.i);
+    if (!ready.length) break;
+    const x = ready[0], start=Math.max(x.t, freeAt);
+    if (start > x.t) x.out.push({a:x.t, b:start, c:'wait'});
+    x.out.push({a:start, b:start+plan[x.seg].d, c:'crit'});
+    x.t = freeAt = start+plan[x.seg].d; x.seg++;
+  }
+  return th;
+}
+COMPONENTS.gantt = (s)=>{
+  const PLANS = {
+    guard:  [{d:300, crit:true}],
+    unique: [{d:100, crit:true},{d:100, crit:false},{d:100, crit:true}]
+  };
+  let mode='guard', timers=[];
+  const chart=s.querySelector('#gChart'), txt=s.querySelector('#gTxt');
+  const XMAX = Math.max(...scheduleLocks(PLANS.guard).map(x=>x.t));
+  function draw(animate){
+    timers.forEach(clearTimeout); timers=[];
+    const th = scheduleLocks(PLANS[mode]);
+    chart.innerHTML = th.map(x=>`<div class="glane"><span class="gname">hilo ${x.i+1}</span>${
+      x.out.map(o=>`<div class="gseg ${o.c}" data-a="${o.a}" style="left:${o.a/XMAX*100}%;width:${(o.b-o.a)/XMAX*100}%"></div>`).join('')}</div>`).join('')
+      + `<div style="position:relative;height:18px;font-size:12px;color:#6E6E73;white-space:nowrap">${[0,600,1200,1800].map(v=>`<span style="position:absolute;left:${v/XMAX*100}%;transform:translateX(${v===0?'0':v===1800?'-100%':'-50%'})">${v} ms</span>`).join('')}</div>`;
+    const end = Math.max(...th.map(x=>x.t));
+    const waitSum = th.reduce((a,x)=>a+x.out.filter(o=>o.c==='wait').reduce((p,o)=>p+o.b-o.a,0),0);
+    txt.textContent = '';
+    const segs=[...chart.querySelectorAll('.gseg')];
+    const show = ()=>{ txt.textContent = `Terminan todos en ${Math.round(end)} ms · espera acumulada ${Math.round(waitSum)} ms`; };
+    if (!animate || REDUCED){ segs.forEach(g=>g.classList.add('show')); show(); return; }
+    segs.forEach(g=>timers.push(setTimeout(()=>g.classList.add('show'), +g.dataset.a/XMAX*2600)));
+    timers.push(setTimeout(show, 2800));
+  }
+  s.querySelectorAll('#gMode button').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; segOn(s,'#gMode',mode); draw(true); });
+  s.querySelector('#gRun').onclick=()=>draw(true);
+  let first=true;
+  return { enter(){ if(first){ first=false; draw(true); } }, leave(){ timers.forEach(clearTimeout); } };
+};
+
+/* =====================================================================
+   ARRANQUE
+   ===================================================================== */
+document.querySelectorAll('pre.code').forEach(renderCode);
+const startAt = parseInt(location.hash.slice(1)) - 1;
+setTimeout(()=>document.getElementById('hint').classList.add('gone'), 6000);
+go(isNaN(startAt) ? 0 : startAt);
+</script>
+</body>
+</html>

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>09 · Task Parallelism and Speedup</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:6vh 8vw;display:none;flex-direction:column;justify-content:center;gap:1.2rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.6em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:60ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.45em}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:2.5vw;align-items:start}
+@media (max-width:820px){.cols{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.62em;line-height:1.5;background:var(--code);padding:1em 1.2em;border-radius:3px;margin:0;overflow:auto;max-height:66vh}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.7em;width:100%}th{text-align:left;font-size:.75em;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.4em .8em .4em 0}td{border-bottom:1px solid var(--line);padding:.5em .8em .5em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 8vw;font-size:.55em;color:var(--muted);font-family:var(--mono)}
+.note{border-left:3px solid var(--ink);padding-left:1em;color:var(--ink);max-width:60ch}
+.big{font-size:1.25em}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+</style>
+</head>
+<body>
+<div class="deck">
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 09</div>
+  <h1>Task parallelism and measuring speedup</h1>
+  <p class="muted">Same tools as before: async, futures, a queue. A different question: not “is it safe?” but “is it faster, and by how much?”</p>
+  <p class="muted" style="font-size:.7em">Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>. Press <kbd>p</kbd> to print all slides.</p>
+</section>
+
+<section class="slide">
+  <h2>Concurrency vs parallelism, again</h2>
+  <ul>
+    <li><b>Concurrency</b> (01 to 08): structure a program as tasks that share things safely.</li>
+    <li><b>Parallelism</b> (09 to 10): make one computation finish sooner on several cores.</li>
+    <li>Nothing new in the toolbox. Everything new in the questions: how to split, how to combine, what to measure.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Fan-out / fan-in</h2>
+  <div class="cols">
+<pre><code>std::vector&lt;std::future&lt;double&gt;&gt; parts;
+for (int t = 0; t &lt; nTasks; ++t)          // fan-out
+  parts.emplace_back(std::async(std::launch::async,
+      [&amp;, b, e] { double s = 0;
+                  for (i = b; i &lt; e; ++i) s += trip(fleet[i]);
+                  return s; }));            // partial result
+double total = 0;
+for (auto&amp; p : parts) total += p.get();    // fan-in</code></pre>
+    <ul>
+      <li>Each task owns its chunk and its partial sum. Nothing to lock.</li>
+      <li>The join is the barrier.</li>
+      <li>example_50: 400 000 vehicles, 10 cores. Sequential 383 ms, parallel 51 ms.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Speedup: measure, never assume</h2>
+  <p class="big"><code>speedup(n) = T(1) / T(n)</code> &nbsp; ideal <code>n</code> &nbsp; efficiency <code>= speedup / n</code></p>
+  <ul>
+    <li>Same data, same machine, <code>-O2</code>, several runs.</li>
+    <li>example_50 gets <b>7.5x on 10 cores</b>. Why not 10x? Task creation, combining, memory bandwidth, other processes.</li>
+    <li>Report the sequential time next to the parallel time. A speedup without T(1) is a rumour.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Amdahl’s law</h2>
+  <div class="cols">
+    <div>
+      <p class="big"><code>speedup(n) = 1 / (f + (1 − f) / n)</code></p>
+      <p><code>f</code> = fraction of the work that is inherently serial (loading, combining).</p>
+      <p class="big"><code>speedup(∞) = 1 / f</code></p>
+    </div>
+<pre><code>tasks  time(ms)  measured  Amdahl
+1      4106      1.0       1.0
+2      2094      2.0       2.0
+4      1068      3.9       3.9
+8       584      7.1       7.6
+16      540      7.7      14.2   ← 10 cores only</code></pre>
+  </div>
+  <p class="note">example_51. Shrink the serial part before adding cores. More tasks than cores gain nothing and cost switching.</p>
+</section>
+
+<section class="slide">
+  <h2>Fork / join: divide and conquer</h2>
+  <div class="cols">
+<pre><code>double sum(fleet, begin, end, cutoff) {
+  if (end - begin &lt;= cutoff)        // leaf
+    return sequentialSum(begin, end);
+  mid = begin + (end - begin) / 2;
+  auto left = std::async(async, sum, fleet, begin, mid, cutoff);
+  double right = sum(fleet, mid, end, cutoff);   // this thread
+  return left.get() + right;        // join
+}</code></pre>
+    <ul>
+      <li>One half on a new task, the other half on the current thread.</li>
+      <li>The <b>cutoff</b> stops recursion where a task costs more than the work.</li>
+      <li>Shape of every parallel sort, tree walk, reduction.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Choosing the cutoff</h2>
+  <div class="cols">
+<pre><code>cutoff     leaf tasks   time
+1 000 000        1      369 ms   sequential
+  250 000        4       91 ms
+   50 000       20       53 ms
+    5 000      200       48 ms   sweet spot
+      500     2000       65 ms   overhead wins</code></pre>
+    <ul>
+      <li>Too large: too few tasks, cores idle.</li>
+      <li>Too small: thousands of tasks, spawning dominates.</li>
+      <li>Rule of thumb: a few times more leaves than cores, each leaf worth well over a millisecond.</li>
+      <li>example_52 prints the curve. Exercise 9.1 asks you to find it for orders.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Three primitives: map, reduce, scan</h2>
+  <table>
+    <tr><th>Primitive</th><th>Does</th><th>Parallel because</th><th>Example</th></tr>
+    <tr><td><b>map</b></td><td>out[i] = f(in[i])</td><td>every element independent; each task writes its own range</td><td>53</td></tr>
+    <tr><td><b>reduce</b></td><td>combine all elements with ⊕</td><td>chunks reduce separately, then combine, if ⊕ is associative</td><td>56</td></tr>
+    <tr><td><b>scan</b></td><td>out[i] = in[0] ⊕ … ⊕ in[i]</td><td>three phases: local scans, scan of totals, add offsets</td><td>54</td></tr>
+  </table>
+  <p class="note">These three are also the shape of GPU kernels. Learn them on the CPU first; the GPU session reuses every one of them.</p>
+</section>
+
+<section class="slide">
+  <h2>Parallel map: layout decides safety</h2>
+  <div class="cols">
+<pre><code>out.resize(in.size());       // allocate ONCE, before tasks
+for (t ...) tasks.push_back(std::async(async, [&amp;, b, e] {
+  for (i = b; i &lt; e; ++i)
+    out[i] = eta(in[i]);     // task t owns out[b..e)
+}));</code></pre>
+    <ul>
+      <li>Disjoint ranges of a pre-sized vector: no lock, no race.</li>
+      <li><code>push_back</code> from two tasks: the vector grows concurrently, a data race.</li>
+      <li>example_53: 335 ms → 48 ms on 10 tasks.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Parallel reduce needs associativity</h2>
+  <div class="cols">
+<pre><code>id sum      seq 499999500000  par 499999500000  identical
+fuel sum    seq 139999.96      par 139999.96      diff −1.8e−7
+1000 − fuel seq −138999.96     par 132999.96      WRONG
+average     reduce (sum, count) pairs, divide at the end</code></pre>
+    <ul>
+      <li>Integer <code>+</code>: associative and exact.</li>
+      <li>Floating <code>+</code>: mathematically associative, numerically not. Last digits move.</li>
+      <li><code>−</code>: not associative. Parallel result is garbage.</li>
+      <li>Average, variance, min-and-argmin: reduce a small struct instead. example_56.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Parallel scan in three phases</h2>
+  <div class="cols">
+<pre><code>// 1. each task: local scan of its chunk, record chunk total
+// 2. sequential: exclusive scan over the chunk totals -> offsets
+// 3. each task: add its offset to its chunk
+
+in:      1 2 3 | 4 5 6 | 7 8 9
+phase 1: 1 3 6 | 4 9 15| 7 15 24     totals 6, 15, 24
+phase 2: offsets 0, 6, 21
+phase 3: 1 3 6 | 10 15 21 | 28 36 45</code></pre>
+    <ul>
+      <li>Looks inherently serial, is not.</li>
+      <li>Costs about 2x the work of the sequential scan.</li>
+      <li>example_54: 78 ms sequential, 42 ms with 10 tasks. Needs enough cores and data to break even.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread pool: workers created once</h2>
+  <div class="cols">
+<pre><code>template &lt;class Fn&gt;
+auto submit(Fn fn) -&gt; std::future&lt;decltype(fn())&gt; {
+  auto task = std::make_shared&lt;std::packaged_task&lt;R()&gt;&gt;(fn);
+  auto result = task-&gt;get_future();
+  { lock_guard lock(_mutex); _jobs.push([task]{ (*task)(); }); }
+  _cond.notify_one();
+  return result;
+}
+// worker: wait(lock, []{ return stopping || !jobs.empty(); })
+//         pop under the lock, run the job OUTSIDE it</code></pre>
+    <ul>
+      <li>The folder-07 monitor queue, N workers, <code>packaged_task</code> for the result.</li>
+      <li>Shutdown flag inside the predicate, <code>notify_all</code>, join every worker.</li>
+      <li>example_55: 20 000 jobs. One thread each: 243 ms. Pool of 10: 36 ms.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Exercises: orders and pricing</h2>
+  <ul>
+    <li><b>9.1</b> Daily revenue over a million orders as a recursive fork/join. Table of cutoff → time → speedup. Why is the result exact here when example_50 differed?</li>
+    <li><b>9.2</b> Cumulative deliveries timeline as a three-phase parallel scan. Identical result, break-even analysis.</li>
+    <li><b>9.3</b> Price 50 000 orders on the thread pool. Workers → speedup table. Pool vs one <code>std::async</code> per order. Then chunk the jobs.</li>
+  </ul>
+  <p class="muted" style="font-size:.75em">Every stub compiles and runs sequentially. Every timing needs <code>-O2</code>.</p>
+</section>
+
+<section class="slide">
+  <h2>Self-study: where this folder continues</h2>
+  <ul>
+    <li>Work and depth (span): the theoretical limit of a parallel algorithm. Gustafson’s law: scale the problem, not just the cores.</li>
+    <li>Work stealing (Cilk, TBB, Java fork/join): a pool that balances recursive tasks automatically.</li>
+    <li><code>std::packaged_task</code>, <code>std::shared_future</code>, continuations. Executors in the C++ standard proposals.</li>
+    <li>Next session: data parallelism. The same map/reduce/scan on images and clusters, load balancing, and why this leads straight to GPUs.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>09 · Task parallelism and speedup</span><span id="counter"></span></div>
+<script>
+(function(){
+  const slides=[...document.querySelectorAll('.slide')]; let i=Math.max(0,Math.min(slides.length-1,(parseInt(location.hash.slice(1),10)||1)-1));
+  const counter=document.getElementById('counter');
+  function show(n){ i=Math.max(0,Math.min(slides.length-1,n)); slides.forEach((s,k)=>s.classList.toggle('active',k===i)); counter.textContent=(i+1)+' / '+slides.length; history.replaceState(null,'','#'+(i+1)); }
+  document.addEventListener('keydown',e=>{ if(['ArrowRight',' ','PageDown','Enter'].includes(e.key)){e.preventDefault();show(i+1);} else if(['ArrowLeft','PageUp','Backspace'].includes(e.key)){e.preventDefault();show(i-1);} else if(e.key==='Home')show(0); else if(e.key==='End')show(slides.length-1); else if(e.key==='p'){document.querySelectorAll('.slide').forEach(s=>s.classList.add('active'));window.print();} });
+  document.addEventListener('click',e=>{ if(e.target.closest('a,pre,code'))return; show(e.clientX>innerWidth/2?i+1:i-1); });
+  show(i);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intro · From Threads to Massively Parallel</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:6vh 8vw;display:none;flex-direction:column;justify-content:center;gap:1.2rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.6em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:60ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.45em}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:2.5vw;align-items:start}
+@media (max-width:820px){.cols{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.62em;line-height:1.5;background:var(--code);padding:1em 1.2em;border-radius:3px;margin:0;overflow:auto;max-height:66vh}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.7em;width:100%}th{text-align:left;font-size:.75em;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.4em .8em .4em 0}td{border-bottom:1px solid var(--line);padding:.5em .8em .5em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 8vw;font-size:.55em;color:var(--muted);font-family:var(--mono)}
+.note{border-left:3px solid var(--ink);padding-left:1em;color:var(--ink);max-width:60ch}
+.big{font-size:1.25em}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+.fig{width:100%;max-width:900px;height:auto;display:block}
+.fig text{font-family:var(--mono);font-size:13px;fill:var(--ink)}
+.fig .lbl{font-family:var(--body);font-size:14px;fill:var(--muted)}
+.fig rect.box{fill:#fff;stroke:var(--ink);stroke-width:1.2}
+.fig rect.soft{fill:var(--code);stroke:var(--line);stroke-width:1}
+.fig line,.fig path{stroke:var(--ink);stroke-width:1.2;fill:none}
+.fig .thread{stroke:var(--muted);stroke-width:1}
+.answers li{margin-bottom:.35em}
+</style>
+</head>
+<body>
+<div class="deck">
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · introduction to sessions 08, 09 and 10</div>
+  <h1>From threads to massively parallel</h1>
+  <p class="muted">Sessions 01 to 07 taught you to share safely. The next three teach you to go faster, and to prove it. They end where GPUs begin.</p>
+  <p class="muted" style="font-size:.7em">Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>. Press <kbd>p</kbd> to print all slides.</p>
+</section>
+
+<section class="slide">
+  <h2>Where we are</h2>
+  <table>
+    <tr><th>Folder</th><th>You can now…</th></tr>
+    <tr><td>01 · 02 · 03</td><td>start threads, hand them data by value, reference or move, run member functions on shared objects, join everything</td></tr>
+    <tr><td>04</td><td>get a result or an exception back from a thread with promises, futures and <code>std::async</code></td></tr>
+    <tr><td>05 · 06</td><td>recognise a data race, fix it with a mutex and RAII locks, avoid deadlock</td></tr>
+    <tr><td>07</td><td>build a monitor object and a producer/consumer queue with a condition variable</td></tr>
+  </table>
+  <p class="note">All of that answers one question: <b>is it safe?</b> The vehicles queue at the intersection and nobody loses a car.</p>
+</section>
+
+<section class="slide">
+  <h2>What changes now</h2>
+  <p class="big">New question: <b>is it faster, and by how much?</b></p>
+  <table>
+    <tr><th>Session</th><th>Theme</th><th>One sentence</th></tr>
+    <tr><td><b>08</b></td><td>Atomics and the memory model</td><td>Share one value without a lock, and understand what “visible to another thread” really means.</td></tr>
+    <tr><td><b>09</b></td><td>Task parallelism and speedup</td><td>Split work across cores, measure the speedup, learn why it stops growing.</td></tr>
+    <tr><td><b>10</b></td><td>Data parallelism</td><td>Split data across cores: the same operation on millions of elements, balanced and measured.</td></tr>
+    <tr><td><b>11</b></td><td>GPUs and CUDA</td><td>The same map, reduce and scan, launched on thousands of threads at once.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Data parallelism: the idea behind all of it</h2>
+  <ul>
+    <li>When software is slow, the reason is usually <b>too much data</b>: millions of pixels, billions of grid points, thousands of flights, or a fleet of vehicles.</li>
+    <li>Very often the computation on one piece of data does <b>not depend</b> on the computation on another piece.</li>
+    <li>Independent pieces can be computed <b>at the same time</b>. Then execution speed grows with the number of processors you give the problem.</li>
+    <li>Writing data-parallel code means <b>reorganising the computation around the data</b>, so that the independent parts are visible and can be handed out.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>The textbook example: colour to grayscale</h2>
+  <div class="cols">
+    <div>
+      <p>Every pixel is an (r, g, b) triple. Its grey level is a weighted sum:</p>
+      <p class="big"><code>L = 0.299·r + 0.587·g + 0.114·b</code></p>
+      <p>Pixel <code>O[i]</code> needs only <code>I[i]</code>. A four-megapixel image is four million independent computations.</p>
+      <p class="muted" style="font-size:.8em">Our version of the same shape: an ETA for every vehicle, a price for every order, a blur of the traffic-density map.</p>
+    </div>
+    <svg class="fig" viewBox="0 0 520 210" role="img" aria-label="Input array elements each map through an independent computation to one output element">
+      <text class="lbl" x="10" y="30">Input I</text>
+      <text class="lbl" x="10" y="190">Output O</text>
+      <g id="cells"></g>
+      <rect class="box" x="90" y="10" width="60" height="34"/><text x="97" y="32">I[0]</text>
+      <rect class="box" x="160" y="10" width="60" height="34"/><text x="167" y="32">I[1]</text>
+      <rect class="box" x="230" y="10" width="60" height="34"/><text x="237" y="32">I[2]</text>
+      <rect class="box" x="300" y="10" width="60" height="34"/><text x="307" y="32">I[3]</text>
+      <text x="372" y="32">…</text>
+      <rect class="box" x="420" y="10" width="80" height="34"/><text x="424" y="32">I[N−1]</text>
+      <circle cx="120" cy="105" r="16" fill="#fff" stroke="#1A1A1A" stroke-width="1.2"/><circle cx="190" cy="105" r="16" fill="#fff" stroke="#1A1A1A" stroke-width="1.2"/><circle cx="260" cy="105" r="16" fill="#fff" stroke="#1A1A1A" stroke-width="1.2"/><circle cx="330" cy="105" r="16" fill="#fff" stroke="#1A1A1A" stroke-width="1.2"/><circle cx="460" cy="105" r="16" fill="#fff" stroke="#1A1A1A" stroke-width="1.2"/>
+      <text x="113" y="110">f</text><text x="183" y="110">f</text><text x="253" y="110">f</text><text x="323" y="110">f</text><text x="453" y="110">f</text>
+      <line x1="120" y1="44" x2="120" y2="89"/><line x1="190" y1="44" x2="190" y2="89"/><line x1="260" y1="44" x2="260" y2="89"/><line x1="330" y1="44" x2="330" y2="89"/><line x1="460" y1="44" x2="460" y2="89"/>
+      <line x1="120" y1="121" x2="120" y2="166"/><line x1="190" y1="121" x2="190" y2="166"/><line x1="260" y1="121" x2="260" y2="166"/><line x1="330" y1="121" x2="330" y2="166"/><line x1="460" y1="121" x2="460" y2="166"/>
+      <rect class="box" x="90" y="166" width="60" height="34"/><text x="97" y="188">O[0]</text>
+      <rect class="box" x="160" y="166" width="60" height="34"/><text x="167" y="188">O[1]</text>
+      <rect class="box" x="230" y="166" width="60" height="34"/><text x="237" y="188">O[2]</text>
+      <rect class="box" x="300" y="166" width="60" height="34"/><text x="307" y="188">O[3]</text>
+      <text x="372" y="188">…</text>
+      <rect class="box" x="420" y="166" width="80" height="34"/><text x="424" y="188">O[N−1]</text>
+    </svg>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Data parallelism vs task parallelism</h2>
+  <div class="cols">
+    <div>
+      <p><b>Task parallelism</b> comes from decomposing the <i>program</i>: a vector addition and a matrix product are two tasks; if independent, they run side by side. I/O and data transfers are tasks too.</p>
+      <p>There are usually a handful of tasks. Session <b>09</b>.</p>
+    </div>
+    <div>
+      <p><b>Data parallelism</b> comes from decomposing the <i>data</i>: the same operation on every element.</p>
+      <p>There are usually millions of elements, so this is the main source of scalable performance: more hardware, faster program, same code. Session <b>10</b>, then the GPU.</p>
+    </div>
+  </div>
+  <p class="note">Both matter. The dispatcher deciding while couriers ride is task parallelism; pricing a million orders is data parallelism.</p>
+</section>
+
+<section class="slide">
+  <h2>Session 08 in one slide: atomics</h2>
+  <div class="cols">
+<pre><code>// folder 05: lost update, count 569 of 1000
+int old = n; sleep; n = old + 1;
+
+// folder 08: one indivisible operation, 1000
+counter.fetch_add(1);
+
+// and its big brother, compare-and-swap
+if (x.compare_exchange_weak(expected, desired)) ...</code></pre>
+    <ul>
+      <li>A mutex protects a region. An atomic protects one value, without blocking.</li>
+      <li>Atomicity of one operation is not atomicity of a sequence: hence CAS loops.</li>
+      <li>Atomics also <i>order</i> memory: release and acquire.</li>
+      <li>Correct code can still crawl: false sharing.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Session 09 in one slide: tasks and speedup</h2>
+  <div class="cols">
+<pre><code>speedup(n) = T(1) / T(n)
+
+Amdahl: speedup(n) = 1 / (f + (1 − f)/n)
+        f = serial fraction, limit 1/f
+
+fan-out: one std::async per chunk
+fan-in:  sum the futures
+
+primitives: map · reduce · scan</code></pre>
+    <ul>
+      <li>Split the fleet, sum the pieces, measure. 7.5x on 10 cores, not 10x: find out why.</li>
+      <li>Fork/join with a cutoff; the whole cost curve.</li>
+      <li>Reduce needs an associative operation. Scan works in three phases.</li>
+      <li>A thread pool: the folder-07 queue, N workers, futures.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Session 10 in one slide: data parallelism on the CPU</h2>
+  <ul>
+    <li>A blur over a traffic-density image, cut into row strips: input shared read-only, output written in disjoint rows, no lock at all.</li>
+    <li>k-means over two million vehicle positions with <b>combiners</b>: each task accumulates privately, results merge once. 3 ms where a shared counter takes 750 ms.</li>
+    <li>Uneven work: static chunks versus an atomic “next chunk” counter.</li>
+    <li>Random numbers: one generator per task, or it is a data race.</li>
+    <li>Every one of these is a GPU kernel waiting to happen.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>The destination: heterogeneous computing</h2>
+  <ul>
+    <li>A modern computer has a <b>host</b> (the CPU) and one or more <b>devices</b> (GPUs), each with its own memory.</li>
+    <li><b>CUDA C++</b> is C++ with a few extra keywords and a small runtime library. One source file holds both host code and device code.</li>
+    <li>Any ordinary C++ program is already a CUDA program with host code only. You add device code where the data parallelism is.</li>
+    <li>Device code is written as <b>kernels</b>: functions that run once per thread, on many threads at the same time.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>How a CUDA program runs</h2>
+  <div class="cols">
+    <svg class="fig" viewBox="0 0 520 250" role="img" aria-label="A single host thread runs serial code, launches a grid of device threads, waits, then continues and launches another grid">
+      <text class="lbl" x="20" y="24">host (CPU), one thread</text>
+      <path d="M60 40 q8 10 0 20 q-8 10 0 20 q8 10 0 20"/>
+      <path d="M60 130 q8 10 0 20 q-8 10 0 20 q8 10 0 20"/>
+      <line x1="60" y1="100" x2="220" y2="100"/><path d="M212 95 l8 5 l-8 5"/>
+      <line x1="220" y1="122" x2="60" y2="122"/><path d="M68 117 l-8 5 l8 5"/>
+      <text class="lbl" x="230" y="34">device (GPU): a grid of thread blocks</text>
+      <text x="230" y="60">etaKernel&lt;&lt;&lt;nBlocks, nThreads&gt;&gt;&gt;(…);</text>
+      <rect class="soft" x="230" y="72" width="270" height="68"/>
+      <g class="thread">
+        <rect x="240" y="80" width="50" height="52" fill="#fff" stroke="#1A1A1A"/><rect x="300" y="80" width="50" height="52" fill="#fff" stroke="#1A1A1A"/><rect x="360" y="80" width="50" height="52" fill="#fff" stroke="#1A1A1A"/><rect x="440" y="80" width="50" height="52" fill="#fff" stroke="#1A1A1A"/>
+        <text x="418" y="112">…</text>
+        <path d="M245 86 v40 M252 86 v40 M259 86 v40 M266 86 v40 M273 86 v40 M280 86 v40 M305 86 v40 M312 86 v40 M319 86 v40 M326 86 v40 M333 86 v40 M340 86 v40 M365 86 v40 M372 86 v40 M379 86 v40 M386 86 v40 M393 86 v40 M400 86 v40 M445 86 v40 M452 86 v40 M459 86 v40 M466 86 v40 M473 86 v40 M480 86 v40"/>
+      </g>
+      <text class="lbl" x="230" y="160">blocks 0 … N−1, many threads each</text>
+      <text class="lbl" x="230" y="200">the host waits for the grid, then continues:</text>
+      <text x="230" y="222">nextKernel&lt;&lt;&lt;…&gt;&gt;&gt;(…);</text>
+    </svg>
+    <ul>
+      <li>Serial host code runs on the CPU as usual.</li>
+      <li>A kernel call <b>launches a grid</b>: thousands of device threads, all running the same function on different data.</li>
+      <li>When every thread of the grid is done, the host continues. Host and device can also overlap.</li>
+      <li>Device threads are cheap to create and schedule; CPU threads cost thousands of cycles each. That is why a GPU can afford one thread per pixel.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The loop disappears</h2>
+  <div class="cols">
+<pre><code>// CPU: one thread, a loop over the fleet
+void etaAll(const float* dist, const float* speed,
+            float* eta, int n) {
+  for (int i = 0; i &lt; n; ++i)
+    eta[i] = dist[i] / speed[i] * 60.0f;
+}</code></pre>
+<pre><code>// GPU kernel: one thread, ONE element
+__global__
+void etaKernel(const float* dist, const float* speed,
+               float* eta, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i &lt; n)
+    eta[i] = dist[i] / speed[i] * 60.0f;
+}</code></pre>
+  </div>
+  <p class="note">The grid <i>is</i> the loop: each thread is one iteration, and computes its own <code>i</code> from built-in variables. The <code>if</code> guards the last block, which may have more threads than elements.</p>
+</section>
+
+<section class="slide">
+  <h2>Grid, blocks, threads</h2>
+  <div class="cols">
+    <svg class="fig" viewBox="0 0 520 190" role="img" aria-label="Three blocks of 256 threads; each thread computes its global index from its block index and thread index">
+      <text class="lbl" x="20" y="22">block 0</text><text class="lbl" x="200" y="22">block 1</text><text class="lbl" x="380" y="22">block N−1</text>
+      <rect class="box" x="20" y="30" width="150" height="30"/><text x="26" y="50">0 1 2 … 254 255</text>
+      <rect class="box" x="200" y="30" width="150" height="30"/><text x="206" y="50">0 1 2 … 254 255</text>
+      <rect class="box" x="380" y="30" width="130" height="30"/><text x="386" y="50">0 1 … 255</text>
+      <g class="thread"><path d="M30 60 v25 M55 60 v25 M80 60 v25 M105 60 v25 M130 60 v25 M155 60 v25 M210 60 v25 M235 60 v25 M260 60 v25 M285 60 v25 M310 60 v25 M335 60 v25 M390 60 v25 M415 60 v25 M440 60 v25 M465 60 v25 M495 60 v25"/></g>
+      <rect class="soft" x="20" y="88" width="150" height="70"/><rect class="soft" x="200" y="88" width="150" height="70"/><rect class="soft" x="380" y="88" width="130" height="70"/>
+      <text x="26" y="108">i = 0·256 + tid</text><text x="26" y="128">i ∈ [0, 255]</text><text x="26" y="148">eta[i] = …</text>
+      <text x="206" y="108">i = 1·256 + tid</text><text x="206" y="128">i ∈ [256, 511]</text><text x="206" y="148">eta[i] = …</text>
+      <text x="386" y="108">i = (N−1)·256 + tid</text><text x="386" y="128">…</text><text x="386" y="148">eta[i] = …</text>
+      <text class="lbl" x="20" y="182">i = blockIdx.x * blockDim.x + threadIdx.x</text>
+    </svg>
+    <ul>
+      <li>A grid is an array of <b>blocks</b>; every block has the same number of threads, up to 1024, ideally a multiple of 32.</li>
+      <li><code>threadIdx</code>: position inside the block. <code>blockIdx</code>: which block. <code>blockDim</code>: block size.</li>
+      <li>Like a phone number: area code plus local number gives a unique global index.</li>
+      <li>Blocks may run in any order, a few at a time on a small GPU, hundreds on a large one. Same code, different speed.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The host side: three steps around the launch</h2>
+  <div class="cols">
+<pre><code>void etaOnDevice(const float* dist_h, const float* speed_h,
+                 float* eta_h, int n) {
+  int size = n * sizeof(float);
+  float *dist_d, *speed_d, *eta_d;
+  // 1. allocate device memory, copy inputs over
+  cudaMalloc((void**)&amp;dist_d, size);
+  cudaMalloc((void**)&amp;speed_d, size);
+  cudaMalloc((void**)&amp;eta_d, size);
+  cudaMemcpy(dist_d, dist_h, size, cudaMemcpyHostToDevice);
+  cudaMemcpy(speed_d, speed_h, size, cudaMemcpyHostToDevice);
+  // 2. launch the grid: ceil(n / 256) blocks of 256 threads
+  etaKernel&lt;&lt;&lt;(n + 255) / 256, 256&gt;&gt;&gt;(dist_d, speed_d, eta_d, n);
+  // 3. copy the result back, free device memory
+  cudaMemcpy(eta_h, eta_d, size, cudaMemcpyDeviceToHost);
+  cudaFree(dist_d); cudaFree(speed_d); cudaFree(eta_d);
+}</code></pre>
+    <ul>
+      <li><code>cudaMalloc</code> / <code>cudaFree</code>: like <code>malloc</code> / <code>free</code>, but for device global memory. The pointer it gives you must not be dereferenced on the host.</li>
+      <li><code>cudaMemcpy</code>: destination, source, bytes, direction.</li>
+      <li>Every call returns an error code. Check it; the examples in books skip that for brevity, you should not.</li>
+      <li>Copying back and forth is the expensive part. Real programs keep data on the device between kernels.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Launch configuration and the guard</h2>
+  <ul>
+    <li><code>kernel&lt;&lt;&lt;blocks, threadsPerBlock&gt;&gt;&gt;(args)</code>: the two numbers between the brackets define the grid.</li>
+    <li>Blocks needed: <code>ceil(n / threadsPerBlock)</code>. In integers: <code>(n + t − 1) / t</code>.</li>
+    <li>Example: n = 1000 vehicles, 256 threads per block → 4 blocks → 1024 threads. The first 1000 compute an ETA; the last 24 fail the <code>if (i &lt; n)</code> and do nothing.</li>
+    <li>Without the guard, 24 threads would write past the end of the arrays.</li>
+  </ul>
+  <table>
+    <tr><th>Keyword</th><th>Callable from</th><th>Runs on</th><th>Executed by</th></tr>
+    <tr><td><code>__host__</code> (default)</td><td>host</td><td>host</td><td>the calling CPU thread</td></tr>
+    <tr><td><code>__global__</code></td><td>host (or device)</td><td>device</td><td>a new grid of device threads</td></tr>
+    <tr><td><code>__device__</code></td><td>device</td><td>device</td><td>the calling device thread</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Compilation and what you need</h2>
+  <ul>
+    <li><b>nvcc</b> separates the two halves: host code goes to the ordinary C++ compiler and linker; device code becomes PTX, compiled for the actual GPU when the program runs.</li>
+    <li>Build: <code>nvcc -O2 eta.cu -o eta</code>. Same idea as <code>g++ -std=c++17 -pthread</code>, one more stage inside.</li>
+    <li>Hardware: an NVIDIA GPU. Macs cannot run CUDA at all.</li>
+    <li>No GPU at hand: Google Colab’s free tier gives a GPU with nvcc installed, which is how we will run the CUDA session.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Warm-up questions for the CUDA session</h2>
+  <ol>
+    <li>Each thread computes one ETA. Which expression gives its element index? <code>threadIdx.x + threadIdx.y</code> · <code>blockIdx.x + threadIdx.x</code> · <code>blockIdx.x*blockDim.x + threadIdx.x</code> · <code>blockIdx.x*threadIdx.x</code></li>
+    <li>Each thread computes <b>two adjacent</b> ETAs. Index of its first element?</li>
+    <li>n = 8000 vehicles, one element per thread, blocks of 1024 threads, as few blocks as possible. How many threads in the grid?</li>
+    <li>Allocating <code>n</code> floats on the device: what is the second argument of <code>cudaMalloc</code>? And the first?</li>
+    <li>Copy 3000 bytes from host array <code>a_h</code> to device array <code>a_d</code>: write the call.</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Answers</h2>
+  <ol class="answers">
+    <li><code>blockIdx.x * blockDim.x + threadIdx.x</code>: block offset plus position in the block.</li>
+    <li><code>(blockIdx.x * blockDim.x + threadIdx.x) * 2</code>: the same global index, times two, and the thread also handles index + 1.</li>
+    <li>ceil(8000 / 1024) = 8 blocks × 1024 = <b>8192</b> threads; 192 of them are stopped by the guard.</li>
+    <li>Second: <code>n * sizeof(float)</code>, bytes not elements. First: <code>(void**)&amp;a_d</code>, the address of the pointer, so the function can fill it in.</li>
+    <li><code>cudaMemcpy(a_d, a_h, 3000, cudaMemcpyHostToDevice);</code> destination first.</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Reading, and where to go next</h2>
+  <ul>
+    <li>Reading for this block: Kirk &amp; Hwu, <i>Programming Massively Parallel Processors</i>, chapter 2, “Heterogeneous data-parallel computing”.</li>
+    <li>Sessions 08 to 10 are the CPU preparation: after them, every concept in chapter 2 has a C++ program you already wrote behind it.</li>
+    <li>Now: <a href="../08_atomics_memory_model/slides.html">Session 08, atomics and the memory model →</a></li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>Intro · Sessions 08 to 10 and the road to CUDA</span><span id="counter"></span></div>
+<script>
+(function(){
+  const slides=[...document.querySelectorAll('.slide')]; let i=Math.max(0,Math.min(slides.length-1,(parseInt(location.hash.slice(1),10)||1)-1));
+  const counter=document.getElementById('counter');
+  function show(n){ i=Math.max(0,Math.min(slides.length-1,n)); slides.forEach((s,k)=>s.classList.toggle('active',k===i)); counter.textContent=(i+1)+' / '+slides.length; history.replaceState(null,'','#'+(i+1)); }
+  document.addEventListener('keydown',e=>{ if(['ArrowRight',' ','PageDown','Enter'].includes(e.key)){e.preventDefault();show(i+1);} else if(['ArrowLeft','PageUp','Backspace'].includes(e.key)){e.preventDefault();show(i-1);} else if(e.key==='Home')show(0); else if(e.key==='End')show(slides.length-1); else if(e.key==='p'){document.querySelectorAll('.slide').forEach(s=>s.classList.add('active'));window.print();} });
+  document.addEventListener('click',e=>{ if(e.target.closest('a,pre,code'))return; show(e.clientX>innerWidth/2?i+1:i-1); });
+  show(i);
+})();
+</script>
+</body>
+</html>

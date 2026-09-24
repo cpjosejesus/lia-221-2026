@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10 · Data Parallelism</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:6vh 8vw;display:none;flex-direction:column;justify-content:center;gap:1.2rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.6em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:60ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.45em}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:2.5vw;align-items:start}
+@media (max-width:820px){.cols{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.62em;line-height:1.5;background:var(--code);padding:1em 1.2em;border-radius:3px;margin:0;overflow:auto;max-height:66vh}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.7em;width:100%}th{text-align:left;font-size:.75em;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.4em .8em .4em 0}td{border-bottom:1px solid var(--line);padding:.5em .8em .5em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 8vw;font-size:.55em;color:var(--muted);font-family:var(--mono)}
+.note{border-left:3px solid var(--ink);padding-left:1em;color:var(--ink);max-width:60ch}
+.big{font-size:1.25em}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+</style>
+</head>
+<body>
+<div class="deck">
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 10</div>
+  <h1>Data parallelism, and the road to GPUs</h1>
+  <p class="muted">The same operation on every element of something large. The most scalable parallelism there is, and exactly how a GPU works.</p>
+  <p class="muted" style="font-size:.7em">Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>. Press <kbd>p</kbd> to print all slides.</p>
+</section>
+
+<section class="slide">
+  <h2>Task parallelism vs data parallelism</h2>
+  <ul>
+    <li><b>Task parallelism</b> (09): split the <i>work</i> into tasks. Parallelism limited by how many tasks the program has.</li>
+    <li><b>Data parallelism</b> (10): split the <i>data</i>. The same function on every element, elements independent. Parallelism grows with the data.</li>
+    <li>Images, point clouds, simulations, matrices, log files: all data-parallel.</li>
+    <li>Three primitives carry over unchanged: map, reduce, scan.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Map over a grid: box blur in strips</h2>
+  <div class="cols">
+<pre><code>// every output pixel: mean of a (2r+1)² window of the INPUT
+void blurRows(const Image&amp; src, Image&amp; dst, int r,
+              int fromRow, int toRow);
+
+rowsPerTask = ceil(h / nTasks);
+for (t ...) std::async(blurRows, cref(src), ref(dst),
+                       r, t*rowsPerTask, min(h, (t+1)*rowsPerTask));
+
+1 strip 118 ms · 2: 71 · 4: 37 · 10: 20 ms</code></pre>
+    <ul>
+      <li>Input shared read-only: no lock, nobody writes it.</li>
+      <li>Output written in disjoint rows: no lock.</li>
+      <li>Strips, not pixels: 2M tasks would cost more than the blur. example_58.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Map + combine: parallel k-means</h2>
+  <div class="cols">
+<pre><code>struct Partial { vector&lt;double&gt; sx, sy; vector&lt;long&gt; n; };
+
+// each task, its own chunk, its OWN Partial
+for (i in chunk) { c = nearest(pts[i], centroids);
+                   acc.sx[c] += x; acc.sy[c] += y; acc.n[c]++; }
+return acc;
+
+// merge: k entries per task, sequential, cheap
+// update: centroid[c] = (sx[c]/n[c], sy[c]/n[c])</code></pre>
+    <ul>
+      <li>Assignment step is a map. Update step is a reduce.</li>
+      <li>Nobody writes a shared accumulator. Ever.</li>
+      <li>example_59: 2M vehicles, 4 hotspots found in 21 ms on 10 tasks.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Combiners beat shared accumulators</h2>
+  <div class="cols">
+<pre><code>histogram of 30M speeds, 32 bins, 10 tasks
+
+(a) shared vector + mutex per ++      753 ms
+(b) shared vector of atomics         1176 ms
+(c) private vector per task, merge      3 ms</code></pre>
+    <ul>
+      <li>Atomics are not free: ten cores hammering 32 counters in a few cache lines is <i>slower</i> than a mutex.</li>
+      <li>Accumulate privately, merge rarely. 30M synchronized increments become 10 × 32 additions.</li>
+      <li>example_61. This is the “combiner” of CS-206 and the per-block reduction of CUDA.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Load balancing: static vs dynamic</h2>
+  <div class="cols">
+<pre><code>// dynamic: claim the next `grain` elements atomically
+std::atomic&lt;size_t&gt; next{0};
+while (true) {
+  size_t b = next.fetch_add(grain);
+  if (b &gt;= n) break;
+  process(b, min(n, b + grain));
+}
+
+static, 10 tasks         1046 ms
+dynamic, grain 1000       183 ms
+dynamic, grain 10         154 ms
+dynamic, grain 1        (counter becomes the bottleneck)</code></pre>
+    <ul>
+      <li>Equal-size chunks assume equal work. Uneven and clustered work leaves nine tasks idle.</li>
+      <li>Whoever is free takes the next chunk. example_60.</li>
+      <li>Grain too big: imbalance. Too small: contention on the counter.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Embarrassingly parallel, with one trap</h2>
+  <div class="cols">
+<pre><code>long insideCircle(long samples, unsigned seed) {
+  std::mt19937_64 rng(seed);   // PRIVATE generator
+  ...
+}
+for (t ...) async(insideCircle, total / n, 1000 + t);
+
+1 task 1096 ms · 2: 555 · 4: 307 · 10: 279 ms</code></pre>
+    <ul>
+      <li>No shared state at all. One sum at the end. Near-ideal speedup.</li>
+      <li>One <code>std::mt19937</code> shared by tasks is a data race.</li>
+      <li>Same seed in every task: the same samples n times, n× the work for nothing.</li>
+      <li>example_62.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Memory layout matters as much as cores</h2>
+  <ul>
+    <li>A row of an image is contiguous. A column is one element every <code>w</code> floats.</li>
+    <li>A task walking a row strip streams through memory. A task walking a column strip misses the cache on every step.</li>
+    <li>Exercise 10.1 asks you to measure both. Expect a large difference for the same number of operations.</li>
+    <li>On a GPU the same idea is called <b>coalesced access</b>, and it decides whether a kernel is fast or ten times slower.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>The standard library can do it for you, sometimes</h2>
+  <div class="cols">
+<pre><code>#ifdef __cpp_lib_parallel_algorithm
+  std::transform(std::execution::par, ...);
+  std::sort(std::execution::par, ...);
+#else
+  // hand-made parallel map (example_53)
+#endif</code></pre>
+    <ul>
+      <li>C++17 execution policies: <code>seq</code>, <code>par</code>, <code>par_unseq</code>.</li>
+      <li>GCC: link <code>-ltbb</code>. MSVC: built in. Apple clang: not shipped.</li>
+      <li>example_57 detects support with the feature-test macro and falls back.</li>
+      <li>Know what the policy does for you; you just built it by hand.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why this leads straight to GPUs</h2>
+  <table>
+    <tr><th>CPU, this folder</th><th>GPU, next session</th></tr>
+    <tr><td>the function applied to each element</td><td>the <b>kernel</b></td></tr>
+    <tr><td>one task per strip of rows</td><td>a <b>grid</b> of <b>blocks</b> of <b>threads</b>, one thread per element</td></tr>
+    <tr><td>chunk by <code>hardware_concurrency()</code></td><td>the hardware schedules tens of thousands of threads</td></tr>
+    <tr><td>walk rows, not columns</td><td><b>coalesced</b> memory access</td></tr>
+    <tr><td>combiner, then merge</td><td>per-block reduction in shared memory, then a second kernel</td></tr>
+    <tr><td><code>std::vector</code> in RAM</td><td>host vs <b>device</b> memory, explicit copies and their cost</td></tr>
+    <tr><td>scan in three phases</td><td>the same three phases, one block per chunk</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>A GPU is not a faster CPU</h2>
+  <ul>
+    <li>It is a machine for map, reduce and scan over very large data, with a memory copy at each end.</li>
+    <li>Thousands of simple threads, executed in groups that run the <i>same instruction</i> (SIMT). Branching inside a group costs; locks between threads are the exception, not the rule.</li>
+    <li>Everything you did this session, you will do again next session with a different launcher: <code>kernel&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(…)</code>.</li>
+    <li>Practical: you need an NVIDIA GPU; Macs cannot run CUDA. Google Colab’s free tier offers one with the compiler installed.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises: orders and deliveries</h2>
+  <ul>
+    <li><b>10.1</b> Smooth an order heat map in horizontal strips, then vertical strips. Measure why rows win. Bonus: separable blur.</li>
+    <li><b>10.2</b> Place three delivery hubs: parallel k-means over three million deliveries with combiners. Identical centroids. Convergence test.</li>
+    <li><b>10.3</b> Uneven orders: diagnose the static split, dynamic claiming with a grain table, per-restaurant totals with combiners.</li>
+  </ul>
+  <p class="muted" style="font-size:.75em">Every stub compiles and runs sequentially. Every timing needs <code>-O2</code>.</p>
+</section>
+
+<section class="slide">
+  <h2>Self-study: where this folder continues</h2>
+  <ul>
+    <li>SIMD on the CPU: auto-vectorization, <code>-march=native</code>, why <code>par_unseq</code> exists.</li>
+    <li>OpenMP: <code>#pragma omp parallel for</code> does static and dynamic scheduling in one line. Compare with what you wrote.</li>
+    <li>Parallel sort: fork/join merge sort, then <code>std::sort(par)</code> on a library that has it.</li>
+    <li>Reading: <i>Programming Massively Parallel Processors</i> (Kirk, Hwu), chapters 1 to 5, before the CUDA session.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>10 · Data parallelism and the road to GPUs</span><span id="counter"></span></div>
+<script>
+(function(){
+  const slides=[...document.querySelectorAll('.slide')]; let i=Math.max(0,Math.min(slides.length-1,(parseInt(location.hash.slice(1),10)||1)-1));
+  const counter=document.getElementById('counter');
+  function show(n){ i=Math.max(0,Math.min(slides.length-1,n)); slides.forEach((s,k)=>s.classList.toggle('active',k===i)); counter.textContent=(i+1)+' / '+slides.length; history.replaceState(null,'','#'+(i+1)); }
+  document.addEventListener('keydown',e=>{ if(['ArrowRight',' ','PageDown','Enter'].includes(e.key)){e.preventDefault();show(i+1);} else if(['ArrowLeft','PageUp','Backspace'].includes(e.key)){e.preventDefault();show(i-1);} else if(e.key==='Home')show(0); else if(e.key==='End')show(slides.length-1); else if(e.key==='p'){document.querySelectorAll('.slide').forEach(s=>s.classList.add('active'));window.print();} });
+  document.addEventListener('click',e=>{ if(e.target.closest('a,pre,code'))return; show(e.clientX>innerWidth/2?i+1:i-1); });
+  show(i);
+})();
+</script>
+</body>
+</html>

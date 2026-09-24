@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 430" role="img" aria-labelledby="t d" font-family="-apple-system, Helvetica, Arial, sans-serif">
+  <title id="t">Illustration of the expected simulation window</title>
+  <desc id="d">A schematic city background with three ring roads and radial avenues. Coloured dots representing motorcycles move along the streets; squares mark restaurants and small rings mark delivery locations. A panel shows live counters.</desc>
+  <style>
+    .static-fallback{display:none}
+    @media (prefers-reduced-motion: reduce){ .moving{display:none} .static-fallback{display:inline} }
+  </style>
+  <defs><clipPath id="win"><rect x="0" y="0" width="760" height="430"/></clipPath></defs>
+  <g clip-path="url(#win)">
+    <rect x="0" y="0" width="760" height="430" fill="#E6E5E1"/>
+    <!-- blocks -->
+    <g fill="#DAD8D2">
+      <path d="M140 300 L250 262 L262 330 L172 372 Z"/><path d="M290 250 L370 240 L370 330 L300 338 Z"/>
+      <path d="M395 240 L500 252 L480 340 L395 330 Z"/><path d="M530 262 L625 292 L590 372 L505 345 Z"/>
+      <path d="M95 165 L205 125 L232 215 L125 250 Z"/><path d="M245 112 L368 96 L368 205 L262 212 Z"/>
+      <path d="M395 96 L520 112 L500 214 L395 205 Z"/><path d="M555 125 L670 165 L640 250 L530 215 Z"/>
+    </g>
+    <!-- ring roads and radial avenues -->
+    <g fill="none" stroke="#FFFFFF" stroke-linecap="round">
+      <path d="M89 430 A640 640 0 0 1 671 430" stroke-width="13"/>
+      <path d="M0 319 A780 780 0 0 1 760 319" stroke-width="13"/>
+      <path d="M0 162 A920 920 0 0 1 760 162" stroke-width="13"/>
+      <path d="M380 430 L380 40" stroke-width="11"/>
+      <path d="M599 398 L695 135 M161 398 L65 135" stroke-width="8"/>
+      <path d="M491 370 L540 94 M269 370 L220 94" stroke-width="6"/>
+    </g>
+    <g fill="#8A8A86" font-size="10.5" letter-spacing=".06em">
+      <text x="388" y="56">AV. PRINCIPAL</text>
+      <text x="12" y="150" transform="rotate(-23 12 150)">CUARTO ANILLO</text>
+      <text x="14" y="306" transform="rotate(-28 14 306)">TERCER ANILLO</text>
+      <text x="566" y="368" transform="rotate(23 566 368)">SEGUNDO ANILLO</text>
+    </g>
+    <!-- delivery locations of active orders -->
+    <g fill="none" stroke="#1A1A1A" stroke-width="1.6">
+      <circle cx="318" cy="226" r="5"/><circle cx="455" cy="85" r="5"/><circle cx="632" cy="308" r="5"/>
+      <circle cx="141" cy="190" r="5"/><circle cx="380" cy="292" r="5"/>
+    </g>
+    <!-- restaurants -->
+    <g fill="#1A1A1A">
+      <rect x="373" y="213" width="14" height="14"/><rect x="238" y="225" width="14" height="14"/>
+      <rect x="640" y="260" width="14" height="14"/><rect x="533" y="87" width="14" height="14"/>
+      <rect x="262" y="363" width="14" height="14"/><rect x="106" y="260" width="14" height="14"/>
+    </g>
+    <!-- motorcycles: moving dots -->
+    <g class="moving" stroke="#FFFFFF" stroke-width="2">
+      <circle r="8" fill="#2E8B57"><animateMotion dur="11s" repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" path="M113 267 A780 780 0 0 1 647 267"/></circle>
+      <circle r="8" fill="#2F6FD0"><animateMotion dur="7s" repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" path="M380 360 L380 80"/></circle>
+      <circle r="8" fill="#2E8B57"><animateMotion dur="9s" repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" path="M599 398 L647 267 A780 780 0 0 0 515 232 L540 94"/></circle>
+      <circle r="8" fill="#2F6FD0"><animateMotion dur="12s" repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" path="M65 135 A920 920 0 0 1 540 94"/></circle>
+      <circle r="8" fill="#2E8B57"><animateMotion dur="10s" repeatCount="indefinite" keyPoints="1;0;1" keyTimes="0;0.5;1" calcMode="linear" path="M161 398 A640 640 0 0 1 599 398"/></circle>
+      <circle r="8" fill="#2F6FD0"><animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" path="M269 370 L245 232 A780 780 0 0 1 380 220"/></circle>
+    </g>
+    <g class="static-fallback" stroke="#FFFFFF" stroke-width="2">
+      <circle cx="300" cy="224" r="8" fill="#2E8B57"/><circle cx="380" cy="150" r="8" fill="#2F6FD0"/>
+      <circle cx="580" cy="245" r="8" fill="#2E8B57"/><circle cx="300" cy="84" r="8" fill="#2F6FD0"/>
+      <circle cx="450" cy="364" r="8" fill="#2E8B57"/><circle cx="252" cy="300" r="8" fill="#2F6FD0"/>
+    </g>
+    <!-- idle and broken-down couriers do not move -->
+    <g stroke="#FFFFFF" stroke-width="2">
+      <circle cx="398" cy="238" r="8" fill="#8C8C8C"/>
+      <circle cx="671" cy="146" r="8" fill="#C0392B"/>
+    </g>
+    <!-- live counters -->
+    <g>
+      <rect x="12" y="12" width="232" height="66" fill="#FFFFFF" opacity=".93"/>
+      <text x="22" y="31" font-size="10.5" fill="#6F6F6F" letter-spacing=".08em">LIVE COUNTERS (SAMPLE VALUES)</text>
+      <text x="22" y="50" font-size="12.5" fill="#1A1A1A">created 128   delivered 96   rejected 4</text>
+      <text x="22" y="68" font-size="12.5" fill="#1A1A1A">pending 28   breakdowns 2   avg 14 min</text>
+    </g>
+    <!-- legend -->
+    <g font-size="11" fill="#1A1A1A">
+      <rect x="12" y="330" width="212" height="88" fill="#FFFFFF" opacity=".93"/>
+      <circle cx="26" cy="346" r="5.5" fill="#2F6FD0"/><text x="38" y="350">riding to a restaurant</text>
+      <circle cx="26" cy="363" r="5.5" fill="#2E8B57"/><text x="38" y="367">carrying orders</text>
+      <circle cx="26" cy="380" r="5.5" fill="#8C8C8C"/><text x="38" y="384">idle</text>
+      <circle cx="26" cy="397" r="5.5" fill="#C0392B"/><text x="38" y="401">broken down</text>
+      <rect x="134" y="374" width="10" height="10"/><text x="150" y="384">restaurant</text>
+      <circle cx="139" cy="397" r="4.5" fill="none" stroke="#1A1A1A" stroke-width="1.6"/><text x="150" y="401">delivery</text>
+    </g>
+    <text x="748" y="420" text-anchor="end" font-size="10.5" fill="#4A4A4A">© OpenStreetMap contributors</text>
+  </g>
+</svg>

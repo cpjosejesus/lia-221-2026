@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>08 · Atomics and the Memory Model</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:6vh 8vw;display:none;flex-direction:column;justify-content:center;gap:1.2rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.6em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:60ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.45em}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:2.5vw;align-items:start}
+@media (max-width:820px){.cols{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.62em;line-height:1.5;background:var(--code);padding:1em 1.2em;border-radius:3px;margin:0;overflow:auto;max-height:66vh}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.7em;width:100%}th{text-align:left;font-size:.75em;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.4em .8em .4em 0}td{border-bottom:1px solid var(--line);padding:.5em .8em .5em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 8vw;font-size:.55em;color:var(--muted);font-family:var(--mono)}
+.note{border-left:3px solid var(--ink);padding-left:1em;color:var(--ink);max-width:60ch}
+.big{font-size:1.25em}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 08</div>
+  <h1>Atomics and the memory model</h1>
+  <p class="muted">One number shared by many threads: counters, flags, the newest pointer. When a mutex is too much and a condition variable is the wrong tool.</p>
+  <p class="muted" style="font-size:.7em">Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>. Press <kbd>p</kbd> to print all slides.</p>
+</section>
+
+<section class="slide">
+  <h2>Where folder 06 left us</h2>
+  <ul>
+    <li>A <b>mutex</b> makes a whole critical section exclusive. Right when several fields must change together.</li>
+    <li>A <b>condition variable</b> lets a thread sleep until something is true. Right for waiting, not for updating.</li>
+    <li>Most real sharing is <b>one value</b>: a counter, a “ready” flag, the head of a list.</li>
+    <li>For that, a lock is heavy. <b>Atomics</b> are the third tool.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Remember example 31: the lost update</h2>
+  <div class="cols">
+<pre><code>int oldNum = _tmpVehicles;      // READ
+sleep_for(1us);                 // gap
+_tmpVehicles = oldNum + 1;      // WRITE stale value
+
+// 1000 tasks -> final count 569</code></pre>
+    <ul>
+      <li>Two threads read the same old value.</li>
+      <li>Both write old + 1. One increment vanishes.</li>
+      <li>Folder 06 fixed it with a mutex around the pair.</li>
+      <li>Today: fix it with <b>one indivisible operation</b>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2><code>std::atomic&lt;T&gt;</code>: indivisible operations</h2>
+  <ul>
+    <li>An atomic operation cannot be observed half done, and two atomic operations on the same object never race.</li>
+    <li>Works for any trivially copyable <code>T</code>.</li>
+    <li>Small <code>T</code> (bool, int, pointer, an 8-byte struct): <b>lock-free</b>, a single instruction.</li>
+    <li>Large <code>T</code>: implemented with a <b>hidden lock</b>. <code>is_lock_free()</code> tells you.</li>
+  </ul>
+<pre><code>std::atomic&lt;int&gt; counter{0};
+counter.fetch_add(1);          // or ++counter
+int now = counter.load();</code></pre>
+  <p class="muted" style="font-size:.75em">example_46: atomic&lt;Position&gt; (8 B) is lock-free, atomic&lt;VehicleSnapshot&gt; (72 B) is not.</p>
+</section>
+
+<section class="slide">
+  <h2>The mistake everyone makes once</h2>
+  <div class="cols">
+<pre><code>// b) each call atomic, the PAIR is not
+int old = _n.load();
+sleep_for(1us);
+_n.store(old + 1);
+// 1000 tasks -> 725   <span class="bad">still wrong</span>
+
+// c) one read-modify-write
+_n.fetch_add(1);
+// 1000 tasks -> 1000  <span class="ok">right</span></code></pre>
+    <ul>
+      <li>Atomicity of <i>one</i> operation is not atomicity of a <i>sequence</i>.</li>
+      <li>Anything of the shape “read, decide, write” needs a single RMW operation.</li>
+      <li>example_43 prints the three totals side by side.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Read-modify-write operations</h2>
+  <table>
+    <tr><th>Operation</th><th>Effect</th><th>Returns</th></tr>
+    <tr><td><code>fetch_add(n)</code>, <code>fetch_sub(n)</code></td><td>add / subtract</td><td>old value</td></tr>
+    <tr><td><code>exchange(x)</code></td><td>set to x</td><td>old value</td></tr>
+    <tr><td><code>compare_exchange_weak(expected, desired)</code></td><td>if value == expected: set to desired</td><td>true on success; on failure loads current value into <code>expected</code></td></tr>
+    <tr><td><code>compare_exchange_strong(…)</code></td><td>same, never fails spuriously</td><td>for a single attempt, not a loop</td></tr>
+  </table>
+  <p class="note">Compare-and-swap (CAS) is the universal building block: every lock-free algorithm is a CAS loop.</p>
+</section>
+
+<section class="slide">
+  <h2>The CAS loop</h2>
+  <div class="cols">
+<pre><code>// admit at most `capacity` vehicles
+bool tryEnter() {
+  int cur = _inside.load();
+  while (cur &lt; _capacity) {
+    if (_inside.compare_exchange_weak(cur, cur + 1))
+      return true;   // we got a slot
+    // else: cur was refreshed, re-check
+  }
+  return false;      // full
+}</code></pre>
+    <ul>
+      <li>Read the current value.</li>
+      <li>Decide, using that value.</li>
+      <li>Write <i>only if nobody changed it meanwhile</i>; otherwise retry with the fresh value.</li>
+      <li>example_44: 20 vehicles, capacity 3, exactly 3 admitted, no mutex.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>A mutex made of one atomic: the spinlock</h2>
+  <div class="cols">
+<pre><code>class Spinlock {
+  std::atomic_flag f = ATOMIC_FLAG_INIT;
+ public:
+  void lock()   { while (f.test_and_set(acquire)) {} }
+  void unlock() { f.clear(release); }
+};
+// works with std::lock_guard&lt;Spinlock&gt;</code></pre>
+    <ul>
+      <li><code>test_and_set</code> is an RMW: returns the old value and sets it.</li>
+      <li>Waiting <b>burns CPU</b> instead of sleeping.</li>
+      <li>example_45, 8 threads pushing vehicles: mutex 20 ms, spinlock 68 ms.</li>
+      <li>Wins only for tiny critical sections with little contention. Use it to understand a mutex, not to replace one.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Atomicity is not ordering</h2>
+  <ul>
+    <li>The compiler and the CPU reorder memory accesses. Within one thread you never notice.</li>
+    <li>Across threads you do: thread B may see the flag <code>ready = true</code> and <i>still</i> read stale fields of the record written before it.</li>
+    <li>Every atomic operation takes a <code>std::memory_order</code> that says what else it orders.</li>
+  </ul>
+  <table>
+    <tr><th>Order</th><th>Meaning</th><th>Use</th></tr>
+    <tr><td><code>relaxed</code></td><td>atomic, orders nothing else</td><td>statistics counters</td></tr>
+    <tr><td><code>release</code> (store)</td><td>writes before it are visible to a matching acquire</td><td>“the record is complete”</td></tr>
+    <tr><td><code>acquire</code> (load)</td><td>reads after it see writes before the release</td><td>consuming the record</td></tr>
+    <tr><td><code>seq_cst</code> (default)</td><td>acquire + release + one global order</td><td>when in doubt</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Publishing a record: release / acquire</h2>
+  <div class="cols">
+<pre><code>VehicleRecord record;          // plain struct
+std::atomic&lt;bool&gt; ready{false};
+
+// producer
+record.id = 7; record.name = "Vehicle 7";
+ready.store(true, std::memory_order_release);
+
+// consumer
+while (!ready.load(std::memory_order_acquire)) {}
+use(record);                   // guaranteed complete</code></pre>
+    <ul>
+      <li>Release on the store, acquire on the load: everything before the store <i>happens-before</i> everything after the load.</li>
+      <li>Same idea a mutex gives you: unlock is a release, lock is an acquire.</li>
+      <li>example_47. Default <code>seq_cst</code> is always correct; weaker orders are optimizations you justify with a measurement.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>False sharing: correct and slow</h2>
+  <div class="cols">
+<pre><code>struct Adjacent {                // same cache line
+  std::atomic&lt;long&gt; entered, left;
+};
+struct Padded {                  // own line each
+  alignas(64) std::atomic&lt;long&gt; entered;
+  alignas(64) std::atomic&lt;long&gt; left;
+};
+// two threads, 20M increments each
+// adjacent: 742 ms   padded: 194 ms</code></pre>
+    <ul>
+      <li>Cores move memory in <b>cache lines</b> (64 B, 128 B on Apple Silicon).</li>
+      <li>Two threads writing two <i>different</i> variables in one line make it bounce between cores.</li>
+      <li>No data race. Just 4x slower. example_48.</li>
+      <li>Tool: <code>std::hardware_destructive_interference_size</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>A lock-free stack (Treiber)</h2>
+  <div class="cols">
+<pre><code>void push(Vehicle v) {
+  Node* n = new Node{v, head.load()};
+  while (!head.compare_exchange_weak(n-&gt;next, n)) {}
+}
+bool pop(Vehicle&amp; out) {
+  Node* old = head.load();
+  while (old &amp;&amp;
+         !head.compare_exchange_weak(old, old-&gt;next)) {}
+  if (!old) return false;
+  out = old-&gt;vehicle;   // NOT deleting old
+  return true;
+}</code></pre>
+    <ul>
+      <li>Push and pop are CAS loops on the head pointer. No mutex, no blocking.</li>
+      <li>example_49: 4 producers, 4 consumers, 20 000 vehicles, nothing lost.</li>
+      <li>Two famous problems hide in <code>pop</code>. Next slide.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>ABA and memory reclamation</h2>
+  <ul>
+    <li><b>ABA.</b> Thread 1 reads head = A and pauses. Others pop A, pop B, push A again at the same address. Thread 1’s CAS sees “still A” and succeeds on a stack it no longer understands. Cure: a version counter next to the pointer, or never reusing addresses.</li>
+    <li><b>Reclamation.</b> You cannot <code>delete</code> a popped node while another thread may still be reading <code>old-&gt;next</code> inside its CAS loop. The example leaks on purpose.</li>
+    <li>Real answers: hazard pointers, epoch-based reclamation, garbage collection. Self-study, and the reason lock-free code is rare in application code.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Choosing the tool</h2>
+  <table>
+    <tr><th>Situation</th><th>Tool</th></tr>
+    <tr><td>Several fields must change together</td><td><code>std::mutex</code> + <code>lock_guard</code> (06)</td></tr>
+    <tr><td>Wait until something is true</td><td><code>condition_variable</code> (07)</td></tr>
+    <tr><td>One counter, one flag, one pointer</td><td><code>std::atomic</code>, RMW operations</td></tr>
+    <tr><td>Decide-then-write on one value</td><td>CAS loop</td></tr>
+    <tr><td>Publish a plain record once</td><td>release store / acquire load</td></tr>
+    <tr><td>Parallel counters that crawl</td><td>check false sharing first</td></tr>
+  </table>
+  <p class="note">Default to <code>seq_cst</code>. Default to a mutex. Reach lower only with a profiler in hand.</p>
+</section>
+
+<section class="slide">
+  <h2>Exercises: orders and couriers</h2>
+  <ul>
+    <li><b>8.1</b> Order statistics: replace mutex-protected counters with atomics. Pick a memory order and justify it. What can a reader observe across three counters?</li>
+    <li><b>8.2</b> Restaurant pickup slots: <code>tryTakeSlot</code> as a CAS loop, an atomic “peak busy” tracker. Vary the capacity, explain the timing.</li>
+    <li><b>8.3</b> Per-courier counters that never race but still crawl: diagnose, fix the layout, report before/after for 2, 4, 8, 16 couriers.</li>
+  </ul>
+  <p class="muted" style="font-size:.75em">Every file compiles as given and tells you the work is not done. Timing needs <code>-O2</code>.</p>
+</section>
+
+<section class="slide">
+  <h2>Self-study: where this folder continues</h2>
+  <ul>
+    <li>The C++ memory model formally: happens-before, sequenced-before, modification order (cppreference “memory order”).</li>
+    <li>Hazard pointers and epoch reclamation (Williams, <i>C++ Concurrency in Action</i>, ch. 7).</li>
+    <li>ThreadSanitizer on your own atomics: <code>-fsanitize=thread</code>.</li>
+    <li>Next session: from “sharing one value safely” to “splitting work across cores and measuring the speedup”.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>08 · Atomics and the memory model</span><span id="counter"></span></div>
+<script>
+(function(){
+  const slides=[...document.querySelectorAll('.slide')]; let i=Math.max(0,Math.min(slides.length-1,(parseInt(location.hash.slice(1),10)||1)-1));
+  const counter=document.getElementById('counter');
+  function show(n){ i=Math.max(0,Math.min(slides.length-1,n)); slides.forEach((s,k)=>s.classList.toggle('active',k===i)); counter.textContent=(i+1)+' / '+slides.length; history.replaceState(null,'','#'+(i+1)); }
+  document.addEventListener('keydown',e=>{ if(['ArrowRight',' ','PageDown','Enter'].includes(e.key)){e.preventDefault();show(i+1);} else if(['ArrowLeft','PageUp','Backspace'].includes(e.key)){e.preventDefault();show(i-1);} else if(e.key==='Home')show(0); else if(e.key==='End')show(slides.length-1); else if(e.key==='p'){document.querySelectorAll('.slide').forEach(s=>s.classList.add('active'));window.print();} });
+  document.addEventListener('click',e=>{ if(e.target.closest('a,pre,code'))return; show(e.clientX>innerWidth/2?i+1:i-1); });
+  show(i);
+})();
+</script>
+</body>
+</html>
