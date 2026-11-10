@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CUDA on Google Colab: your first notebook</title>
+<style>
+@page { size: A4; margin: 16mm 16mm 18mm 16mm; }
+:root { --ink:#1A1A1A; --muted:#5F6368; --line:#DADCE0; --soft:#F6F7F9; --acc:#2F6FD0; --acc-soft:#E3ECFA; --ok:#1E7B3A; --ok-soft:#E3F3E7; --warn:#9A5B00; --warn-soft:#FFF3DC; --code:#F3F4F6; }
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); font: 10.5pt/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+h1 { font-size: 17pt; line-height: 1.15; margin: 0 0 4pt; letter-spacing: -.01em; }
+h2 { font-size: 14pt; margin: 18pt 0 6pt; padding-top: 6pt; border-top: 1px solid var(--line); }
+h2 .n { display: inline-block; min-width: 20pt; height: 20pt; line-height: 20pt; text-align: center; border-radius: 50%; background: var(--acc); color: #fff; font-size: 11pt; margin-right: 6pt; }
+h3 { font-size: 11pt; margin: 10pt 0 4pt; }
+h2, h3 { break-after: avoid; }
+h2 + p, h3 + table { break-before: avoid; }
+p { margin: 4pt 0 6pt; }
+.sub { color: var(--muted); font-size: 11pt; margin: 0 0 10pt; }
+code, pre, .kbd { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+code { background: var(--code); padding: 0 3pt; border-radius: 3px; font-size: 9.5pt; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 8pt 10pt; font-size: 9.2pt; line-height: 1.45; margin: 6pt 0 8pt; white-space: pre; overflow: hidden; break-inside: avoid; }
+pre.out { background: #111; color: #E8EAED; border-color: #111; }
+.cell { border: 1px solid var(--line); border-radius: 6px; margin: 6pt 0 10pt; break-inside: avoid; }
+.cell .bar { display: flex; align-items: center; gap: 6pt; background: var(--soft); border-bottom: 1px solid var(--line); padding: 3pt 8pt; font-size: 8.5pt; color: var(--muted); border-radius: 6px 6px 0 0; }
+.cell .play { width: 13pt; height: 13pt; border-radius: 50%; background: var(--ink); display: inline-block; position: relative; }
+.cell .play::after { content: ""; position: absolute; left: 5pt; top: 3.5pt; border-left: 5pt solid #fff; border-top: 3pt solid transparent; border-bottom: 3pt solid transparent; }
+.cell pre { margin: 0; border: 0; border-radius: 0 0 6px 6px; }
+.menu { display: inline-block; background: #fff; border: 1px solid var(--line); border-radius: 4px; padding: 0 5pt; font-size: 9.5pt; font-weight: 600; }
+.arrow { color: var(--muted); margin: 0 3pt; }
+.box { border-radius: 6px; padding: 7pt 10pt; margin: 8pt 0; break-inside: avoid; }
+.tip { background: var(--acc-soft); border: 1px solid #C5D6F2; }
+.ok { background: var(--ok-soft); border: 1px solid #BFE0C8; }
+.warn { background: var(--warn-soft); border: 1px solid #F0D9A8; }
+.box b:first-child { display: block; margin-bottom: 2pt; }
+table { width: 100%; border-collapse: collapse; margin: 6pt 0 10pt; font-size: 9.5pt; break-inside: auto; }
+th, td { text-align: left; vertical-align: top; padding: 4pt 6pt; border-bottom: 1px solid var(--line); }
+th { background: var(--soft); font-weight: 600; }
+tr { break-inside: avoid; }
+.dialog { width: 62%; border: 1px solid var(--line); border-radius: 8px; padding: 8pt 10pt; margin: 6pt 0 10pt; box-shadow: 0 1px 3px rgba(0,0,0,.12); font-size: 9.5pt; break-inside: avoid; }
+.dialog .t { font-weight: 600; font-size: 10.5pt; margin-bottom: 6pt; }
+.radio { display: flex; align-items: center; gap: 5pt; margin: 3pt 0; }
+.radio i { width: 9pt; height: 9pt; border-radius: 50%; border: 1.5px solid var(--muted); display: inline-block; }
+.radio.on i { border-color: var(--acc); background: radial-gradient(var(--acc) 45%, #fff 50%); }
+.radio.on { font-weight: 600; }
+.btn { display: inline-block; background: var(--acc); color: #fff; border-radius: 4px; padding: 1pt 9pt; font-weight: 600; margin-top: 4pt; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12pt; }
+ol, ul { margin: 4pt 0 6pt; padding-left: 16pt; }
+li { margin: 2pt 0; }
+.toc { columns: 2; font-size: 10pt; margin: 6pt 0 4pt; padding-left: 16pt; }
+.page-break { break-before: page; }
+.foot { color: var(--muted); font-size: 8.5pt; margin-top: 14pt; border-top: 1px solid var(--line); padding-top: 6pt; }
+</style>
+</head>
+<body>
+
+<h1>CUDA on Google Colab</h1>
+<p class="sub">Your first notebook, step by step: create a notebook, get a free NVIDIA GPU, and compile and run your first CUDA program. No GPU on your own computer is needed, only a Google account and a browser.</p>
+
+<ol class="toc">
+  <li>What Colab gives you</li>
+  <li>Create your notebook</li>
+  <li>Ask for a GPU</li>
+  <li>Check that the GPU is there</li>
+  <li>Write your first CUDA program</li>
+  <li>Compile and run it</li>
+  <li>Read the output</li>
+  <li>Experiments to try</li>
+  <li>When something goes wrong</li>
+  <li>Next steps</li>
+</ol>
+
+<h2><span class="n">1</span>What Colab gives you</h2>
+<p><b>Google Colab</b> is a free service that runs <i>notebooks</i> in your browser on a machine in Google's cloud. A notebook is a list of <b>cells</b>: text cells (explanations) and code cells (that you run one at a time with the ▶ button or <span class="menu">Shift + Enter</span>).</p>
+<p>Colab notebooks are Python notebooks, but they can also run commands on the Linux machine behind them. That is all we need for CUDA:</p>
+<table>
+  <tr><th style="width:33%">In a code cell</th><th>What it does</th></tr>
+  <tr><td><code>%%writefile hello.cu</code><br>(first line of the cell)</td><td>Saves the rest of the cell as the file <code>hello.cu</code> on the Colab machine. It does not run anything.</td></tr>
+  <tr><td><code>!nvcc hello.cu -o hello</code></td><td>The <code>!</code> sends the line to the machine's shell. <code>nvcc</code> is NVIDIA's CUDA compiler; it turns <code>hello.cu</code> into a program called <code>hello</code>.</td></tr>
+  <tr><td><code>!./hello</code></td><td>Runs the program. Its output appears below the cell.</td></tr>
+</table>
+<div class="box tip"><b>Why Colab?</b>CUDA programs need an NVIDIA GPU. Most laptops (and every Mac) do not have one. Colab lends you one for free, with the NVIDIA driver and the CUDA toolkit already installed. If your own computer has an NVIDIA GPU, you can also install the CUDA Toolkit and use the same <code>nvcc</code> commands in a terminal.</div>
+
+<h2><span class="n">2</span>Create your notebook</h2>
+<ol>
+  <li>Go to <b>colab.research.google.com</b> and sign in with your Google account.</li>
+  <li>Click <span class="menu">New notebook</span> (or <span class="menu">File</span><span class="arrow">→</span><span class="menu">New notebook in Drive</span>).</li>
+  <li>Click the title at the top left (<code>Untitled0.ipynb</code>) and rename it, for example <code>cuda_hello.ipynb</code>.</li>
+</ol>
+<p>The notebook is saved automatically in your Google Drive, in the folder <b>Colab Notebooks</b>.</p>
+
+<h2><span class="n">3</span>Ask for a GPU</h2>
+<p>A new notebook runs on a machine <b>without a GPU</b>. "Enabling the GPU" is not something your code does: you ask Colab for a different machine, one that has an NVIDIA GPU.</p>
+<p><span class="menu">Runtime</span><span class="arrow">→</span><span class="menu">Change runtime type</span>, choose <b>T4 GPU</b> and click <b>Save</b>:</p>
+<div class="dialog">
+  <div class="t">Change runtime type</div>
+  <div>Runtime type: <b>Python 3</b></div>
+  <div style="margin-top:4pt">Hardware accelerator</div>
+  <div class="radio"><i></i>CPU</div>
+  <div class="radio on"><i></i>T4 GPU</div>
+  <div class="radio"><i></i>(other GPUs, if your account offers them)</div>
+  <div style="text-align:right"><span class="btn">Save</span></div>
+</div>
+<div class="box warn"><b>Do this first.</b>Changing the runtime restarts the machine and deletes the files written on it. If you change it later, run the notebook again from the top.</div>
+
+<h2><span class="n">4</span>Check that the GPU is there</h2>
+<p>Click <span class="menu">+ Code</span> to add a code cell, type these two lines and run it (▶):</p>
+<div class="cell"><div class="bar"><span class="play"></span>code cell</div>
+<pre>!nvidia-smi
+!nvcc --version</pre></div>
+<p><code>nvidia-smi</code> lists the GPU of the machine and <code>nvcc --version</code> prints the version of the CUDA compiler. You should see something like this (numbers will differ):</p>
+<pre class="out">| NVIDIA-SMI 550.54.15    Driver Version: 550.54.15    CUDA Version: 12.4 |
+|   0  Tesla T4              Off |  00000000:00:04.0 Off |              0 |
+| N/A   44C    P8   9W /  70W |      0MiB / 15360MiB |      0%   Default |
+...
+Cuda compilation tools, release 12.5, V12.5.82</pre>
+<div class="box ok"><b>Ready when you see "Tesla T4".</b>If you get <code>nvidia-smi: command not found</code> or <i>No devices were found</i>, the runtime has no GPU: go back to step 3.</div>
+
+<h2><span class="n">5</span>Write your first CUDA program</h2>
+<p>Add a new code cell, paste the program below and run the cell. The first line, <code>%%writefile hello.cu</code>, must be the very first line of the cell; it saves the code as <code>hello.cu</code> and prints <i>Writing hello.cu</i>.</p>
+<div class="cell"><div class="bar"><span class="play"></span>code cell</div>
+<pre>%%writefile hello.cu
+#include &lt;cstdio&gt;
+
+__global__ void helloFromTheGpu() {
+    int block = blockIdx.x;
+    int thread = threadIdx.x;
+    int globalThread = blockIdx.x * blockDim.x + threadIdx.x;
+    printf("Hello from block %d, thread %d (global thread %d)\n",
+           block, thread, globalThread);
+}
+
+int main() {
+    printf("Hello from the CPU\n");
+
+    const int blocks = 2;
+    const int threadsPerBlock = 4;
+    helloFromTheGpu&lt;&lt;&lt;blocks, threadsPerBlock&gt;&gt;&gt;();
+
+    cudaError_t launchError = cudaGetLastError();
+    if (launchError != cudaSuccess) {
+        printf("The kernel could not start: %s\n", cudaGetErrorString(launchError));
+        return 1;
+    }
+
+    cudaError_t runError = cudaDeviceSynchronize();
+    if (runError != cudaSuccess) {
+        printf("The kernel failed: %s\n", cudaGetErrorString(runError));
+        return 1;
+    }
+
+    printf("The GPU finished: %d blocks x %d threads = %d threads said hello\n",
+           blocks, threadsPerBlock, blocks * threadsPerBlock);
+    return 0;
+}</pre></div>
+<h3>What the code means</h3>
+<table>
+  <tr><th style="width:38%">Code</th><th>Meaning</th></tr>
+  <tr><td><code>__global__ void helloFromTheGpu()</code></td><td>A <b>kernel</b>: a function that runs on the GPU and is started from the CPU. Every GPU thread runs the whole function.</td></tr>
+  <tr><td><code>blockIdx.x</code>, <code>threadIdx.x</code>, <code>blockDim.x</code></td><td>Built-in variables. Each thread sees its own block number, its own number inside the block, and the number of threads per block. They are how a thread knows <i>which</i> thread it is.</td></tr>
+  <tr><td><code>blockIdx.x * blockDim.x + threadIdx.x</code></td><td>The thread's <b>global index</b> (0 to 7 here). Later this index chooses which array element each thread works on.</td></tr>
+  <tr><td><code>printf</code> inside the kernel</td><td>Works on the GPU too: each thread prints its own line.</td></tr>
+  <tr><td><code>helloFromTheGpu&lt;&lt;&lt;2, 4&gt;&gt;&gt;()</code></td><td>The <b>launch</b>: start the kernel with a grid of 2 blocks of 4 threads each, 8 threads in total.</td></tr>
+  <tr><td><code>cudaGetLastError()</code></td><td>A launch returns nothing. This call says whether it could start (for example, too many threads per block).</td></tr>
+  <tr><td><code>cudaDeviceSynchronize()</code></td><td>The CPU does not wait for the GPU by itself. This makes it wait until the kernel has finished, so the GPU's <code>printf</code> lines appear before the program ends, and it reports errors that happened while the kernel ran.</td></tr>
+</table>
+
+<h2><span class="n">6</span>Compile and run it</h2>
+<p>Add one more code cell and run it:</p>
+<div class="cell"><div class="bar"><span class="play"></span>code cell</div>
+<pre>!nvcc -arch=native hello.cu -o hello &amp;&amp; ./hello</pre></div>
+<ul>
+  <li><code>nvcc hello.cu -o hello</code> compiles the file into the program <code>hello</code>.</li>
+  <li><code>-arch=native</code> compiles for the GPU that is in this machine (the T4). If your <code>nvcc</code> is old and does not know <code>native</code>, use <code>-arch=sm_75</code>, the T4's architecture.</li>
+  <li><code>&amp;&amp; ./hello</code> runs the program only if compiling worked.</li>
+</ul>
+
+<h2><span class="n">7</span>Read the output</h2>
+<pre class="out">Hello from the CPU
+Hello from block 1, thread 0 (global thread 4)
+Hello from block 1, thread 1 (global thread 5)
+Hello from block 1, thread 2 (global thread 6)
+Hello from block 1, thread 3 (global thread 7)
+Hello from block 0, thread 0 (global thread 0)
+Hello from block 0, thread 1 (global thread 1)
+Hello from block 0, thread 2 (global thread 2)
+Hello from block 0, thread 3 (global thread 3)
+The GPU finished: 2 blocks x 4 threads = 8 threads said hello</pre>
+<ul>
+  <li>The CPU line comes first, then <b>8 lines from 8 GPU threads</b>, then the CPU line after <code>cudaDeviceSynchronize()</code>.</li>
+  <li><b>The order of the GPU lines is not fixed.</b> Threads run in parallel and the GPU decides which block goes first; block 1 may print before block 0, and the order can change from one run to the next. Inside a block, threads are grouped in <i>warps</i> of 32, so here the 4 threads of a block usually print together.</li>
+  <li>Thread numbers start at 0 in <b>every</b> block; the global index (0 to 7) is unique across the grid.</li>
+</ul>
+<div class="box ok"><b>Congratulations: you ran code on a GPU.</b>Save your notebook (<span class="menu">File</span><span class="arrow">→</span><span class="menu">Save</span>, or Ctrl/Cmd + S). It stays in Google Drive, in <b>Colab Notebooks</b>.</div>
+
+<h2><span class="n">8</span>Experiments to try</h2>
+<p>Change the program in the <code>%%writefile</code> cell, run that cell again (to save the new version), then run the compile cell again.</p>
+<table>
+  <tr><th style="width:38%">Change</th><th>What you should see</th></tr>
+  <tr><td><code>blocks = 3</code>, <code>threadsPerBlock = 5</code></td><td>15 lines, global threads 0 to 14, thread numbers 0 to 4 in every block.</td></tr>
+  <tr><td><code>blocks = 1</code>, <code>threadsPerBlock = 64</code></td><td>64 lines. Look at the order: lines come in groups of 32 (one warp at a time).</td></tr>
+  <tr><td><code>threadsPerBlock = 2048</code></td><td>No GPU lines, and <i>The kernel could not start: invalid configuration argument</i>. A block can have at most 1024 threads. Without the <code>cudaGetLastError()</code> check, nothing would warn you.</td></tr>
+  <tr><td>Delete the line <code>cudaDeviceSynchronize()</code> (and its <code>if</code>)</td><td>Often the GPU lines disappear: the program ends before the GPU has finished printing. This is why the CPU must wait for the GPU.</td></tr>
+  <tr><td>In the kernel, print only if <code>globalThread % 2 == 0</code></td><td>Only the even global threads print: every thread runs the same code but can take a different path depending on its index.</td></tr>
+</table>
+
+<h2><span class="n">9</span>When something goes wrong</h2>
+<table>
+  <tr><th style="width:36%">Symptom</th><th>Cause and fix</th></tr>
+  <tr><td><code>nvidia-smi: command not found</code>, <i>No devices were found</i>, or <i>no CUDA-capable device is detected</i></td><td>The runtime has no GPU. <span class="menu">Runtime</span><span class="arrow">→</span><span class="menu">Change runtime type</span><span class="arrow">→</span><b>T4 GPU</b>, then run everything again from the top.</td></tr>
+  <tr><td><i>hello.cu: No such file or directory</i></td><td>The <code>%%writefile</code> cell was not run (or the machine restarted and lost the file). Run it again, then compile.</td></tr>
+  <tr><td><i>UsageError: Line magic function `%%writefile` not found</i></td><td><code>%%writefile</code> must be the <b>first</b> line of the cell, with nothing (not even a blank line) above it.</td></tr>
+  <tr><td>Only the CPU lines appear</td><td>The kernel did not run or the CPU did not wait. Check that <code>cudaDeviceSynchronize()</code> is there and look for an error message.</td></tr>
+  <tr><td><i>no kernel image is available for execution on the device</i></td><td>The code was compiled for a different GPU. Use <code>-arch=native</code> (or <code>-arch=sm_75</code> for a T4).</td></tr>
+  <tr><td><i>nvcc fatal: Unsupported gpu architecture 'compute_native'</i></td><td>That <code>nvcc</code> is too old for <code>-arch=native</code>: use <code>-arch=sm_75</code>.</td></tr>
+  <tr><td>Compile errors about <code>&lt;&lt;&lt;</code> or <code>__global__</code></td><td>The file must end in <b><code>.cu</code></b> and be compiled with <code>nvcc</code>, not <code>g++</code>.</td></tr>
+  <tr><td><i>Cannot connect to GPU backend</i> or <i>usage limits</i></td><td>Free Colab GPUs are limited. Wait a while, or close other Colab tabs (<span class="menu">Runtime</span><span class="arrow">→</span><span class="menu">Disconnect and delete runtime</span>) and try again.</td></tr>
+  <tr><td>The notebook disconnected after a break</td><td>Idle sessions are stopped and their files deleted. Run the notebook again from the top (<span class="menu">Runtime</span><span class="arrow">→</span><span class="menu">Run all</span>).</td></tr>
+</table>
+
+<h2><span class="n">10</span>Next steps</h2>
+<ul>
+  <li>The course's runnable examples are in the repository folder <code>ec2/</code>, in numbered folders that go from the simplest kernel to the parallel patterns. Each folder has ready-made notebooks: start with <code>ec2/01_first_kernels/colab_1_step_by_step.ipynb</code>.</li>
+  <li>To open one in Colab: <span class="menu">File</span><span class="arrow">→</span><span class="menu">Upload notebook</span>, pick the <code>.ipynb</code> file, then set the runtime to <b>T4 GPU</b> (step 3) and run the cells in order.</li>
+  <li>The course programs include a small header, <code>cuda_compat.h</code>, and launch kernels with <code>launch(kernel, grid, block, ...)</code> instead of <code>kernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(...)</code>: on Colab it is exactly the same launch, and it lets the same file also run on a laptop without an NVIDIA GPU. The notebooks explain it in their first cells.</li>
+</ul>
+
+<p class="foot">CUDA on Google Colab: initial setup guide for the GPU part of the course. Colab's menus and free GPU limits can change over time; the steps above were written for the Colab interface of 2026.</p>
+
+</body>
+</html>
