@@ -9,7 +9,7 @@ Based on chapter 8 of *Programming Massively Parallel Processors* (Hwu, Kirk, El
 students already know tiling, halos and arithmetic intensity from the convolution session, so
 the deck frames stencils as "what is different from convolution, and why it needs new
 optimizations". The runnable code (all four 3D kernels with CPU checks, the 1D and 2D basics,
-and a bike-sharing example that gives ideas for the project) is in [`../ec2/stencil`](../ec2/stencil).
+and a bike-sharing example that gives ideas for the project) is in [`../ec2/06_stencil`](../ec2/06_stencil).
 
 ## What this session covers
 

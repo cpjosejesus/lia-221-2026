@@ -11,7 +11,7 @@ reduce, associativity and the CPU tree (sessions 09–10), warps, divergence, co
 coarsening (sessions 12–14) and `cuda::atomic_ref` (session 17), so the background is short and
 the deck spends its time on the CUDA kernels and their analysis. The runnable code (every kernel
 of the chapter checked against the CPU, the exercises' maximum and arbitrary-N versions, and
-bike-sharing examples that give ideas for the project) is in [`../ec2/reduction`](../ec2/reduction).
+bike-sharing examples that give ideas for the project) is in [`../ec2/08_reduction`](../ec2/08_reduction).
 
 ## What this session covers
 

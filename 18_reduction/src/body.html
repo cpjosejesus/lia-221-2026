@@ -4,7 +4,7 @@
   <div class="eyebrow">C++ concurrency · session 18</div>
   <h1>Parallel reduction</h1>
   <p class="muted">Many values in, one value out: a sum, a maximum, a count. The tree is easy; making it fast on a GPU is a tour of everything we know: <b>control divergence</b>, <b>coalescing</b>, <b>shared memory</b>, <b>warp shuffles</b>, <b>atomics</b> and <b>thread coarsening</b>. Seven kernels, each fixing one bottleneck of the previous one.</p>
-  <p class="muted" style="font-size:.7em">Based on chapter 10 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/reduction</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 10 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/08_reduction</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
 </section>
 
 <section class="slide">
@@ -36,6 +36,7 @@ for (int i = 0; i &lt; N; ++i) {
       <li>On the GPU, libraries already do it: <b>Thrust</b> <code>thrust::reduce</code>, <b>CUB</b> <code>cub::DeviceReduce</code>. We build it from scratch because it teaches every optimization.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/01_sequential_reduction.cu</code> (step 1 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -114,6 +115,7 @@ SimpleSumReductionKernel&lt;&lt;&lt;1, N/2&gt;&gt;&gt;(input_d, output_d);</code
       <li>The tree is computed in place: the input is destroyed.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/02_simple_kernel.cu</code> (step 2 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -149,6 +151,7 @@ SimpleSumReductionKernel&lt;&lt;&lt;1, N/2&gt;&gt;&gt;(input_d, output_d);</code
       <li>Same number of additions, same result (up to float rounding), far fewer wasted lanes.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/03_convergent_kernel.cu</code> (step 3 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -206,6 +209,7 @@ SimpleSumReductionKernel&lt;&lt;&lt;1, N/2&gt;&gt;&gt;(input_d, output_d);</code
       <li>Global accesses: N + 1. Requests: N/32 + 1 = 8 + 1 = <b>9</b> for N = 256, against 36. And the input is not modified.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/04_shared_memory_kernel.cu</code> (step 4 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -243,6 +247,7 @@ __device__ __inline__ float warp_reduce(float val) {
       <li>Thread 33: warpIdx 1, laneIdx 1.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/05_warp_reduce.cu</code> (step 5 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -285,6 +290,7 @@ __device__ __inline__ float warp_reduce(float val) {
       <li>Strides 16 … 1 lose their barriers and shared accesses.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/06_warp_level_kernel.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -332,6 +338,7 @@ __device__ __inline__ float warp_reduce(float val) {
       <li>The listing assumes BLOCK_DIM = 1024. With fewer threads, guard the load: <code>t &lt; BLOCK_DIM/WARP_SIZE ? partialSums_s[t] : 0.0f</code>.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/07_two_stage_warp_kernel.cu</code> (step 7 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -397,6 +404,7 @@ __device__ __inline__ float warp_reduce(float val) {
       <li>Alternatives: write <code>partial[blockIdx.x]</code>, then a second one-block kernel or the host: fixed order, no atomics.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/08_multi_block_atomic.cu</code> (step 8 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -453,6 +461,7 @@ __device__ __inline__ float warp_reduce(float val) {
       <li>Pick the largest factor that still leaves enough blocks to fill every SM.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/09_coarsened_kernel.cu</code> (step 9 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -467,7 +476,7 @@ __device__ __inline__ float warp_reduce(float val) {
     <tr><td>multi-block</td><td>a single block</td><td>as two-stage</td><td>+ 1 atomic per block</td><td>1 per block</td><td>8 per block</td><td>multiple of 2·BLOCK_DIM</td></tr>
     <tr><td>coarsened</td><td>idle tree steps in every block</td><td>more steps fully used</td><td>coalesced loads</td><td>1 per block</td><td>8 per block</td><td>fewer, bigger blocks</td></tr>
   </table>
-  <p class="small muted" style="font-size:.62em">One block of 128 threads, N = 256 elements. Efficiency: useful adds / lane slots of issued warps. Barriers: <code>__syncthreads()</code> per block. Shared accesses per thread: stores, then 2 loads + 1 store per active thread per iteration; the two-stage kernels write and read 4 per-warp sums. Measure all versions: <code>ec2/reduction/reduction_book.cu</code>.</p>
+  <p class="small muted" style="font-size:.62em">One block of 128 threads, N = 256 elements. Efficiency: useful adds / lane slots of issued warps. Barriers: <code>__syncthreads()</code> per block. Shared accesses per thread: stores, then 2 loads + 1 store per active thread per iteration; the two-stage kernels write and read 4 per-warp sums. Measure all versions: <code>ec2/08_reduction/reduction_book.cu</code>.</p>
 </section>
 
 <section class="slide">
@@ -536,6 +545,7 @@ __global__ void ReversedSumReductionKernel(
 // the active threads are the last ones: still
 // consecutive, so whole warps drop out together</code></pre>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/10_reversed_kernel.cu</code> (step 10 of <code>colab_1_step_by_step.ipynb</code>) and <code>reduction_book.cu</code> (<code>colab_2_full_programs.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -593,17 +603,18 @@ __global__ void CoarsenedSumReductionKernel(
       </ul>
     </div>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/08_reduction/11_coarsened_max_kernel.cu</code> and <code>12_any_length_kernel.cu</code> (steps 11 and 12 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
   <h2>Self-study and code</h2>
   <ul class="small">
-    <li><code>ec2/reduction/reduction.cu</code>: the classic reduction kernels with <code>atomicAdd</code>.</li>
+    <li><code>ec2/08_reduction/reduction.cu</code>: the classic reduction kernels with <code>atomicAdd</code>.</li>
     <li><code>reduction_book.cu</code>: every kernel of this session as the book writes it: simple, convergent, shared memory, warp-level with <code>__shfl_down_sync</code>, two-stage, multi-block with <code>cuda::atomic_ref</code> and coarsened, plus the maximum and arbitrary-N versions of the exercises. All checked against the CPU.</li>
     <li><code>bikeshare_daily_summary.cu</code> and <code>bikeshare_nearest_truck.cu</code>: ideas from another domain, a bike-sharing system: a daily report with block reductions, and the rebalancing truck that reaches each empty station first (argmin).</li>
     <li><code>bikeshare_kpis.cu</code>: several KPIs of a day of bike trips in one pass, with a struct operator (sum, min, max, count), warp shuffles and atomics, and why float sums depend on the order.</li>
     <li><code>bikeshare_bike_totals.cu</code>: per-bike totals with one coarsened block per bike, then an argmax with a deterministic tie-break.</li>
-    <li><code>colab.ipynb</code>: run everything on a Colab GPU. On a laptop without a GPU the warp shuffles run in the CPU emulation (<code>ec2/common/cuda_compat.h</code>): <code>g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code>. Kernels are launched with <code>launch(kernel, grid, block, args...)</code>, so the same file compiles both ways.</li>
+    <li><code>colab_1_step_by_step.ipynb</code> (the steps) and <code>colab_2_full_programs.ipynb</code> (the complete programs): run everything on a Colab GPU. On a laptop without a GPU the warp shuffles run in the CPU emulation (<code>ec2/common/cuda_compat.h</code>): <code>g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code>. Kernels are launched with <code>launch(kernel, grid, block, args...)</code>, so the same file compiles both ways.</li>
     <li><b>Exercise</b>: time the seven kernels on 2²⁴ floats and explain each change; then sum the same data in two orders and compare the last digits.</li>
   </ul>
 </section>

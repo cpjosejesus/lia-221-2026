@@ -4,7 +4,7 @@
   <div class="eyebrow">C++ concurrency · session 15</div>
   <h1>Convolution on the GPU</h1>
   <p class="muted">You already know what a convolution computes. This session is about how to compute it <b>fast on a GPU</b>: mapping threads to outputs, ghost cells and divergence, the arithmetic intensity of each kernel, <b>constant memory</b> and the cache hierarchy, and <b>tiling</b> when input tiles are larger than output tiles.</p>
-  <p class="muted" style="font-size:.7em">Based on chapter 7 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/conv</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 7 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/05_conv</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
 </section>
 
 <section class="slide">
@@ -67,6 +67,7 @@
       <li>Linearized indices: N, F and P are dynamically allocated 1D arrays.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/05_conv/02_conv2d_basic.cu</code> (step 2 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -78,7 +79,7 @@
       <div class="cfg-row"><span class="cfg-lbl">filter radius r</span><input type="number" min="1" max="7" value="2" data-in="r"></div>
       <div class="cfg-out" data-out></div>
       <ul class="small" style="margin-top:.6em">
-        <li>Threads near an edge skip a different number of filter positions, so threads of the same warp take different paths in the inner <code>if</code>: <b>control divergence</b>.</li>
+        <li>Threads near an edge skip a different number of filter positions, so threads of the same warp take different paths in the inner <code style="font-size:1em">if</code>: <b>control divergence</b>.</li>
         <li>Its cost grows with the filter radius and shrinks with the image size. For real images and small filters it is minor.</li>
         <li>The bigger problem is memory bandwidth (next slide).</li>
       </ul>
@@ -141,6 +142,7 @@ __global__ void convolution_2D_const_mem_kernel(
       <li>Alternative: put the weights in a struct and pass it <b>by value</b>. Kernel parameters live in constant memory too, and the runtime copies them at each launch, so different launches can use different filters.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/05_conv/03_conv2d_const_mem.cu</code> (step 3 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -191,8 +193,8 @@ __global__ void convolution_2D_const_mem_kernel(
 
 <section class="slide">
   <h2>Code: tiled kernel with the halo in shared memory</h2>
-  <div class="cols wl">
-<pre><code>#define IN_TILE_DIM 32
+  <div class="cols wc">
+<pre class="tight"><code>#define IN_TILE_DIM 32
 #define OUT_TILE_DIM (IN_TILE_DIM - 2*FILTER_RADIUS)
 __constant__ float F_c[2*FILTER_RADIUS+1][2*FILTER_RADIUS+1];
 
@@ -227,9 +229,9 @@ __global__ void convolution_tiled_2D_const_mem_kernel(
       <li>Ghost cells are stored as 0, so phase 2 needs no boundary test on the filter loop.</li>
       <li>One barrier: the read-after-write dependence between loading and using the tile. There is no second phase, so no write-after-read barrier.</li>
       <li>The thread at (tx, ty) computes output (tx − r, ty − r) of the tile from the patch starting at <code>N_s[ty − r][tx − r]</code>.</li>
-      <li>All global loads happen before the loop: the loop itself only touches shared memory and the constant cache.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/05_conv/04_conv2d_tiled.cu</code> (step 4 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -281,8 +283,8 @@ __global__ void convolution_tiled_2D_const_mem_kernel(
 
 <section class="slide">
   <h2>Code: tiled kernel with cached halos</h2>
-  <div class="cols wl">
-<pre><code>#define TILE_DIM 32
+  <div class="cols wc">
+<pre class="tight"><code>#define TILE_DIM 32
 __global__ void convolution_cached_tiled_2D_const_mem_kernel(
     const float* N, float* P, int width, int height) {
   int col = blockIdx.x*TILE_DIM + threadIdx.x;
@@ -317,6 +319,7 @@ __global__ void convolution_cached_tiled_2D_const_mem_kernel(
       <li>Power-of-two tiles also mean aligned stores and less memory and control divergence than the previous kernel.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/05_conv/05_conv2d_cached_tiled.cu</code> (step 5 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -330,7 +333,7 @@ __global__ void convolution_cached_tiled_2D_const_mem_kernel(
     <tr><td>divergence</td><td>edges of the image</td><td>edges of the image</td><td>idle ring + image edges</td><td>tile edges in the compute loop</td></tr>
     <tr><td>code complexity</td><td>low</td><td>low</td><td>medium</td><td>medium-high</td></tr>
   </table>
-  <p class="small muted">The same ideas carry to 1D and 3D: only the index arithmetic and the loop nesting change. Run all four kernels and compare: <code>ec2/conv/conv.cu</code>.</p>
+  <p class="small muted">The same ideas carry to 1D and 3D: only the index arithmetic and the loop nesting change. Run all four kernels and compare: <code>ec2/05_conv/conv.cu</code>.</p>
 </section>
 
 <section class="slide">
@@ -356,6 +359,7 @@ __global__ void convolution_cached_tiled_2D_const_mem_kernel(
     <li>In the cached-halo kernel with TILE_DIM = 32 and r = 2, what fraction of a block's threads reads at least one element from global memory during the compute loop?</li>
     <li>A 3 × 3 filter on an H100: what is the best throughput the tiled kernel can reach, in TFLOPS, with 30 × 30 output tiles?</li>
   </ol>
+  <p class="small muted">▶ Run it: <code>ec2/05_conv/01_conv1d.cu</code> (step 1 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -376,10 +380,10 @@ __global__ void convolution_cached_tiled_2D_const_mem_kernel(
 <section class="slide">
   <h2>Self-study and code</h2>
   <ul>
-    <li><b>Run it</b>: <code>ec2/conv</code> has all four kernels with checks and timings, and an idea for your project from another domain (a smoothed demand map of a bike-sharing city). It compiles with <code>nvcc</code> on Google Colab, or with <code>g++</code> on any laptop through a small CPU emulation of CUDA.</li>
+    <li><b>Run it</b>: <code>ec2/05_conv</code> has all four kernels with checks and timings, and an idea for your project from another domain (a smoothed demand map of a bike-sharing city). It compiles with <code>nvcc</code> on Google Colab, or with <code>g++</code> on any laptop through a small CPU emulation of CUDA.</li>
     <li><b>Exercise</b>: rewrite the tiled kernel with block = output tile, threads looping to load the larger input tile.</li>
     <li><b>Exercise</b>: turn the basic, constant-memory and tiled kernels into 3D convolutions.</li>
-    <li><b>Chapter 8</b>: stencils, a special case of convolution used in PDE solvers (<code>ec2/stencil</code>). Later: convolutional neural networks build on the same ideas.</li>
+    <li><b>Chapter 8</b>: stencils, a special case of convolution used in PDE solvers (<code>ec2/06_stencil</code>). Later: convolutional neural networks build on the same ideas.</li>
   </ul>
 </section>
 

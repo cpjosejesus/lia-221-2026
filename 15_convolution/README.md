@@ -8,7 +8,7 @@
 Based on chapter 7 of *Programming Massively Parallel Processors* (Hwu, Kirk, El Hajj). The
 students already know what a convolution computes, so the deck covers only the CUDA side. The
 runnable code (all four kernels, checks, timings and a bike-sharing example that gives ideas for the project) is in
-[`../ec2/conv`](../ec2/conv).
+[`../ec2/05_conv`](../ec2/05_conv).
 
 ## What this session covers
 

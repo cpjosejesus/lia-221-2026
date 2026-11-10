@@ -62,7 +62,7 @@
         const a = Math.min(1, miss / (m * m) * 2.2);
         R(svg, 20 + x * cs, 20 + y * cs, cs - 1, cs - 1, { fill: miss ? `rgba(176,58,58,${.15 + .85 * a})` : LBLUE });
       }
-      T(svg, 20, 20 + H * cs + 18, 'blue: no ghost cells · red: skips some positions (darker = more)', { 'font-size': 12, class: 'lbl' });
+      T(svg, 20, 20 + H * cs + 18, 'blue: no ghost cells · red: skips some positions (darker = more)', { 'font-size': 13, class: 'lbl' });
       out.innerHTML = `${W} × ${H} output, ${m} × ${m} filter: <b>${edge}</b> of ${W * H} elements (${(edge / (W * H) * 100).toFixed(1)} %) touch ghost cells · skipped multiplications: ${skipped} of ${W * H * m * m} (${(skipped / (W * H * m * m) * 100).toFixed(1)} %)` +
         `<br>a 4096 × 4096 image with this filter: ${(100 * (1 - (4096 - 2 * r) ** 2 / 4096 ** 2)).toFixed(2)} % of the elements touch ghost cells`;
     };
@@ -82,12 +82,12 @@
       const max = Math.max(25, ...rows.map(r => r[1])) * 1.05, sc = 640 / max, X0 = 260;
       rows.forEach(([name, v, note], i) => {
         const y = 30 + i * 60;
-        T(svg, 20, y + 22, name, { 'font-size': 13, 'font-weight': 600 }); T(svg, 20, y + 40, note, { 'font-size': 11, class: 'lbl' });
+        T(svg, 20, y + 22, name, { 'font-size': 13, 'font-weight': 600 }); T(svg, 20, y + 40, note, { 'font-size': 13, class: 'lbl' });
         R(svg, X0, y, Math.max(3, v * sc), 30, { fill: v < 20 ? '#E7B467' : '#86C495', rx: 2 });
         T(svg, X0 + Math.max(3, v * sc) + 8, y + 21, `${v.toFixed(2)} FLOP/B`, { 'font-size': 13 });
       });
       const rx = X0 + 20 * sc;
-      L(svg, rx, 18, rx, 270, { stroke: RED, 'stroke-width': 2, 'stroke-dasharray': '6 4' }); T(svg, rx + 6, 286, 'H100 ridge: 20 FLOP/B', { 'font-size': 12, fill: RED });
+      L(svg, rx, 18, rx, 270, { stroke: RED, 'stroke-width': 2, 'stroke-dasharray': '6 4' }); T(svg, rx + 6, 286, 'H100 ridge: 20 FLOP/B', { 'font-size': 13, fill: RED });
       out.innerHTML = `${m} × ${m} filter (r = ${(m - 1) / 2}): the basic kernel reaches at most 3.35 TB/s × 0.25 = <b>0.84 TFLOPS</b>; the tiled one ${(3.35 * Math.min(20, tiled(t, m))).toFixed(1)} TFLOPS` +
         ` (${tiled(t, m) < 20 ? 'still memory-bound' : 'compute-bound: up to 66.9'}).`;
       syncButtons(root, 'p', `${m},${t}`);
@@ -101,13 +101,13 @@
   ANIM.bcast = (root) => {
     const svg = newSvg(root, '0 0 1000 330', 'Eight threads of a warp each compute their own output; in every loop iteration they all read the same filter element, served by one broadcast from the constant cache');
     const hB = arrowHead(svg, 'bc-b', BLUE), hG = arrowHead(svg, 'bc-g', GOLD);
-    T(svg, 20, 26, 'F in constant memory (3 × 3)', { 'font-size': 12, class: 'lbl' });
+    T(svg, 20, 26, 'F in constant memory (3 × 3)', { 'font-size': 13, class: 'lbl' });
     const fc = grid(svg, 20, 36, 3, 3, 40, null, { stroke: '#9a9a9a' });
-    const fT = fc.map((_, i) => T(svg, 40 + (i % 3) * 40, 61 + Math.floor(i / 3) * 40, `F${Math.floor(i / 3)}${i % 3}`, { ...mid, 'font-size': 11 }));
-    const cc = R(svg, 20, 170, 120, 44, { class: 'mem', rx: 3 }); T(svg, 80, 197, 'constant cache', { ...mid, 'font-size': 12 });
-    T(svg, 300, 26, 'input row of N (global memory, L1/L2)', { 'font-size': 12, class: 'lbl' });
-    const nRow = Array.from({ length: 10 }, (_, i) => { const e = R(svg, 300 + i * 62, 36, 58, 34, { fill: '#fff', stroke: '#9a9a9a' }); T(svg, 329 + i * 62, 58, `N[${i}]`, { ...mid, 'font-size': 11 }); return e; });
-    const lanes = Array.from({ length: 8 }, (_, t) => { const e = R(svg, 362 + t * 62, 240, 58, 34, { fill: LBLUE, rx: 3 }); T(svg, 391 + t * 62, 262, `t${t}`, { ...mid, 'font-size': 12 }); return e; });
+    const fT = fc.map((_, i) => T(svg, 40 + (i % 3) * 40, 61 + Math.floor(i / 3) * 40, `F${Math.floor(i / 3)}${i % 3}`, { ...mid, 'font-size': 13 }));
+    const cc = R(svg, 20, 170, 120, 44, { class: 'mem', rx: 3 }); T(svg, 80, 197, 'constant cache', { ...mid, 'font-size': 13 });
+    T(svg, 300, 26, 'input row of N (global memory, L1/L2)', { 'font-size': 13, class: 'lbl' });
+    const nRow = Array.from({ length: 10 }, (_, i) => { const e = R(svg, 300 + i * 62, 36, 58, 34, { fill: '#fff', stroke: '#9a9a9a' }); T(svg, 329 + i * 62, 58, `N[${i}]`, { ...mid, 'font-size': 13 }); return e; });
+    const lanes = Array.from({ length: 8 }, (_, t) => { const e = R(svg, 362 + t * 62, 240, 58, 34, { fill: LBLUE, rx: 3 }); T(svg, 391 + t * 62, 262, `t${t}`, { ...mid, 'font-size': 13 }); return e; });
     const lines = svg.appendChild(el('g'));
     const cnt = T(svg, 20, 316, '', { 'font-size': 14 });
     const cap = root.querySelector('[data-cap]');
@@ -132,10 +132,10 @@
     R(svg, 10, 10, 980, 230, { class: 'frame', rx: 5 }); T(svg, 26, 32, 'the GPU chip', { 'font-size': 13, class: 'lbl' });
     const sms = [0, 1, 2].map(i => {
       const x = 40 + i * 320;
-      R(svg, x, 44, 290, 110, { fill: '#fff', stroke: '#6f6f6f', rx: 4 }); T(svg, x + 10, 62, `SM ${i}`, { 'font-size': 12, class: 'lbl' });
-      const core = R(svg, x + 14, 70, 80, 36, { class: 'sp', rx: 3 }); T(svg, x + 54, 93, 'regs', { ...mid, 'font-size': 12 });
-      const l1 = R(svg, x + 104, 70, 170, 36, { class: 'mem', rx: 3 }); T(svg, x + 189, 93, 'L1 / shared memory', { ...mid, 'font-size': 11 });
-      const cc = R(svg, x + 104, 112, 170, 32, { class: 'mem', rx: 3 }); T(svg, x + 189, 133, 'constant cache', { ...mid, 'font-size': 11 });
+      R(svg, x, 44, 290, 110, { fill: '#fff', stroke: '#6f6f6f', rx: 4 }); T(svg, x + 10, 62, `SM ${i}`, { 'font-size': 13, class: 'lbl' });
+      const core = R(svg, x + 14, 70, 80, 36, { class: 'sp', rx: 3 }); T(svg, x + 54, 93, 'regs', { ...mid, 'font-size': 13 });
+      const l1 = R(svg, x + 104, 70, 170, 36, { class: 'mem', rx: 3 }); T(svg, x + 189, 93, 'L1 / shared memory', { ...mid, 'font-size': 13 });
+      const cc = R(svg, x + 104, 112, 170, 32, { class: 'mem', rx: 3 }); T(svg, x + 189, 133, 'constant cache', { ...mid, 'font-size': 13 });
       return { core, l1, cc };
     });
     const l2 = R(svg, 40, 172, 930, 50, { class: 'mem', rx: 4 }); T(svg, 505, 202, 'L2 cache (shared by all SMs)', { ...mid, 'font-size': 14 });
@@ -194,15 +194,21 @@
         T(svg, x0, 22, ph === 'load' ? 'phase 1: load the 8 × 8 input tile' : 'phase 2: compute the 6 × 6 output tile', { 'font-size': 13, 'font-weight': 600, fill: ph === phase ? INK : GRAY });
         for (let r = 0; r < IN; r++) for (let c = 0; c < IN; c++) {
           const inner = r >= 1 && r < 7 && c >= 1 && c < 7;
-          let f = '#fff', label = '';
-          if (mode === 'input') { f = ph === 'load' ? BLUE : (inner ? BLUE : '#E2E2E2'); label = ph === 'load' || inner ? '' : 'idle'; }
+          let f = '#fff';
+          if (mode === 'input') { f = ph === 'load' ? BLUE : (inner ? BLUE : '#E2E2E2'); }
           else {
-            if (ph === 'load') { const idx = r * IN + c; f = idx < 36 ? BLUE : '#9DB7E3'; label = idx < 36 ? '1st' : '2nd'; }
+            if (ph === 'load') { const idx = r * IN + c; f = idx < 36 ? BLUE : '#9DB7E3'; }
             else { f = inner ? BLUE : '#fff'; }
           }
           R(svg, x0 + c * cs, 34 + r * cs, cs - 2, cs - 2, { fill: f, rx: 2, opacity: ph === phase ? 1 : .35 });
-          if (label && ph === phase) T(svg, x0 + c * cs + 14, 34 + r * cs + 18, label, { ...mid, 'font-size': 8, fill: f === BLUE ? '#fff' : INK });
         }
+        const legend = [];
+        if (mode === 'input' && ph === 'compute') legend.push(['#E2E2E2', 'idle thread']);
+        if (mode === 'output' && ph === 'load') legend.push([BLUE, '1st round of loads'], ['#9DB7E3', '2nd round of loads']);
+        if (ph === phase) legend.forEach(([color, text], n) => {
+          R(svg, x0 + IN * cs + 14, 44 + n * 28, 18, 18, { fill: color, rx: 2 });
+          T(svg, x0 + IN * cs + 40, 58 + n * 28, text, { 'font-size': 13, fill: INK });
+        });
       });
       T(svg, 40, 300, mode === 'input' ? '64 threads per block: each loads one element, 36 of them compute (44 % idle in phase 2)' : '36 threads per block: they load 64 elements in two rounds (28 threads load twice), all 36 compute', { 'font-size': 13 });
       root.querySelector('[data-cap]').innerHTML = mode === 'input'
@@ -218,12 +224,12 @@
   ANIM.tiled = (root) => {
     const svg = newSvg(root, '0 0 1000 350', 'An 8 by 8 block over an 8 by 8 input tile with a 3 by 3 filter: all threads load, the inner 6 by 6 threads compute the output tile');
     const IN = 8, OUT = 6, cs = 34, X0 = 40, Y0 = 30;
-    T(svg, X0, 20, 'input tile in shared memory N_s = thread block (8 × 8)', { 'font-size': 12, class: 'lbl' });
+    T(svg, X0, 20, 'input tile in shared memory N_s = thread block (8 × 8)', { 'font-size': 13, class: 'lbl' });
     const cells = [];
-    for (let r = 0; r < IN; r++) for (let c = 0; c < IN; c++) { cells.push({ r, c, e: R(svg, X0 + c * cs, Y0 + r * cs, cs - 2, cs - 2, { fill: '#fff', stroke: '#c9c9c9', rx: 2 }), t: T(svg, X0 + c * cs + 16, Y0 + r * cs + 21, '', { ...mid, 'font-size': 9 }) }); }
+    for (let r = 0; r < IN; r++) for (let c = 0; c < IN; c++) { cells.push({ r, c, e: R(svg, X0 + c * cs, Y0 + r * cs, cs - 2, cs - 2, { fill: '#fff', stroke: '#c9c9c9', rx: 2 }), t: T(svg, X0 + c * cs + 16, Y0 + r * cs + 21, '', { ...mid, 'font-size': 13 }) }); }
     const box = svg.appendChild(el('rect', { x: X0 + cs - 1, y: Y0 + cs - 1, width: OUT * cs, height: OUT * cs, fill: 'none', stroke: INK, 'stroke-width': 3 }));
     const patch = svg.appendChild(el('rect', { fill: 'none', stroke: GOLD, 'stroke-width': 3, 'stroke-dasharray': '6 3' }));
-    T(svg, 600, 20, 'output tile (6 × 6)', { 'font-size': 12, class: 'lbl' });
+    T(svg, 600, 20, 'output tile (6 × 6)', { 'font-size': 13, class: 'lbl' });
     const outC = []; for (let r = 0; r < OUT; r++) for (let c = 0; c < OUT; c++) { outC.push(R(svg, 600 + c * cs, Y0 + r * cs, cs - 2, cs - 2, { fill: '#fff', stroke: '#c9c9c9', rx: 2 })); }
     const hA = arrowHead(svg, 'tl-a', GREEN); const arrow = L(svg, 0, 0, 0, 0, { stroke: GREEN, 'stroke-width': 2.5, 'marker-end': hA });
     const info = T(svg, 600, 260, '', { 'font-size': 13 }), info2 = T(svg, 600, 282, '', { 'font-size': 13 });
@@ -302,7 +308,7 @@
     const svg = newSvg(root, '0 0 1000 280', 'With block equal to output tile, interior patch elements come from shared memory and halo elements directly from global memory, usually hitting L2');
     const T0 = 6, cs = 34, X0 = 40, Y0 = 30, r = 1, n = T0 * 2;   // a 12 × 12 image of 4 tiles; we look at tile (0,1)
     const tileX = 6, tileY = 0;
-    T(svg, X0, 20, 'image (12 × 12) with four 6 × 6 tiles; the outlined tile is this block', { 'font-size': 12, class: 'lbl' });
+    T(svg, X0, 20, 'image (12 × 12) with four 6 × 6 tiles; the outlined tile is this block', { 'font-size': 13, class: 'lbl' });
     const cells = []; for (let rr = 0; rr < n; rr++) for (let cc = 0; cc < n; cc++) cells.push({ rr, cc, e: R(svg, X0 + cc * cs * .6, Y0 + rr * cs * .6, cs * .6 - 2, cs * .6 - 2, { fill: '#fff', stroke: '#d0d0d0', rx: 1 }) });
     svg.appendChild(el('rect', { x: X0 + tileX * cs * .6 - 1, y: Y0 + tileY * cs * .6 - 1, width: T0 * cs * .6, height: T0 * cs * .6, fill: 'none', stroke: INK, 'stroke-width': 3 }));
     const legend = [['shared memory (N_s)', BLUE], ['global memory, likely an L2 hit', GOLD], ['ghost cell: skipped', LRED]];

@@ -321,10 +321,32 @@ void runThreadInEveryBlock(
   }
 }
 
+constexpr int kErrorInvalidConfiguration = 9;
+constexpr unsigned kMaxThreadsPerBlock = 1024;
+constexpr unsigned kMaxBlockDimZ = 64;
+constexpr unsigned kMaxGridDimYZ = 65535;
+
+inline int lastLaunchError = 0;
+
+inline bool isValidLaunchConfiguration(dim3 grid, dim3 block) {
+  const bool blockFits = block.x >= 1 && block.y >= 1 && block.z >= 1 &&
+                         block.x <= kMaxThreadsPerBlock && block.y <= kMaxThreadsPerBlock &&
+                         block.z <= kMaxBlockDimZ &&
+                         threadCountOf(block) <= kMaxThreadsPerBlock;
+  const bool gridFits = grid.x >= 1 && grid.y >= 1 && grid.z >= 1 && grid.y <= kMaxGridDimYZ &&
+                        grid.z <= kMaxGridDimYZ;
+  return blockFits && gridFits;
+}
+
 }
 
 template <class Kernel, class... Args>
 void launch(Kernel kernel, dim3 grid, dim3 block, Args... args) {
+  if (!emu::isValidLaunchConfiguration(grid, block)) {
+    emu::lastLaunchError = emu::kErrorInvalidConfiguration;
+    return;
+  }
+
   gridDim = grid;
   blockDim = block;
 
@@ -574,12 +596,23 @@ typedef int cudaError_t;
 
 const cudaError_t cudaSuccess = 0;
 
-inline const char* cudaGetErrorString(cudaError_t) {
+const cudaError_t cudaErrorInvalidConfiguration = emu::kErrorInvalidConfiguration;
+
+inline const char* cudaGetErrorString(cudaError_t error) {
+  if (error == cudaErrorInvalidConfiguration) {
+    return "invalid configuration argument";
+  }
   return "no error";
 }
 
+inline cudaError_t cudaPeekAtLastError() {
+  return emu::lastLaunchError;
+}
+
 inline cudaError_t cudaGetLastError() {
-  return cudaSuccess;
+  const cudaError_t error = emu::lastLaunchError;
+  emu::lastLaunchError = cudaSuccess;
+  return error;
 }
 
 inline cudaError_t cudaDeviceSynchronize() {
@@ -610,6 +643,58 @@ inline cudaError_t cudaMemset(void* destination, int byteValue, size_t bytes) {
 template <class T>
 cudaError_t cudaMemcpyToSymbol(T& symbol, const void* source, size_t bytes) {
   std::memcpy(&symbol, source, bytes);
+  return cudaSuccess;
+}
+
+struct cudaDeviceProp {
+  char name[256];
+  int major;
+  int minor;
+  int multiProcessorCount;
+  int maxThreadsPerBlock;
+  int maxThreadsDim[3];
+  int maxGridSize[3];
+  int maxThreadsPerMultiProcessor;
+  int maxBlocksPerMultiProcessor;
+  int warpSize;
+  int regsPerBlock;
+  int regsPerMultiprocessor;
+  size_t sharedMemPerBlock;
+  size_t sharedMemPerMultiprocessor;
+  size_t totalGlobalMem;
+  size_t totalConstMem;
+  int clockRate;
+};
+
+inline cudaError_t cudaGetDeviceCount(int* deviceCount) {
+  *deviceCount = 1;
+  return cudaSuccess;
+}
+
+inline cudaError_t cudaGetDeviceProperties(cudaDeviceProp* properties, int) {
+  constexpr int MAX_THREADS_PER_BLOCK = 1024;
+  constexpr int MAX_GRID_X = 2147483647;
+  constexpr int MAX_GRID_YZ = 65535;
+  constexpr int MAX_BLOCK_Z = 64;
+  constexpr size_t KIB = 1024;
+  *properties = cudaDeviceProp{};
+  std::snprintf(properties->name, sizeof properties->name, "CPU emulation (cuda_compat.h)");
+  properties->multiProcessorCount = static_cast<int>(std::thread::hardware_concurrency());
+  properties->maxThreadsPerBlock = MAX_THREADS_PER_BLOCK;
+  properties->maxThreadsDim[0] = MAX_THREADS_PER_BLOCK;
+  properties->maxThreadsDim[1] = MAX_THREADS_PER_BLOCK;
+  properties->maxThreadsDim[2] = MAX_BLOCK_Z;
+  properties->maxGridSize[0] = MAX_GRID_X;
+  properties->maxGridSize[1] = MAX_GRID_YZ;
+  properties->maxGridSize[2] = MAX_GRID_YZ;
+  properties->maxThreadsPerMultiProcessor = 2 * MAX_THREADS_PER_BLOCK;
+  properties->maxBlocksPerMultiProcessor = 32;
+  properties->warpSize = warpSize;
+  properties->regsPerBlock = 64 * 1024;
+  properties->regsPerMultiprocessor = 64 * 1024;
+  properties->sharedMemPerBlock = 48 * KIB;
+  properties->sharedMemPerMultiprocessor = 100 * KIB;
+  properties->totalConstMem = 64 * KIB;
   return cudaSuccess;
 }
 

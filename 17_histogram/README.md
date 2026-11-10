@@ -10,7 +10,7 @@ edition that writes atomics with `cuda::atomic_ref`. The students already know h
 `std::atomic` and CAS (session 08) and the "accumulate privately, merge rarely" histogram on the
 CPU (session 10), so the deck covers only the CUDA side. The runnable code (every kernel checked
 against the CPU, a race demo, the text histogram with aggregation and two bike-sharing
-examples that give ideas for the project) is in [`../ec2/histogram`](../ec2/histogram).
+examples that give ideas for the project) is in [`../ec2/07_histogram`](../ec2/07_histogram).
 
 ## What this session covers
 

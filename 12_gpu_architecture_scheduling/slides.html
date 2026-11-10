@@ -218,7 +218,7 @@ canvas[data-canvas]{display:block;max-width:100%}
   <h2>A barrier every thread must reach: the wrong and the right way</h2>
   <div class="cols wr">
     <div>
-<pre data-mode-pane="wrong"><code>__global__ void step(float* x) {
+<pre data-mode-pane="wrong"><code>__global__ void step(float* x, float* y) {
   int t = threadIdx.x;
   if (t % 2 == 0) {
     x[t] *= 2.0f;
@@ -227,9 +227,9 @@ canvas[data-canvas]{display:block;max-width:100%}
     x[t] += 1.0f;
     __syncthreads();      // barrier B
   }
-  x[t] -= x[t ^ 1];
+  y[t] = x[t] - x[t ^ 1];
 }</code></pre>
-<pre data-mode-pane="right" hidden><code>__global__ void step(float* x) {
+<pre data-mode-pane="right" hidden><code>__global__ void step(float* x, float* y) {
   int t = threadIdx.x;
   if (t % 2 == 0) {
     x[t] *= 2.0f;
@@ -237,7 +237,7 @@ canvas[data-canvas]{display:block;max-width:100%}
     x[t] += 1.0f;
   }
   __syncthreads();        // one barrier, all threads
-  x[t] -= x[t ^ 1];
+  y[t] = x[t] - x[t ^ 1];
 }</code></pre>
       <p class="small muted" style="margin-top:.6em">Each <code>__syncthreads()</code> call site is a <b>different</b> barrier. It must be reached by all threads of the block, or by none.</p>
     </div>
@@ -247,6 +247,7 @@ canvas[data-canvas]{display:block;max-width:100%}
       <div class="dctl"><button data-mode="wrong" class="on">Wrong</button><button data-mode="right">Right</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
     </div>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/07_barrier_placement.cu</code> (step 7 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 9 -->
@@ -293,6 +294,7 @@ __global__ void reverseChunks(int* d) {
       <li><code>__shared__</code> memory, the per-block scratchpad, is the topic of session 13.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/03_sync_reverse.cu</code> (step 3 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 10 -->
@@ -372,6 +374,7 @@ __global__ void reverseChunks(int* d) {
     </table>
   </div>
   <p class="small muted">Every two rows of a 16-wide block form one warp. Use <code>warpSize</code> rather than a literal 32.</p>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/04_warps_and_lanes.cu</code> (step 4 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 14 -->
@@ -473,6 +476,7 @@ __global__ void reverseChunks(int* d) {
       <li>Never place <code>__syncthreads()</code> after an early <code>return</code> that only some threads take.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/05_divergence.cu</code> (step 5 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 18 -->
@@ -492,6 +496,7 @@ if (i &lt; n) C[i] = A[i] + B[i];</code></pre>
       <ul class="legend"><li><i style="background:#C9DBF4"></i>all 32 threads work</li><li><i style="background:#E7B467"></i>divergent warp</li><li><i style="background:#F4F4F4"></i>no thread works</li></ul>
     </div>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/05_divergence.cu</code> (step 5 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 19 -->
@@ -512,6 +517,7 @@ if (col &lt; width &amp;&amp; row &lt; height) { ... }</code></pre>
       <ul class="legend"><li><i style="background:#C9DBF4"></i>warp fully inside</li><li><i style="background:#E7B467"></i>divergent warp</li><li><i style="background:#EDEDED"></i>warp fully outside</li><li><i style="background:#fff;border-color:#B03A3A"></i>picture edge</li></ul>
     </div>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/08_divergence_2d.cu</code> (step 8 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 20 -->
@@ -623,6 +629,7 @@ for (int d = 0; d &lt; count; ++d) {
     </table>
   </div>
   <p class="small muted">For occupancy, <code>cudaOccupancyMaxActiveBlocksPerMultiprocessor()</code> answers the question of slide <span data-ref="s-occ"></span> for a real kernel; the Nsight Compute occupancy calculator does the same interactively. Programs that use clusters can ask <code>cudaOccupancyMaxPotentialClusterSize()</code>. Note: despite its name, <code>regsPerBlock</code> is usually the register count of a whole SM.</p>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/01_device_query.cu</code> (step 1 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 24c -->
@@ -655,6 +662,7 @@ myKernel&lt;&lt;&lt;(n + best - 1) / best, best&gt;&gt;&gt;(x_d, n);</code></pre
       <li>High occupancy is a means, not the goal: always measure the running time too.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/06_occupancy.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>): it computes the same occupancy by formula, since the <code>cudaOccupancy*</code> calls need a real GPU</p>
 </section>
 
 <!-- 25 -->
@@ -694,6 +702,7 @@ myKernel&lt;&lt;&lt;(n + best - 1) / best, best&gt;&gt;&gt;(x_d, n);</code></pre
       <li>Loop on line 7: how many iterations run without divergence, and how many with?</li>
     </ol>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/09_warp_efficiency.cu</code> (step 9 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 27 -->
@@ -721,6 +730,7 @@ myKernel&lt;&lt;&lt;(n + best - 1) / best, best&gt;&gt;&gt;(x_d, n);</code></pre
     <tr><td>d</td><td><b>1</b> iteration without divergence, <b>3</b> with</td><td>Trip counts are 4, 3, 2, 1 inside every warp: iteration j = 0 runs on all 32 lanes, j = 1, 2, 3 on 24, 16, 8.</td></tr>
   </table>
   <p class="small muted">Warp 2 is inactive for line 4 but not divergent: none of its threads take the branch, so the hardware skips it in one pass.</p>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/09_warp_efficiency.cu</code> (step 9 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 29 -->
@@ -745,6 +755,7 @@ myKernel&lt;&lt;&lt;(n + best - 1) / best, best&gt;&gt;&gt;(x_d, n);</code></pre
     <tr><td>12.8</td><td>35 blocks, <b>280</b> warps, <b>35</b> divergent (12.5 %): the 32 warps of the right-hand block column plus 3 in the corner block. The bottom block row never diverges: each warp there is fully inside or fully outside.</td></tr>
     <tr><td>12.9</td><td>A 32 × 32 block is 1024 threads, over the 512 limit: the launch fails and the kernel never runs. Use 16 × 16 blocks (256 threads) and a 64 × 64 grid instead.</td></tr>
   </table>
+  <p class="small muted">▶ Run it: <code>ec2/02_gpu_architecture/08_divergence_2d.cu</code> (step 8 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <!-- 31 -->

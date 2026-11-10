@@ -28,6 +28,7 @@ table{border-collapse:collapse;font-size:.7em;width:100%}th{text-align:left;font
 .foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 8vw;font-size:.55em;color:var(--muted);font-family:var(--mono)}
 .note{border-left:3px solid var(--ink);padding-left:1em;color:var(--ink);max-width:60ch}
 .big{font-size:1.25em}
+.small{font-size:.62em;max-width:none}
 kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
 @media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
 :root{--acc:#2F6FD0;--acc-soft:#DCE7F8;--acc2:#C98A1B;--acc2-soft:#F6EAD2;--line-strong:#BDBDBD;--bad-soft:#F6DADA}
@@ -135,6 +136,7 @@ void vecAdd(const float* A_d, const float* B_d, float* C_d, int n) {
       <li>The grid follows the data: n = 1000 gives 4 blocks, n = 4000 gives 16.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/03_vector_add_any_n.cu</code> (step 3 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -200,6 +202,7 @@ if (col &lt; width &amp;&amp; row &lt; height) { /* this pixel exists */ }</code
       <li>The guard stops the extra threads: 1080 is not a multiple of 16, so the last row of blocks has 8 working rows out of 16.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/04_grid_2d.cu</code> and <code>05_color_to_gray.cu</code> (steps 4 and 5 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -225,13 +228,14 @@ int col   = blockIdx.x * blockDim.x + threadIdx.x;
 if (plane &lt; depth &amp;&amp; row &lt; height &amp;&amp; col &lt; width)
   P[(plane * height + row) * width + col] = …;</code></pre>
     <ul>
-      <li>Every location in memory has one address. A 2D array is stored as one long line, row after row.</li>
+      <li>A 2D array is stored as one long line, row after row.</li>
       <li>For arrays with sizes known at compile time, <code>M[j][i]</code> works: the compiler does this arithmetic.</li>
       <li>A picture loaded at run time has a size known only at run time, so you flatten it yourself.</li>
       <li><code>j * width</code> skips the rows before row j; <code>+ i</code> moves along the row.</li>
       <li>3D adds one more term: skip the planes before, then the rows, then the columns.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/04_grid_2d.cu</code> and <code>09_flatten_3d.cu</code> (steps 4 and 9 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -262,14 +266,14 @@ __global__ void colorToGray(unsigned char* gray, const unsigned char* rgb,
   }
 }</code></pre>
     <ul>
-      <li>Lines 1–2 of the body: the thread’s column and row, as on slide 7.</li>
-      <li>The guard: only threads over a real pixel continue.</li>
+      <li>Lines 1–2 of the body: the thread’s column and row, as on slide 7; the guard lets only threads over a real pixel continue.</li>
       <li><code>grayOffset</code>: the output pixel, one byte each.</li>
       <li><code>rgbOffset</code>: the same pixel in the input, three bytes each, so the index is multiplied by 3.</li>
       <li>Each thread reads 3 bytes and writes 1. No thread touches another thread’s pixel: a pure map.</li>
       <li>Weights: green counts most because the eye is most sensitive to it.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/05_color_to_gray.cu</code> (step 5 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -304,12 +308,12 @@ __global__ void blurKernel(const unsigned char* in, unsigned char* out, int w, i
 }</code></pre>
     <ul>
       <li>Same first lines and guard as grayscale: one thread per output pixel.</li>
-      <li>Two nested loops visit the patch, from <code>-BLUR_SIZE</code> to <code>+BLUR_SIZE</code> around the pixel.</li>
-      <li>The inner <code>if</code> skips neighbours outside the picture.</li>
+      <li>Two nested loops visit the patch, from <code>-BLUR_SIZE</code> to <code>+BLUR_SIZE</code>; the inner <code>if</code> skips neighbours outside the picture.</li>
       <li><code>pixels</code> counts how many were really added: 4 at a corner, 6 on an edge, 9 inside. Dividing by 9 everywhere would darken the borders.</li>
       <li>Threads now do real work, and neighbouring threads read overlapping inputs. Later chapters exploit that overlap.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/06_blur.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -366,6 +370,7 @@ __global__ void blurKernel(const unsigned char* in, unsigned char* out, int w, i
   cudaFree(M_d); cudaFree(N_d); cudaFree(P_d);
 }</code></pre>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/07_matmul.cu</code> (step 7 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -415,6 +420,7 @@ __global__ void blurKernel(const unsigned char* in,
 // (w+15)/16 × (h+15)/16 blocks of 16 × 16</code></pre>
   </div>
   <p class="note">The two loops over <code>y</code> and <code>x</code> became <code>row</code> and <code>col</code>. Splitting the work moved from your code into the launch configuration.</p>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/06_blur.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -447,6 +453,7 @@ void scale(const float* in_d, float* out_d) {
       <li><b>11.5</b> A stack of 50 such maps, one per day, row-major. Index of x = 40, y = 15, z = 3?</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/10_count_threads.cu</code> and <code>09_flatten_3d.cu</code> (steps 10 and 9 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -488,6 +495,7 @@ __global__ void matMulColKernel(const float* M, const float* N,
     <li><b>Row per thread:</b> neighbouring threads read <code>M[row*W+k]</code> a whole row apart: scattered reads.</li>
     <li><b>Column per thread:</b> neighbouring threads read neighbouring <code>N[k*W+col]</code> and write neighbouring P: the friendlier pattern.</li>
   </ul>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/11_matmul_row_col.cu</code> (step 11 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -525,6 +533,7 @@ __global__ void matVecKernel(float* a, const float* B,
     <li>One thread per output element: thread i owns <code>a[i]</code> and walks row i of B, which starts at <code>B[i * N]</code>.</li>
     <li>Every thread reads all of c; B is read once in total. Host side: allocate, copy B and c over, launch, copy a back, free.</li>
   </ul>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/12_matvec.cu</code> (step 12 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -546,6 +555,7 @@ __global__ void matVecKernel(float* a, const float* B,
       <li>Column-major: skip <code>col</code> full columns of <code>height</code> elements, then move down.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/10_count_threads.cu</code> and <code>09_flatten_3d.cu</code> (steps 10 and 9 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">

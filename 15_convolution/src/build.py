@@ -15,6 +15,9 @@ svg .soft2{fill:var(--acc2-soft);stroke:#d9b06a}
 [data-anim=hazards] table td{padding:.35em .9em .35em 0}
 .cfg .cap{font-size:.86em}
 .cfg [data-legend] table{font-size:.9em;margin:.3em 0}
+.cols.wc{grid-template-columns:minmax(0,1.8fr) minmax(0,1fr)}
+@media (max-width:820px){.cols.wc{grid-template-columns:1fr}}
+pre.tight{font-size:.5em;line-height:1.4}
 """
 style = style.replace("</style>", extra_css + "</style>")
 

@@ -180,6 +180,7 @@ C[i] = A[i] + B[i];      // vector addition
       <p class="small muted" style="margin-top:.6em">The peaks are limits, not guarantees: only well-optimized kernels get close to them.</p>
     </div>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/03_memory_tiling/06_arithmetic_intensity.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -220,6 +221,7 @@ C[i] = A[i] + B[i];      // vector addition
       <p class="small muted">Divide the bandwidth a memory-bound kernel achieves by the peak: that is how fast it runs relative to “the speed of light”. 90 % leaves only 10 % to gain from further optimization.</p>
     </div>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/03_memory_tiling/06_arithmetic_intensity.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -243,6 +245,7 @@ N = 1024  →  ≈ 171 FLOP/B   (≫ 20: compute-bound)</code></pre>
       <li>Caches help a little in practice, but the real fix is to <b>reduce global memory accesses</b> in the code. That is what tiling does.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/03_memory_tiling/01_matmul_naive.cu</code> and <code>ec2/03_memory_tiling/06_arithmetic_intensity.cu</code> (steps 1 and 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -351,6 +354,7 @@ __global__ void kernel(const float* in, float* out,
     </table>
   </div>
   <p class="small muted"><b>Scope</b>: which threads see the variable. <b>Lifetime</b>: one kernel run (grid) or the whole program (application). An automatic array such as <code>float w[8];</code> would go to local memory. Assumes blocks of 256 threads.</p>
+  <p class="small muted">▶ Run it: <code>ec2/03_memory_tiling/02_memory_types.cu</code> (step 2 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -503,6 +507,7 @@ __global__ void kernel(const float* in, float* out,
       <li>Assumes Width is a multiple of TILE_WIDTH; fixed later.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/03_memory_tiling/03_tiled_matmul.cu</code> (step 3 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -594,6 +599,7 @@ for (int i = 0; i &lt; n; ++i)
       <p class="small" style="margin-top:.6em">Measured on a 10-core laptop. Almost all the gain is <b>locality</b>: reading along rows. Explicit tiles did not beat the hardware cache here, which is the book's point: a CPU's cache does the tiling for a few threads; a GPU needs it done by hand in shared memory.</p>
     </div>
   </div>
+  <p class="small muted">▶ Run it: <code>13_memory_locality/example_63.cpp</code> with <code>g++ -std=c++17 -O2 -pthread</code></p>
 </section>
 
 <section class="slide">
@@ -639,6 +645,7 @@ if (Row &lt; Width &amp;&amp; Col &lt; Width)     // a real P element?
       <li><b>Rectangular matrices</b>: an <i>j × k</i> M times a <i>k × l</i> N gives a <i>j × l</i> P. Replace Width by <i>j</i>, <i>k</i> or <i>l</i> depending on which dimension it measures (exercise).</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/03_memory_tiling/04_tiled_matmul_boundary.cu</code> (step 4 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -676,6 +683,7 @@ if (Row &lt; Width &amp;&amp; Col &lt; Width)     // a real P element?
       <li>We checked this kernel by emulating its launch on the CPU (every block, phase and barrier) for Width 3 to 1000 and tiles 2 to 32: the results match a plain triple loop, and the global loads drop by exactly TILE_WIDTH when Width is a multiple of it.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/03_memory_tiling/04_tiled_matmul_boundary.cu</code> (step 4 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -726,6 +734,7 @@ matrixMulKernel&lt;&lt;&lt;grid, block, size&gt;&gt;&gt;(
       <li><code>sharedMemPerBlock</code> tells the host how much a block may use, so the program can adapt to each GPU.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/03_memory_tiling/05_tile_size_occupancy.cu</code> (step 5 of <code>colab_1_step_by_step.ipynb</code>; a template replaces <code>extern __shared__</code>)</p>
 </section>
 
 <section class="slide">

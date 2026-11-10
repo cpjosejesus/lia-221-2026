@@ -4,7 +4,7 @@
   <div class="eyebrow">C++ concurrency · session 17</div>
   <h1>Parallel histogram: atomics and privatization</h1>
   <p class="muted">The first GPU pattern where any thread may write any output element. This session is about making those updates <b>correct</b> with <code>cuda::atomic_ref</code>, understanding why atomics are <b>slow</b> under contention, and making them fast with <b>privatization</b> at the block and thread level and with <b>thread coarsening</b>.</p>
-  <p class="muted" style="font-size:.7em">Based on chapter 9 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/histogram</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 9 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/07_histogram</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
 </section>
 
 <section class="slide">
@@ -33,6 +33,7 @@
       <li>Today: the same story with <b>hundreds of thousands</b> of threads. What changes is the hardware: where atomics execute, how many copies we can afford, and where they live (global, shared, registers).</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/01_histogram_sequential.cu</code> (step 1 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -80,10 +81,11 @@ atomicAdd_block(&amp;bins_s[b], 1u); // block scope</code></pre>
       <li>An atomic operation performs read, modify and write so that no other atomic on the same location can overlap it. The hardware <b>serializes</b> them, in no particular order.</li>
       <li><code>atomic_ref</code> does not own the data: it gives atomic access to an ordinary <code>unsigned int</code> in a plain array. Constructing it costs nothing at run time.</li>
       <li>Two template parameters: the type <code>T</code> (<code>int</code>, <code>unsigned int</code>, <code>float</code> …) and the <b>scope</b> of threads that must see the operation as atomic.</li>
-      <li>The argument of <code>fetch_add</code> has type <code>T</code>: <code>1</code> becomes an <code>unsigned int</code>.</li>
+      <li><code>fetch_add</code> takes a <code>T</code>: <code>1</code> becomes an <code>unsigned int</code>.</li>
       <li>Why not <code>cuda::atomic&lt;T&gt;</code>? It makes <i>every</i> access atomic from creation; the bins are also zeroed and read non-atomically, so the chapter uses <code>atomic_ref</code>.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/02_race_and_atomic.cu</code> (step 2 of <code>colab_1_step_by_step.ipynb</code>) and <code>histogram.cu</code> (<code>colab_2_full_programs.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -115,6 +117,7 @@ histogram_kernel&lt;&lt;&lt;cdiv(width*height, 256), 256&gt;&gt;&gt;(
       <li>Correct, simple, and slow on real images. The rest of the session explains why and fixes it.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/02_race_and_atomic.cu</code> (step 2 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -148,6 +151,7 @@ bins_ref.fetch_add(1, cuda::memory_order_relaxed);  // (2)</code></pre>
       <li>Stronger orders matter when an atomic signals that <i>other</i> data is ready, as in the single-pass scan of a later chapter. Later chapters also use the <b>returned value</b>, e.g. to claim a slot in an output queue.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/02_race_and_atomic.cu</code> (step 2 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -230,6 +234,7 @@ bins_ref.fetch_add(1, cuda::memory_order_relaxed);  // (2)</code></pre>
       <li>The commit is <b>device scope</b>, but at most one thread per block hits each public bin.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/03_private_global.cu</code> (step 3 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -275,6 +280,7 @@ bins_ref.fetch_add(1, cuda::memory_order_relaxed);  // (2)</code></pre>
       <li><b>Thread block clusters</b> (Hopper and later): blocks of a cluster can share one copy in <b>distributed shared memory</b>, wait for each other with a cluster barrier and commit once per cluster: room for more bins.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/04_private_shared.cu</code> (step 4 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -338,6 +344,7 @@ bins_ref.fetch_add(1, cuda::memory_order_relaxed);  // (2)</code></pre>
       <li>Refinement: read 4 pixels (one 32-bit word) per thread per iteration to use the full width of the load path.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/05_coarsening.cu</code> (step 5 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -385,6 +392,7 @@ __global__ void histogram_kernel(unsigned char* image,
       <li>Three levels now: registers → shared (block scope) → global (device scope).</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/07_thread_private_bins.cu</code> (step 7 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -460,6 +468,7 @@ __global__ void histogram_kernel(unsigned char* image,
       <li>The <code>if</code> can diverge, but with no similarity or heavy similarity all threads take the same path, and reduced contention usually pays for it.</li>
     </ul>
   </div>
+  <p class="small muted" style="max-width:none">▶ Run it: <code>ec2/07_histogram/06_most_recent_bin.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -473,7 +482,7 @@ __global__ void histogram_kernel(unsigned char* image,
     <tr><td>init / commit</td><td>—</td><td>host memset / per block</td><td>per block</td><td>per block, amortized</td><td>per thread + per block</td></tr>
     <tr><td>limits</td><td>skewed data</td><td>global latency</td><td>bins must fit in shared</td><td>enough blocks to fill the GPU</td><td>few bins only</td></tr>
   </table>
-  <p class="small muted">The same structure appears whenever you count by category: words, intensities, events per type, orders per restaurant. Run all versions and compare: <code>ec2/histogram/histogram_image.cu</code>.</p>
+  <p class="small muted">The same structure appears whenever you count by category: words, intensities, events per type, orders per restaurant. Run all versions and compare: <code>ec2/07_histogram/histogram_image.cu</code>.</p>
 </section>
 
 <section class="slide">
@@ -519,11 +528,11 @@ __global__ void histogram_kernel(unsigned char* image,
 <section class="slide">
   <h2>Self-study and code</h2>
   <ul class="small">
-    <li><code>ec2/histogram/histogram_image.cu</code>: the kernels of this session written with <code>cuda::atomic_ref</code> on a 256-bin grayscale image: sequential, basic, private in global, private in shared, contiguous and interleaved coarsening, thread-level privatization with 16 bins, and the book's kernel that privatizes the most recent bin, for 256 bins. Every version is checked against the CPU.</li>
+    <li><code>ec2/07_histogram/histogram_image.cu</code>: the kernels of this session written with <code>cuda::atomic_ref</code> on a 256-bin grayscale image: sequential, basic, private in global, private in shared, contiguous and interleaved coarsening, thread-level privatization with 16 bins, and the book's kernel that privatizes the most recent bin, for 256 bins. Every version is checked against the CPU.</li>
     <li><code>race_demo.cu</code>: the lost update, live. Plain <code>++bins[b]</code> against <code>atomic_ref</code> on the same input.</li>
     <li><code>histogram.cu</code>: the text histogram (letters in 7 bins) with <code>atomicAdd</code>, from the basic kernel to coarsening and <b>aggregation</b>, with atomic counts and timings.</li>
     <li><code>bikeshare_trip_durations.cu</code> and <code>bikeshare_station_hour.cu</code>: ideas for your project from another domain, a bike-sharing system: trip durations with percentiles, and rentals per station and hour.</li>
-    <li><code>colab.ipynb</code>: run everything on a Colab GPU. On a laptop without a GPU: <code>g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code>. Kernels are launched with <code>launch(kernel, grid, block, args...)</code> so the same file compiles both ways.</li>
+    <li><code>colab_1_step_by_step.ipynb</code> (the steps) and <code>colab_2_full_programs.ipynb</code> (the complete programs): run everything on a Colab GPU. On a laptop without a GPU: <code>g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code>. Kernels are launched with <code>launch(kernel, grid, block, args...)</code> so the same file compiles both ways.</li>
     <li><b>Exercise</b>: measure the basic kernel on a uniform image and on an all-white one, then add each optimization and explain every change in time.</li>
   </ul>
 </section>

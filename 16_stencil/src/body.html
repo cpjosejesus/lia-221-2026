@@ -4,7 +4,7 @@
   <div class="eyebrow">C++ concurrency · session 16</div>
   <h1>Stencil computation on the GPU</h1>
   <p class="muted">A stencil looks like a convolution with a sparse filter. But stencils come from <b>differential equations</b> on <b>3D grids</b>, and that changes which optimizations pay off. This session: where stencils come from, the basic kernel, why shared-memory tiling buys much less than for convolution, and the two fixes, <b>thread coarsening</b> along z and <b>register tiling</b>.</p>
-  <p class="muted" style="font-size:.7em">Based on chapter 8 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/stencil</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 8 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/06_stencil</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
 </section>
 
 <section class="slide">
@@ -64,6 +64,7 @@
       <li>Example, heat equation: u ← u + s·(sum of the 6 neighbours − 6u), so c0 = 1 − 6s and c1…c6 = s.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/06_stencil/01_finite_difference_1d.cu</code> (step 1 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -90,6 +91,7 @@
     <div class="cap" data-cap></div>
     <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">12 × 12 grid, 2D 5-point stencil, 4 × 4 output tiles</span></div>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/06_stencil/02_stencil_2d.cu</code> (step 2 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -114,6 +116,7 @@ for (int s = 0; s &lt; sweeps; ++s) {
       <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">Jacobi, c0 = 0, c1…c4 = 1/4</span></div>
     </div>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/06_stencil/03_jacobi_sweeps.cu</code> (step 3 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -143,6 +146,7 @@ for (int s = 0; s &lt; sweeps; ++s) {
       <li>Launch: 8 × 8 × 8 blocks, ⌈N/8⌉³ of them.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/06_stencil/04_stencil_3d_basic.cu</code> (step 4 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -200,6 +204,7 @@ __global__ void stencil_tiled_kernel(const float* in, float* out, int N) {
       <li>One barrier between loading and computing.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/06_stencil/05_stencil_3d_tiled.cu</code> (step 5 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -270,7 +275,7 @@ __global__ void stencil_coarse_kernel(const float* in, float* out, int N) {
         ty &gt;= 1 &amp;&amp; ty &lt; IN_TILE_DIM-1 &amp;&amp; tx &gt;= 1 &amp;&amp; tx &lt; IN_TILE_DIM-1)
       out[i*N*N + j*N + k] = c0*inCurr_s[ty][tx]
           + c1*inCurr_s[ty][tx-1] + c2*inCurr_s[ty][tx+1]
-          + c3*inCurr_s[ty+1][tx] + c4*inCurr_s[ty-1][tx]
+          + c3*inCurr_s[ty-1][tx] + c4*inCurr_s[ty+1][tx]
           + c5*inPrev_s[ty][tx]   + c6*inNext_s[ty][tx];
     __syncthreads();                        // nobody still reads inCurr_s
     inPrev_s[ty][tx] = inCurr_s[ty][tx];
@@ -284,6 +289,7 @@ __global__ void stencil_coarse_kernel(const float* in, float* out, int N) {
       <li>Two barriers: the first protects <code>inNext_s</code>, the second stops a fast thread from overwriting <code>inCurr_s</code> while a neighbour still reads it.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/06_stencil/06_stencil_3d_coarse.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -318,7 +324,7 @@ __global__ void stencil_coarse_kernel(const float* in, float* out, int N) {
         ty &gt;= 1 &amp;&amp; ty &lt; IN_TILE_DIM-1 &amp;&amp; tx &gt;= 1 &amp;&amp; tx &lt; IN_TILE_DIM-1)
       out[i*N*N + j*N + k] = c0*inCurr
           + c1*inCurr_s[ty][tx-1] + c2*inCurr_s[ty][tx+1]
-          + c3*inCurr_s[ty+1][tx] + c4*inCurr_s[ty-1][tx]
+          + c3*inCurr_s[ty-1][tx] + c4*inCurr_s[ty+1][tx]
           + c5*inPrev + c6*inNext;
     __syncthreads();
     inPrev = inCurr;
@@ -333,6 +339,7 @@ __global__ void stencil_coarse_kernel(const float* in, float* out, int N) {
       <li>The book's listing ends with <code>= inNext_s;</code>, a typo: there is no such array here, it must be the register <code>inNext</code>.</li>
     </ul>
   </div>
+  <p class="small muted">▶ Run it: <code>ec2/06_stencil/07_stencil_3d_register.cu</code> (step 7 of <code>colab_1_step_by_step.ipynb</code>)</p>
 </section>
 
 <section class="slide">
@@ -356,7 +363,7 @@ __global__ void stencil_coarse_kernel(const float* in, float* out, int N) {
     <tr><td>warp access</td><td>full 32-wide rows</td><td>4 rows of 8 floats</td><td>one row of 32 floats</td><td>one row of 32 floats</td></tr>
     <tr><td>barriers</td><td>none</td><td>1</td><td>2 per plane</td><td>2 per plane</td></tr>
   </table>
-  <p class="small muted">All four are memory-bound: the ideal 1.625 FLOP/B is far below the H100 ridge of 20. In practice L1 and L2 catch part of the basic kernel's repeated loads, so the measured gap is smaller than these counts. Some texts count only the loads: that doubles the ideal to 3.25 and gives the basic kernel 13/28 = 0.46. This deck and <code>ec2/stencil</code> count loads and stores, as the book does.</p>
+  <p class="small muted">All four are memory-bound: the ideal 1.625 FLOP/B is far below the H100 ridge of 20. In practice L1 and L2 catch part of the basic kernel's repeated loads, so the measured gap is smaller than these counts. Some texts count only the loads: that doubles the ideal to 3.25 and gives the basic kernel 13/28 = 0.46. This deck and <code>ec2/06_stencil</code> count loads and stores, as the book does.</p>
 </section>
 
 <section class="slide">
@@ -399,10 +406,10 @@ __global__ void stencil_coarse_kernel(const float* in, float* out, int N) {
 <section class="slide">
   <h2>Self-study and code</h2>
   <ul>
-    <li><b><code>ec2/stencil/stencil.cu</code></b>: the four 3D kernels of this session, each checked against a CPU reference, then several sweeps with swapped buffers.</li>
-    <li><b><code>ec2/stencil/stencil_basics.cu</code></b>: the 1D finite difference of sin(x) and how its error shrinks with h, and a 2D 5-point stencil, basic against tiled.</li>
-    <li><b><code>ec2/stencil/bikeshare_station_coverage.cu</code></b>: an idea for your project in another domain, a coverage field around the stations of a bike-sharing city computed by repeated sweeps, and rental demand diffusing over time.</li>
-    <li><b><code>ec2/stencil/colab.ipynb</code></b>: how to run everything on Google Colab with <code>nvcc</code>. On a laptop, without a GPU: <code style="white-space:nowrap">g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code></li>
+    <li><b><code>ec2/06_stencil/stencil.cu</code></b>: the four 3D kernels of this session, each checked against a CPU reference, then several sweeps with swapped buffers.</li>
+    <li><b><code>ec2/06_stencil/stencil_basics.cu</code></b>: the 1D finite difference of sin(x) and how its error shrinks with h, and a 2D 5-point stencil, basic against tiled.</li>
+    <li><b><code>ec2/06_stencil/bikeshare_station_coverage.cu</code></b>: an idea for your project in another domain, a coverage field around the stations of a bike-sharing city computed by repeated sweeps, and rental demand diffusing over time.</li>
+    <li><b><code>colab_1_step_by_step.ipynb</code></b> (the steps) and <b><code>colab_2_full_programs.ipynb</code></b> (the programs above): run everything on Google Colab with <code>nvcc</code>. On a laptop, without a GPU: <code style="white-space:nowrap">g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code></li>
     <li>Kernels there are launched with <code>launch(kernel, grid, block, args...)</code>, which maps to <code>kernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(args...)</code> on a real GPU.</li>
     <li><b>Exercise</b>: write the order-2 (13-point) versions of the coarsening and register-tiling kernels and measure the shared-memory and register use.</li>
   </ul>
