@@ -17,22 +17,22 @@
     const warps = [];
     for (let i = 0; i < 8; i++) {
       const y = 50 + i * 30;
-      warps.push(R(svg, 30, y, 150, 22, { class: 'chip', rx: 2 })); T(svg, 105, y + 16, `warp ${i}`, { ...mid, 'font-size': 12 });
+      warps.push(R(svg, 30, y, 150, 22, { class: 'chip', rx: 2 })); T(svg, 105, y + 16, `warp ${i}`, { ...mid, 'font-size': 13 });
     }
     const onchip = R(svg, 200, 50, 170, 232, { class: 'mem', rx: 3 });
     T(svg, 285, 150, 'registers +', { ...mid, 'font-size': 13 }); T(svg, 285, 170, 'shared memory', { ...mid, 'font-size': 13 });
-    T(svg, 285, 194, '(on chip)', { ...mid, 'font-size': 12, class: 'lbl' });
+    T(svg, 285, 194, '(on chip)', { ...mid, 'font-size': 13, class: 'lbl' });
     R(svg, 440, 150, 300, 30, { fill: '#F4F4F4', stroke: '#c9c9c9', rx: 3 });
-    T(svg, 590, 140, 'path to global memory: limited bandwidth', { ...mid, 'font-size': 12, class: 'lbl' });
+    T(svg, 590, 140, 'path to global memory: limited bandwidth', { ...mid, 'font-size': 13, class: 'lbl' });
     L(svg, 390, 165, 440, 165, { class: 'wire', 'marker-end': head }); L(svg, 740, 165, 790, 165, { class: 'wire', 'marker-end': head });
     const dram = R(svg, 790, 60, 200, 210, { class: 'mem', rx: 4 });
     T(svg, 890, 150, 'Global memory', { ...mid, 'font-size': 15 }); T(svg, 890, 172, 'off-chip DRAM', { ...mid, 'font-size': 13, class: 'lbl' });
-    T(svg, 890, 194, '3.35 TB/s on H100', { ...mid, 'font-size': 12, class: 'lbl' });
+    T(svg, 890, 194, '3.35 TB/s on H100', { ...mid, 'font-size': 13, class: 'lbl' });
     const lat = T(svg, 590, 222, '', { ...mid, 'font-size': 13, fill: GOLD });
     const toks = [];
     for (let i = 0; i < 12; i++) { const g = svg.appendChild(el('g', { class: 'tok' })); g.appendChild(el('circle', { cx: 0, cy: 0, r: 8, fill: GOLD })); toks.push(g); }
     R(svg, 30, 330, 340, 18, { fill: '#EDEDED', rx: 2 }); const gauge = R(svg, 30, 330, 0, 18, { class: 'bar', rx: 2 });
-    const gtxt = T(svg, 380, 344, '', { 'font-size': 13 }); T(svg, 30, 322, 'compute units busy', { 'font-size': 12, class: 'lbl' });
+    const gtxt = T(svg, 380, 344, '', { 'font-size': 13 }); T(svg, 30, 322, 'compute units busy', { 'font-size': 13, class: 'lbl' });
     const qtxt = T(svg, 590, 300, '', { ...mid, 'font-size': 13 });
     // per step: busy warps, tokens [x, y] (null = hidden), utilisation, queue text
     const lane = (i) => [460 + i * 37, 165];
@@ -85,7 +85,7 @@
       cCells.push(R(svg, X0 + i * W / N, 150, W / N - 3, 34, { fill: '#EDEDED', rx: 2 }));
     }
     const cursor = L(svg, X0, 56, X0, 198, { stroke: '#1A1A1A', 'stroke-width': 1.5, 'stroke-dasharray': '4 3' });
-    T(svg, X0, 216, 'time →', { 'font-size': 12, class: 'lbl' });
+    T(svg, X0, 216, 'time →', { 'font-size': 13, class: 'lbl' });
     const res = T(svg, 20, 252, '', { 'font-size': 14 }), res2 = T(svg, 20, 278, '', { 'font-size': 14 });
     const cap = root.querySelector('[data-cap]');
     const draw = (k) => {
@@ -118,29 +118,29 @@
     const svg = newSvg(root, '0 0 1000 420', 'CUDA device memory model with the memories each role can read or write: host, a thread of block 0, another thread of block 0, a thread of block 1');
     const hB = arrowHead(svg, 'rc-b', BLUE);
     R(svg, 6, 6, 150, 408, { class: 'frame', rx: 4 });
-    const host = R(svg, 20, 318, 122, 76, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, 81, 352, 'Host', { ...mid, 'font-size': 15, 'font-weight': 600 }); T(svg, 81, 372, '(CPU code)', { ...mid, 'font-size': 12, class: 'lbl' });
-    const list = [0, 1, 2, 3, 4, 5, 6].map(i => T(svg, 18, 34 + i * 22, '', { 'font-size': 12 }));
+    const host = R(svg, 20, 318, 122, 76, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, 81, 352, 'Host', { ...mid, 'font-size': 15, 'font-weight': 600 }); T(svg, 81, 372, '(CPU code)', { ...mid, 'font-size': 13, class: 'lbl' });
+    const list = [0, 1, 2, 3, 4, 5, 6].map(i => T(svg, 18, 34 + i * 22, '', { 'font-size': 13 }));
     R(svg, 166, 6, 828, 408, { class: 'frame', rx: 4 }); T(svg, 180, 26, 'Device (grid)', { 'font-size': 13, 'font-weight': 600 });
     const M = {}, who = {}, TX = {};
     [0, 1].forEach(b => {
       const bx = 182 + b * 404;
-      R(svg, bx, 36, 392, 196, { fill: 'none', stroke: '#6f6f6f', 'stroke-width': 1.5, rx: 4 }); T(svg, bx + 12, 54, `Block (${b}, 0)`, { 'font-size': 12 });
+      R(svg, bx, 36, 392, 196, { fill: 'none', stroke: '#6f6f6f', 'stroke-width': 1.5, rx: 4 }); T(svg, bx + 12, 54, `Block (${b}, 0)`, { 'font-size': 13 });
       M[`sh${b}`] = R(svg, bx + 14, 62, 364, 34, { class: 'mem', rx: 3 }); T(svg, bx + 196, 84, 'Shared memory', { ...mid, 'font-size': 13 });
       [0, 1].forEach(t => {
         const tx = bx + 16 + t * 188; TX[`${b}${t}`] = tx;
-        M[`rg${b}${t}`] = R(svg, tx, 116, 112, 30, { class: 'mem', rx: 3 }); T(svg, tx + 56, 136, 'Registers', { ...mid, 'font-size': 12 });
-        who[`t${b}${t}`] = R(svg, tx, 176, 168, 40, { fill: '#C9DBF4', stroke: 'none', rx: 3 }); T(svg, tx + 84, 201, `Thread (${t}, 0)`, { ...mid, 'font-size': 12 });
+        M[`rg${b}${t}`] = R(svg, tx, 116, 112, 30, { class: 'mem', rx: 3 }); T(svg, tx + 56, 136, 'Registers', { ...mid, 'font-size': 13 });
+        who[`t${b}${t}`] = R(svg, tx, 176, 168, 40, { fill: '#C9DBF4', stroke: 'none', rx: 3 }); T(svg, tx + 84, 201, `Thread (${t}, 0)`, { ...mid, 'font-size': 13 });
       });
     });
-    M.gl = R(svg, 182, 262, 796, 58, { class: 'mem', rx: 3 }); T(svg, 580, 288, 'Global memory', { ...mid, 'font-size': 15 }); T(svg, 580, 308, 'large, off chip, slow', { ...mid, 'font-size': 12, class: 'lbl' });
-    M.co = R(svg, 182, 346, 796, 58, { class: 'mem', rx: 3 }); T(svg, 580, 372, 'Constant memory', { ...mid, 'font-size': 15 }); T(svg, 580, 392, '64 KB, cached, read-only for the device', { ...mid, 'font-size': 12, class: 'lbl' });
+    M.gl = R(svg, 182, 262, 796, 58, { class: 'mem', rx: 3 }); T(svg, 580, 288, 'Global memory', { ...mid, 'font-size': 15 }); T(svg, 580, 308, 'large, off chip, slow', { ...mid, 'font-size': 13, class: 'lbl' });
+    M.co = R(svg, 182, 346, 796, 58, { class: 'mem', rx: 3 }); T(svg, 580, 372, 'Constant memory', { ...mid, 'font-size': 15 }); T(svg, 580, 392, '64 KB, cached, read-only for the device', { ...mid, 'font-size': 13, class: 'lbl' });
     const arrows = svg.appendChild(el('g'));
     const arrow = (x1, y1, x2, y2, label, lx, ly, dash) => {
       const l = arrows.appendChild(el('line', { x1, y1, x2, y2, stroke: BLUE, 'stroke-width': 2.5, 'marker-end': hB }));
       if (label === 'R/W') l.setAttribute('marker-start', hB);
       if (dash) l.setAttribute('stroke-dasharray', '6 4');
-      arrows.appendChild(el('rect', { x: lx - 3, y: ly - 12, width: label.length * 8.5 + 6, height: 16, fill: '#fff', rx: 2 }));
-      arrows.appendChild(el('text', { x: lx, y: ly, 'font-size': 12, 'font-weight': 600, fill: BLUE }, label));
+      arrows.appendChild(el('rect', { x: lx - 3, y: ly - 13, width: label.length * 9 + 6, height: 17, fill: '#fff', rx: 2 }));
+      arrows.appendChild(el('text', { x: lx, y: ly, 'font-size': 13, 'font-weight': 600, fill: BLUE }, label));
     };
     const threadArrows = (b, t) => {
       const tx = TX[`${b}${t}`];
@@ -192,15 +192,15 @@
       const y = 16 + i * (H + 10), wTop = i === 0 ? 120 : levels[i - 1].w, wB = lv.w;
       const p = svg.appendChild(el('polygon', { points: `${cx - wTop / 2},${y} ${cx + wTop / 2},${y} ${cx + wB / 2},${y + H} ${cx - wB / 2},${y + H}`, class: 'mem' }));
       rects.push(p); txt.push(T(svg, cx, y + 30, lv.name, { ...mid, 'font-size': 15, 'font-weight': 600 }));
-      T(svg, cx, y + 52, lv.size, { ...mid, 'font-size': 12, class: 'lbl' });
+      T(svg, cx, y + 52, lv.size, { ...mid, 'font-size': 13, class: 'lbl' });
     });
     const side = [
-      { name: 'Constant memory', note: '64 KB, in DRAM, cached; read-only for kernels', y: 186 },
-      { name: 'Local memory', note: 'per thread, lives in DRAM (arrays, spills)', y: 266 }
-    ].map(s => { const r = R(svg, 790, s.y, 200, 62, { class: 'mem', rx: 3, 'stroke-dasharray': '4 3' }); T(svg, 890, s.y + 26, s.name, { ...mid, 'font-size': 13, 'font-weight': 600 }); T(svg, 890, s.y + 46, s.note.split(';')[0], { ...mid, 'font-size': 10, class: 'lbl' }); return r; });
+      { name: 'Constant memory', note: ['64 KB, in DRAM, cached'], y: 182 },
+      { name: 'Local memory', note: ['per thread, lives in DRAM', '(arrays, spills)'], y: 258 }
+    ].map(s => { const r = R(svg, 790, s.y, 200, 30 + 18 * s.note.length, { class: 'mem', rx: 3, 'stroke-dasharray': '4 3' }); T(svg, 890, s.y + 22, s.name, { ...mid, 'font-size': 13, 'font-weight': 600 }); s.note.forEach((ln, i) => T(svg, 890, s.y + 41 + i * 17, ln, { ...mid, 'font-size': 13, class: 'lbl' })); return r; });
     const up = arrowHead(svg, 'py-u', GRAY);
-    L(svg, 40, 340, 40, 30, { stroke: GRAY, 'stroke-width': 2, 'marker-end': up }); T(svg, 52, 40, 'faster, smaller', { 'font-size': 12, class: 'lbl' });
-    T(svg, 52, 336, 'larger, slower', { 'font-size': 12, class: 'lbl' });
+    L(svg, 40, 340, 40, 30, { stroke: GRAY, 'stroke-width': 2, 'marker-end': up }); T(svg, 52, 40, 'faster, smaller', { 'font-size': 13, class: 'lbl' });
+    T(svg, 52, 336, 'larger, slower', { 'font-size': 13, class: 'lbl' });
     const info = T(svg, cx, 386, '', { ...mid, 'font-size': 13 });
     const caps = [
       'The memories form a <b>hierarchy</b>: the closer to the cores, the faster and the smaller. H100 (SXM) figures; latencies are rough orders of magnitude.',
@@ -224,18 +224,18 @@
     const svg = newSvg(root, '0 0 1000 420', 'Von Neumann model: memory and I/O outside the processor; inside, a processing unit with ALU and register file and a control unit with PC and IR');
     const hG = arrowHead(svg, 'fe-g', '#bdbdbd'), hO = arrowHead(svg, 'fe-o', GOLD);
     const mem = R(svg, 250, 10, 420, 64, { class: 'mem', rx: 3 }); T(svg, 460, 36, 'Memory', { ...mid, 'font-size': 16, 'font-weight': 600 });
-    const memT = T(svg, 460, 60, '', { ...mid, 'font-size': 12 });
+    const memT = T(svg, 460, 60, '', { ...mid, 'font-size': 13 });
     R(svg, 740, 10, 140, 64, { class: 'mem', rx: 3 }); T(svg, 810, 48, 'I/O', { ...mid, 'font-size': 16 });
     L(svg, 670, 32, 740, 32, { class: 'wire', 'marker-end': hG }); L(svg, 740, 52, 670, 52, { class: 'wire', 'marker-end': hG });
     R(svg, 140, 104, 760, 306, { class: 'frame', rx: 5 }); T(svg, 520, 400, 'Processor', { ...mid, 'font-size': 15, 'font-weight': 600 });
     const pu = R(svg, 320, 124, 360, 120, { fill: 'none', stroke: '#6f6f6f', rx: 3 }); T(svg, 500, 144, 'Processing unit', { ...mid, 'font-size': 14 });
     const alu = svg.appendChild(el('polygon', { points: '340,160 470,160 450,232 360,232', class: 'mem' }));
-    T(svg, 405, 196, 'ALU', { ...mid, 'font-size': 15 }); const aluT = T(svg, 405, 218, '', { ...mid, 'font-size': 12, 'font-weight': 600 });
+    T(svg, 405, 196, 'ALU', { ...mid, 'font-size': 15 }); const aluT = T(svg, 405, 218, '', { ...mid, 'font-size': 13, 'font-weight': 600 });
     const rf = R(svg, 500, 156, 164, 80, { class: 'sp', rx: 3 }); T(svg, 582, 174, 'Register file', { ...mid, 'font-size': 13 });
-    const regT = [0, 1, 2].map(i => T(svg, 582, 194 + i * 15, '', { ...mid, 'font-size': 12 }));
+    const regT = [0, 1, 2].map(i => T(svg, 582, 193 + i * 16, '', { ...mid, 'font-size': 13 }));
     const cu = R(svg, 200, 280, 640, 92, { fill: 'none', stroke: '#6f6f6f', rx: 3 }); T(svg, 520, 300, 'Control unit', { ...mid, 'font-size': 14 });
     const pc = R(svg, 230, 316, 200, 40, { class: 'mem', rx: 3 }); const pcT = T(svg, 330, 341, '', { ...mid, 'font-size': 13 });
-    const ir = R(svg, 590, 316, 220, 40, { class: 'mem', rx: 3 }); const irT = T(svg, 700, 341, '', { ...mid, 'font-size': 12 });
+    const ir = R(svg, 590, 316, 220, 40, { class: 'mem', rx: 3 }); const irT = T(svg, 700, 341, '', { ...mid, 'font-size': 13 });
     const wPC = L(svg, 290, 316, 290, 74, { class: 'wire', 'marker-end': hG });
     const wIR = L(svg, 720, 74, 720, 316, { class: 'wire', 'marker-end': hG });
     const wData = L(svg, 600, 74, 600, 156, { class: 'wire', 'marker-end': hG });
@@ -295,7 +295,7 @@
       });
     });
     const note = T(svg, 30, 222, '', { 'font-size': 14 }), note2 = T(svg, 30, 250, '', { 'font-size': 14 });
-    T(svg, 30, 290, 'Latency values are typical orders of magnitude, not exact figures; energy ratio from the book (“at least an order of magnitude”).', { 'font-size': 11, class: 'lbl' });
+    T(svg, 30, 290, 'Latency values are typical orders of magnitude, not exact figures; energy ratio from the book (“at least an order of magnitude”).', { 'font-size': 13, class: 'lbl' });
     const out = root.querySelector('[data-out]'), inp = root.querySelector('[data-in=r]');
     const occ = () => {
       const r = Math.max(1, Math.min(255, +inp.value | 0));
@@ -328,16 +328,16 @@
       const x = 30 + i * 240;
       R(svg, x, 50, 220, 170, { fill: '#fff', stroke: '#6f6f6f', rx: 4 }); T(svg, x + 110, 72, `SM ${i} · block ${i}`, { ...mid, 'font-size': 13 });
       const sh = R(svg, x + 20, 90, 180, 60, { class: 'mem', rx: 3 }); T(svg, x + 110, 116, 'shared memory', { ...mid, 'font-size': 13 });
-      const v = T(svg, x + 110, 138, '', { ...mid, 'font-size': 12, 'font-weight': 600 });
-      R(svg, x + 20, 166, 180, 38, { fill: '#C9DBF4', rx: 3 }); T(svg, x + 110, 190, 'threads', { ...mid, 'font-size': 12 });
+      const v = T(svg, x + 110, 138, '', { ...mid, 'font-size': 13, 'font-weight': 600 });
+      R(svg, x + 20, 166, 180, 38, { fill: '#C9DBF4', rx: 3 }); T(svg, x + 110, 190, 'threads', { ...mid, 'font-size': 13 });
       return { x, sh, v };
     });
     const gm = R(svg, 30, 300, 940, 60, { class: 'mem', rx: 3 }); T(svg, 500, 336, 'Global memory (off chip)', { ...mid, 'font-size': 15 });
-    const gv = T(svg, 860, 336, '', { ...mid, 'font-size': 12, 'font-weight': 600 });
+    const gv = T(svg, 860, 336, '', { ...mid, 'font-size': 13, 'font-weight': 600 });
     const down = L(svg, 590, 150, 590, 300, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
     const up = L(svg, 140, 300, 140, 150, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
     const direct = svg.appendChild(el('path', { d: 'M 530 96 C 430 40, 240 40, 200 96', fill: 'none', stroke: BLUE, 'stroke-width': 3.5, 'marker-end': hB }));
-    const dlab = T(svg, 365, 36, 'SM-to-SM network', { ...mid, 'font-size': 12, fill: BLUE });
+    const dlab = T(svg, 365, 36, 'SM-to-SM network', { ...mid, 'font-size': 13, fill: BLUE });
     const caps = [
       'Block 2 has produced partial results in <b>its</b> shared memory. Block 0 needs them. Shared memory normally has block scope, so block 0 cannot see it.',
       'Classic route: block 2 writes the data to <b>global memory</b>, a trip off chip …',
@@ -366,15 +366,15 @@
     ];
     rows.forEach(r => { T(svg, 10, r.y + 22, r.name, { 'font-size': 13 }); R(svg, X0, r.y, X1 - X0, 32, { fill: '#F7F7F7', rx: 2 }); });
     const k1 = [0.22, 0.44], k2 = [0.62, 0.84];
-    const kb = [k1, k2].map((k, i) => { const b = R(svg, tx(k[0]), 240, tx(k[1]) - tx(k[0]), 32, { class: 'chip', rx: 2 }); T(svg, (tx(k[0]) + tx(k[1])) / 2, 261, `kernel ${i + 1}`, { ...mid, 'font-size': 12 }); return b; });
-    const cBar = R(svg, X0, 40, 0, 32, { class: 'bar', rx: 2 }), cT = T(svg, X0 + 8, 61, '', { 'font-size': 12, fill: '#fff' });
-    const gBar = R(svg, X0, 90, 0, 32, { class: 'bar', rx: 2 }), gT = T(svg, X0 + 8, 111, '', { 'font-size': 12, fill: '#fff' });
+    const kb = [k1, k2].map((k, i) => { const b = R(svg, tx(k[0]), 240, tx(k[1]) - tx(k[0]), 32, { class: 'chip', rx: 2 }); T(svg, (tx(k[0]) + tx(k[1])) / 2, 261, `kernel ${i + 1}`, { ...mid, 'font-size': 13 }); return b; });
+    const cBar = R(svg, X0, 40, 0, 32, { class: 'bar', rx: 2 }), cT = T(svg, X0 + 8, 61, '', { 'font-size': 13, fill: '#fff' });
+    const gBar = R(svg, X0, 90, 0, 32, { class: 'bar', rx: 2 }), gT = T(svg, X0 + 8, 111, '', { 'font-size': 13, fill: '#fff' });
     const sB = [k1, k2].map(k => R(svg, tx(k[0]), 140, 0, 32, { class: 'bar2', rx: 2 }));
-    const sT = [k1, k2].map(k => T(svg, tx(k[0]) + 6, 161, '', { 'font-size': 12, fill: '#fff' }));
+    const sT = [k1, k2].map(k => T(svg, tx(k[0]) + 6, 161, '', { 'font-size': 13, fill: '#fff' }));
     const rB = [k1, k2].map(k => R(svg, tx(k[0]), 190, 0, 32, { class: 'bar2', rx: 2 }));
-    const rT = [k1, k2].map(k => T(svg, tx(k[0]) + 6, 211, '', { 'font-size': 12, fill: '#fff' }));
+    const rT = [k1, k2].map(k => T(svg, tx(k[0]) + 6, 211, '', { 'font-size': 13, fill: '#fff' }));
     const cur = L(svg, X0, 28, X0, 284, { stroke: '#1A1A1A', 'stroke-width': 1.5, 'stroke-dasharray': '4 3' });
-    const ct = T(svg, X0, 304, '', { ...mid, 'font-size': 12 });
+    const ct = T(svg, X0, 304, '', { ...mid, 'font-size': 13 });
     const tl = [0.06, 0.14, 0.38, 0.5, 0.8, 0.92, 1];
     const S = [
       { t: 'program starts', c: '', g: 'count = 0' },
@@ -421,10 +421,10 @@
     R(svg, 470, 10, 520, 170, { class: 'frame', rx: 5 }); T(svg, 486, 32, 'one thread, inside the SM', { 'font-size': 13, class: 'lbl' });
     const regs = [0, 1, 2, 3].map(i => { const r = R(svg, 490 + i * 122, 50, 110, 46, { class: 'sp', rx: 3 }); return { r, t: T(svg, 545 + i * 122, 79, '', { ...mid, 'font-size': 13 }) }; });
     T(svg, 730, 122, 'registers', { ...mid, 'font-size': 13, class: 'lbl' });
-    const l1 = R(svg, 490, 132, 480, 34, { class: 'mem', rx: 3 }); T(svg, 730, 154, 'L1 cache', { ...mid, 'font-size': 12 });
+    const l1 = R(svg, 490, 132, 480, 34, { class: 'mem', rx: 3 }); T(svg, 730, 154, 'L1 cache', { ...mid, 'font-size': 13 });
     const dram = R(svg, 470, 230, 520, 90, { class: 'mem', rx: 4 }); T(svg, 730, 252, 'DRAM (global memory)', { ...mid, 'font-size': 14 });
     const loc = R(svg, 500, 264, 460, 40, { fill: '#fff', stroke: '#bdbdbd', 'stroke-dasharray': '4 3', rx: 3 });
-    const locT = T(svg, 730, 290, 'local memory of this thread', { ...mid, 'font-size': 12 });
+    const locT = T(svg, 730, 290, 'local memory of this thread', { ...mid, 'font-size': 13 });
     const path = L(svg, 730, 230, 730, 168, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
     const verdict = T(svg, 26, 300, '', { 'font-size': 15, 'font-weight': 600 });
     const P = {
@@ -459,22 +459,22 @@
     let mode = 'same';
     const svg = newSvg(root, '0 0 1000 360', 'Host writes constant memory; a warp reads it through the constant cache, in one broadcast when all threads read the same address');
     const hG = arrowHead(svg, 'cm-g', GOLD), hB = arrowHead(svg, 'cm-b', BLUE);
-    const host = R(svg, 10, 270, 150, 70, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, 85, 300, 'Host', { ...mid, 'font-size': 14, 'font-weight': 600 }); T(svg, 85, 320, 'cudaMemcpyToSymbol', { ...mid, 'font-size': 10 });
-    const cm = R(svg, 200, 270, 400, 70, { class: 'mem', rx: 3 }); T(svg, 400, 298, 'constant memory (DRAM)', { ...mid, 'font-size': 14 }); T(svg, 400, 320, 'coeff[0..63] · at most 64 KB in total', { ...mid, 'font-size': 12, class: 'lbl' });
+    const host = R(svg, 10, 270, 150, 70, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, 85, 300, 'Host', { ...mid, 'font-size': 14, 'font-weight': 600 }); T(svg, 85, 320, 'cudaMemcpyToSymbol', { ...mid, 'font-size': 13 });
+    const cm = R(svg, 200, 270, 400, 70, { class: 'mem', rx: 3 }); T(svg, 400, 298, 'constant memory (DRAM)', { ...mid, 'font-size': 14 }); T(svg, 400, 320, 'coeff[0..63] · at most 64 KB in total', { ...mid, 'font-size': 13, class: 'lbl' });
     const wH = L(svg, 160, 305, 200, 305, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
     R(svg, 200, 20, 790, 210, { class: 'frame', rx: 5 }); T(svg, 216, 42, 'SM', { 'font-size': 13, class: 'lbl' });
     const cc = R(svg, 220, 140, 260, 60, { class: 'mem', rx: 3 }); T(svg, 350, 166, 'constant cache', { ...mid, 'font-size': 13 });
-    const ccT = T(svg, 350, 188, '', { ...mid, 'font-size': 12 });
+    const ccT = T(svg, 350, 188, '', { ...mid, 'font-size': 13 });
     const wD = L(svg, 350, 270, 350, 200, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
     const lanes = [];
     for (let i = 0; i < 16; i++) {
       const x = 540 + (i % 8) * 54, y = 60 + Math.floor(i / 8) * 80;
-      const r = R(svg, x, y, 46, 40, { fill: '#C9DBF4', rx: 3 }); const t = T(svg, x + 23, y + 25, `t${i * 2}`, { ...mid, 'font-size': 11 });
+      const r = R(svg, x, y, 46, 40, { fill: '#C9DBF4', rx: 3 }); const t = T(svg, x + 23, y + 25, `t${i * 2}`, { ...mid, 'font-size': 13 });
       lanes.push({ r, t, x: x + 23, y: y + 40 });
     }
-    T(svg, 756, 216, 'one warp (16 of its 32 threads drawn)', { ...mid, 'font-size': 11, class: 'lbl' });
+    T(svg, 756, 216, 'one warp (16 of its 32 threads drawn)', { ...mid, 'font-size': 13, class: 'lbl' });
     const fan = svg.appendChild(el('g'));
-    const cnt = T(svg, 640, 300, '', { 'font-size': 14 }), cnt2 = T(svg, 640, 326, '', { 'font-size': 14 });
+    const cnt = T(svg, 620, 288, '', { 'font-size': 14 }), cntB = T(svg, 620, 310, '', { 'font-size': 14, fill: RED }), cnt2 = T(svg, 620, 334, '', { 'font-size': 14 });
     const caps = {
       same: ['Before the launch, the <b>host</b> writes the coefficients into constant memory. Kernels can only read it; its scope is every thread of every grid.',
         'The warp executes <code>x * coeff[0]</code>. The first access misses, and the value is brought from DRAM into the SM\'s <b>constant cache</b>.',
@@ -494,13 +494,14 @@
       if (k >= 2) {
         fan.appendChild(el('line', { x1: 480, y1: 170, x2: 528, y2: 120, stroke: BLUE, 'stroke-width': 3 }));
         fan.appendChild(el('rect', { x: 528, y: 114, width: mode === 'same' ? 440 : 60, height: 12, fill: BLUE, rx: 3 }));
-        fan.appendChild(el('text', { x: 748, y: 111, 'text-anchor': 'middle', 'font-size': 11, fill: BLUE }, mode === 'same' ? 'one value, broadcast to every lane' : 'one address per access: t0 now, t2 next, …'));
+        fan.appendChild(el('text', { x: 748, y: 110, 'text-anchor': 'middle', 'font-size': 13, fill: BLUE }, mode === 'same' ? 'one value, broadcast to every lane' : 'one address per access: t0 now, t2 next, …'));
       }
       lanes.forEach((l, i) => {
         const lit = i < nLit; l.r.setAttribute('fill', lit ? BLUE : '#C9DBF4'); l.t.setAttribute('fill', lit ? '#fff' : '#1A1A1A');
         if (lit) fan.appendChild(el('line', { x1: l.x, y1: i < 8 ? 114 : 126, x2: l.x, y2: i < 8 ? 100 : 140, stroke: BLUE, 'stroke-width': 2 }));
       });
-      cnt.textContent = k >= 2 ? (mode === 'same' ? 'cache accesses for the warp: 1' : 'cache accesses for the warp: 32 (one after another)') : '';
+      cnt.textContent = k >= 2 ? (mode === 'same' ? 'cache accesses for the warp: 1' : 'cache accesses for the warp: 32') : '';
+      cntB.textContent = k >= 2 && mode !== 'same' ? '(one after another)' : '';
       cnt.setAttribute('fill', mode === 'same' ? GREEN : RED);
       cnt2.textContent = k === 3 ? (mode === 'same' ? 'next warps: cache hits' : 'same address for all → 1 access') : '';
       cap.innerHTML = caps[mode][k];
@@ -523,7 +524,7 @@
       sh: box(420, 220, 150, 50, 'Shared memory', 'chip'),
       co: box(560, 310, 190, 50, 'Constant memory', 'chip'), gl: box(790, 310, 190, 50, 'Global memory', 'chip')
     };
-    const E = {}, mk = (id, x1, y1, x2, y2, lab, lx, ly) => { E[id] = L(svg, x1, y1, x2, y2, { class: 'wire', 'marker-end': hG }); T(svg, lx, ly, lab, { 'font-size': 12, class: 'lbl' }); };
+    const E = {}, mk = (id, x1, y1, x2, y2, lab, lx, ly) => { E[id] = L(svg, x1, y1, x2, y2, { class: 'wire', 'marker-end': hG }); T(svg, lx, ly, lab, { 'font-size': 13, class: 'lbl' }); };
     mk('1y', 420, 62, 260, 110, 'yes', 318, 80); mk('1n', 580, 62, 740, 110, 'no', 668, 80);
     mk('2y', 160, 162, 105, 220, 'yes', 108, 196); mk('2n', 260, 162, 295, 220, 'no', 288, 196);
     mk('3y', 650, 162, 520, 220, 'yes', 570, 196); mk('3n', 800, 162, 800, 210, 'no', 808, 192);
@@ -555,7 +556,7 @@
     const svg = newSvg(root, '0 0 1000 330', 'A CPU thread reusing its data from a cache, many GPU warps evicting each other from a shared cache, and GPU blocks keeping their tiles in shared memory');
     const title = T(svg, 20, 30, '', { 'font-size': 15, 'font-weight': 600 });
     const thr = [], lines = [];
-    for (let i = 0; i < 8; i++) { const r = R(svg, 20, 50 + i * 32, 140, 26, { class: 'chip', rx: 2 }); const t = T(svg, 90, 68 + i * 32, '', { ...mid, 'font-size': 12 }); thr.push({ r, t }); }
+    for (let i = 0; i < 8; i++) { const r = R(svg, 20, 50 + i * 32, 140, 26, { class: 'chip', rx: 2 }); const t = T(svg, 90, 68 + i * 32, '', { ...mid, 'font-size': 13 }); thr.push({ r, t }); }
     const cbox = R(svg, 260, 46, 420, 266, { class: 'frame', rx: 4 }); const ctitle = T(svg, 470, 70, '', { ...mid, 'font-size': 13 });
     for (let i = 0; i < 8; i++) { const r = R(svg, 280 + (i % 4) * 98, 90 + Math.floor(i / 4) * 100, 88, 80, { class: 'mem', rx: 3 }); const t = T(svg, 324 + (i % 4) * 98, 136 + Math.floor(i / 4) * 100, '', { ...mid, 'font-size': 13 }); lines.push({ r, t }); }
     const stat = T(svg, 720, 120, '', { 'font-size': 14 }), stat2 = T(svg, 720, 150, '', { 'font-size': 14 }), stat3 = T(svg, 720, 180, '', { 'font-size': 13 });
@@ -610,7 +611,7 @@
       const ph = Math.floor(k / TW), x = 20 + k * 118 + ph * 10;
       strip.push({ r: R(svg, x, 210, 108, 46, { class: 'chip', rx: 2 }), t: T(svg, x + 54, 239, `k = ${k % TW}`, { ...mid, 'font-size': 13 }) });
     }
-    const loads = [0, 1].map(ph => { const x = 20 + ph * (TW * 118 + 10); return { r: R(svg, x, 180, TW * 118 - 10, 22, { class: 'mem', rx: 2 }), t: T(svg, x + (TW * 118 - 10) / 2, 196, 'load tile of M and N into shared · __syncthreads()', { ...mid, 'font-size': 11 }) }; });
+    const loads = [0, 1].map(ph => { const x = 20 + ph * (TW * 118 + 10); return { r: R(svg, x, 180, TW * 118 - 10, 22, { class: 'mem', rx: 2 }), t: T(svg, x + (TW * 118 - 10) / 2, 196, 'load tile of M and N into shared · __syncthreads()', { ...mid, 'font-size': 13 }) }; });
     const counter = T(svg, 20, 300, '', { 'font-size': 14 }), counter2 = T(svg, 20, 326, '', { 'font-size': 14 });
     // steps: 0..7 original, 8 strip intro, 9..: phase 0 load, k0..3, phase1 load, k0..3
     const seq = [];

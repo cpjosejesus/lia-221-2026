@@ -17,28 +17,28 @@
     let k = 0;
     function draw() {
       const svg = newSvg(root, `0 0 ${W} ${H}`, 'Roofline: attainable throughput against arithmetic intensity, with the memory-bandwidth slope and the compute roof');
-      for (let e = lx0; e <= lx1; e++) { L(svg, X(10 ** e), y0, X(10 ** e), y1, { stroke: '#EEEEEE' }); T(svg, X(10 ** e), y1 + 20, String(10 ** e), { ...mid, 'font-size': 14, class: 'lbl' }); }
-      for (let e = ly0; e <= ly1; e++) { L(svg, x0, Y(10 ** e), x1, Y(10 ** e), { stroke: '#EEEEEE' }); T(svg, x0 - 8, Y(10 ** e) + 5, String(10 ** e), { 'text-anchor': 'end', 'font-size': 14, class: 'lbl' }); }
-      T(svg, (x0 + x1) / 2, H - 6, 'arithmetic intensity (FLOP per byte, log scale)', { ...mid, 'font-size': 14, class: 'lbl' });
-      T(svg, 16, (y0 + y1) / 2, 'TFLOPS (log scale)', { ...mid, 'font-size': 14, class: 'lbl', transform: `rotate(-90 16 ${(y0 + y1) / 2})` });
+      for (let e = lx0; e <= lx1; e++) { L(svg, X(10 ** e), y0, X(10 ** e), y1, { stroke: '#EEEEEE' }); T(svg, X(10 ** e), y1 + 26, String(10 ** e), { ...mid, 'font-size': 16, class: 'lbl' }); }
+      for (let e = ly0; e <= ly1; e++) { L(svg, x0, Y(10 ** e), x1, Y(10 ** e), { stroke: '#EEEEEE' }); T(svg, x0 - 8, Y(10 ** e) + 5, String(10 ** e), { 'text-anchor': 'end', 'font-size': 16, class: 'lbl' }); }
+      T(svg, (x0 + x1) / 2, H - 6, 'arithmetic intensity (FLOP per byte, log scale)', { ...mid, 'font-size': 16, class: 'lbl' });
+      T(svg, 16, (y0 + y1) / 2, 'TFLOPS (log scale)', { ...mid, 'font-size': 16, class: 'lbl', transform: `rotate(-90 16 ${(y0 + y1) / 2})` });
       L(svg, x0, y0, x0, y1, { stroke: '#1A1A1A' }); L(svg, x0, y1, x1, y1, { stroke: '#1A1A1A' });
       const ridge = peak / bw, xs = Math.max(10 ** lx0, 10 ** ly0 / bw);
       svg.appendChild(el('polygon', { points: `${X(xs)},${y1} ${X(xs)},${Y(bw * xs)} ${X(ridge)},${Y(peak)} ${X(ridge)},${y1}`, fill: '#FBEDED' }));
       svg.appendChild(el('polygon', { points: `${X(ridge)},${y1} ${X(ridge)},${Y(peak)} ${X(10 ** lx1)},${Y(peak)} ${X(10 ** lx1)},${y1}`, fill: '#EAF4EC' }));
       svg.appendChild(el('polyline', { points: `${X(xs)},${Y(bw * xs)} ${X(ridge)},${Y(peak)} ${X(10 ** lx1)},${Y(peak)}`, fill: 'none', stroke: '#1A1A1A', 'stroke-width': 3.5 }));
       L(svg, X(ridge), Y(peak), X(ridge), y1, { stroke: '#6f6f6f', 'stroke-dasharray': '5 4' });
-      T(svg, X(ridge) - 8, (Y(peak) + y1) / 2, `ridge ${ridge.toFixed(1)} FLOP/B`, { 'text-anchor': 'end', 'font-size': 14 });
-      T(svg, X(10 ** lx1) - 6, Y(peak) - 10, `roof: ${fmtT(peak)}`, { 'text-anchor': 'end', 'font-size': 14 });
-      T(svg, x0 + 10, y0 + 22, `slope = ${bw >= 1 ? bw + ' TB/s' : bw * 1000 + ' GB/s'} × intensity`, { 'font-size': 14 });
-      T(svg, x0 + 10, y1 - 10, 'memory-bound', { 'font-size': 14, fill: '#B03A3A' });
-      T(svg, X(10 ** lx1) - 6, y1 - 10, 'compute-bound', { 'text-anchor': 'end', 'font-size': 14, fill: '#2E7D4F' });
+      T(svg, X(ridge) + 8, (Y(peak) + y1) / 2, `ridge ${ridge.toFixed(1)} FLOP/B`, { 'font-size': 16 });
+      T(svg, X(10 ** lx1) - 6, Y(peak) - 10, `roof: ${fmtT(peak)}`, { 'text-anchor': 'end', 'font-size': 16 });
+      T(svg, x0 + 10, y0 + 22, `slope = ${bw >= 1 ? bw + ' TB/s' : bw * 1000 + ' GB/s'} × intensity`, { 'font-size': 16 });
+      T(svg, x0 + 10, y1 - 10, 'memory-bound', { 'font-size': 16, fill: '#B03A3A' });
+      T(svg, X(10 ** lx1) - 6, y1 - 10, 'compute-bound', { 'text-anchor': 'end', 'font-size': 16, fill: '#2E7D4F' });
       const flop = Math.max(0, +qf.value || 0), bytes = Math.max(1, +qb.value || 1), uI = flop / bytes;
       const list = pts.slice(0, Math.min(k, pts.length)).concat(k > pts.length && uI > 0 ? [{ n: 'your kernel', I: uI, c: '#1A1A1A' }] : []);
       list.forEach((p, j) => {
         if (p.I < 10 ** lx0 || p.I > 10 ** lx1) return;
         const att = Math.min(peak, bw * p.I), cx = X(p.I), cy = Y(att), last = j === list.length - 1;
-        svg.appendChild(el('circle', { cx, cy, r: last ? 13 : 11, fill: p.c, stroke: last ? '#1A1A1A' : '#fff', 'stroke-width': last ? 2.5 : 2 }));
-        T(svg, cx, cy + 5, p.n === 'your kernel' ? 'Y' : String(j + 1), { ...mid, 'font-size': 13, fill: '#fff', 'font-weight': 700 });
+        svg.appendChild(el('circle', { cx, cy, r: last ? 15 : 13, fill: p.c, stroke: last ? '#1A1A1A' : '#fff', 'stroke-width': last ? 2.5 : 2 }));
+        T(svg, cx, cy + 6, p.n === 'your kernel' ? 'Y' : String(j + 1), { ...mid, 'font-size': 16, fill: '#fff', 'font-weight': 700 });
       });
       legend.innerHTML = '<table><tr><th>#</th><th>kernel</th><th>FLOP/B</th><th>at most</th></tr>' +
         list.map((p, j) => { const a = Math.min(peak, bw * p.I); return `<tr${j === list.length - 1 ? ' style="font-weight:600"' : ''}><td style="color:${p.c}">${p.n === 'your kernel' ? 'Y' : j + 1}</td><td>${p.n}</td><td>${fmtI(p.I)}</td><td>${fmtT(a)} · ${p.I < ridge ? 'memory' : 'compute'}</td></tr>`; }).join('') + '</table>';
@@ -102,7 +102,7 @@
       }
     }
     const gl = add('gl', R(svg, 196, 280, 776, 50, { class: 'mem', rx: 3 })); T(svg, 584, 310, 'Global memory (DRAM)', { ...mid, 'font-size': 15 });
-    const loc = add('lo', R(svg, 830, 286, 132, 38, { fill: '#fff', stroke: '#bdbdbd', 'stroke-dasharray': '4 3', rx: 3 })); T(svg, 896, 310, 'local memory', { ...mid, 'font-size': 12 });
+    const loc = add('lo', R(svg, 830, 286, 132, 38, { fill: '#fff', stroke: '#bdbdbd', 'stroke-dasharray': '4 3', rx: 3 })); T(svg, 896, 310, 'local memory', { ...mid, 'font-size': 13 });
     add('co', R(svg, 196, 350, 776, 50, { class: 'mem', rx: 3 })); T(svg, 584, 380, 'Constant memory (cached, 64 KB)', { ...mid, 'font-size': 15 });
     threadPos.forEach(tx => { add('gl', L(svg, tx + 110, 218, tx + 110, 280, { class: 'wire' })); add('co', L(svg, tx + 130, 218, tx + 130, 350, { class: 'wire', 'stroke-dasharray': '5 3' })); });
     add('host', L(svg, 138, 230, 196, 305, { class: 'wire' })); add('host', L(svg, 138, 240, 196, 375, { class: 'wire' }));
@@ -171,13 +171,13 @@
   ANIM.shared = (root) => {
     const svg = newSvg(root, '0 0 1000 342', 'Four processing units with private register files and one shared memory used by all threads of the block');
     R(svg, 6, 6, 988, 330, { class: 'frame', rx: 5 }); T(svg, 20, 30, 'One processing block of an SM', { 'font-size': 14, class: 'lbl' });
-    const shm = R(svg, 30, 60, 180, 220, { class: 'mem', rx: 3 }); T(svg, 120, 88, 'Shared memory', { ...mid, 'font-size': 14 }); T(svg, 120, 108, '(per block)', { ...mid, 'font-size': 12, class: 'lbl' });
+    const shm = R(svg, 30, 60, 180, 220, { class: 'mem', rx: 3 }); T(svg, 120, 88, 'Shared memory', { ...mid, 'font-size': 14 }); T(svg, 120, 108, '(per block)', { ...mid, 'font-size': 13, class: 'lbl' });
     const sv = T(svg, 120, 170, '', { ...mid, 'font-size': 18, 'font-weight': 600 });
     const units = [0, 1, 2, 3].map(i => {
       const x = 260 + i * 180;
       R(svg, x, 60, 160, 220, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, x + 80, 84, `thread ${i}`, { ...mid, 'font-size': 14 });
       R(svg, x + 16, 100, 128, 40, { fill: '#F2F2F2', stroke: '#9a9a9a', rx: 2 }); T(svg, x + 80, 125, 'ALU', { ...mid, 'font-size': 13 });
-      const rf = R(svg, x + 16, 156, 128, 104, { class: 'sp', rx: 3 }); T(svg, x + 80, 176, 'registers', { ...mid, 'font-size': 12 });
+      const rf = R(svg, x + 16, 156, 128, 104, { class: 'sp', rx: 3 }); T(svg, x + 80, 176, 'registers', { ...mid, 'font-size': 13 });
       const v = T(svg, x + 80, 218, 'r1 = ?', { ...mid, 'font-size': 15 });
       const w = svg.appendChild(el('polyline', { points: `120,280 120,${300 + i * 6} ${x + 80},${300 + i * 6} ${x + 80},280`, class: 'wire' }));
       return { rf, v, w };
@@ -219,11 +219,11 @@
   // ------------------------------------------------------------ Figs 5.5 / 5.6: repeated accesses
   ANIM.access = (root) => {
     const svg = newSvg(root, '0 0 1000 420', 'Four threads of block (0,0) read rows of M and columns of N; every element is read twice');
-    const S = 42, nX = 210, nY = 10, mX = 20, mY = 200, pX = 210, pY = 200;
+    const S = 46, nX = 212, nY = 6, mX = 14, mY = 198, pX = 212, pY = 198;
     const grid = (x0, y0, nm) => { const c = []; for (let r = 0; r < 4; r++) for (let q = 0; q < 4; q++) {
       const rect = R(svg, x0 + q * S, y0 + r * S, S - 2, S - 2, { class: 'cell', rx: 2 });
-      T(svg, x0 + q * S + S / 2 - 1, y0 + r * S + S / 2 + 4, `${nm}${r},${q}`, { ...mid, 'font-size': 12 });
-      const badge = T(svg, x0 + q * S + S - 6, y0 + r * S + 12, '', { 'text-anchor': 'end', 'font-size': 10, fill: '#C98A1B', 'font-weight': 700 });
+      T(svg, x0 + q * S + S / 2 - 1, y0 + r * S + S / 2 + 7, `${nm}${r},${q}`, { ...mid, 'font-size': 13 });
+      const badge = T(svg, x0 + q * S + S - 5, y0 + r * S + 12, '', { 'text-anchor': 'end', 'font-size': 13, fill: '#C98A1B', 'font-weight': 700 });
       c.push({ rect, badge, n: 0 }); } return c; };
     const N = grid(nX, nY, 'N'), M = grid(mX, mY, 'M'), P = grid(pX, pY, 'P');
     R(svg, pX - 2, pY - 2, 2 * S + 2, 2 * S + 2, { fill: 'none', stroke: '#1A1A1A', 'stroke-width': 3 });
@@ -234,7 +234,7 @@
       T(svg, tx0, 78 + i * rowH, `thread ${ty},${tx}`, { 'font-size': 13 });
       return [0, 1, 2, 3].map(k => { const r = R(svg, tx0 + 90 + k * colW, 56 + i * rowH, colW - 6, rowH - 8, { class: 'cell', rx: 2 }); const t = T(svg, tx0 + 90 + k * colW + (colW - 6) / 2, 82 + i * rowH, '', { ...mid, 'font-size': 13 }); return { r, t }; });
     });
-    [0, 1, 2, 3].map(k => T(svg, tx0 + 90 + k * colW + (colW - 6) / 2, 50, `k = ${k}`, { ...mid, 'font-size': 12, class: 'lbl' }));
+    [0, 1, 2, 3].map(k => T(svg, tx0 + 90 + k * colW + (colW - 6) / 2, 50, `k = ${k}`, { ...mid, 'font-size': 13, class: 'lbl' }));
     const tot = T(svg, tx0, 290, '', { 'font-size': 14 });
     const tot2 = T(svg, tx0, 316, '', { 'font-size': 14 });
     const cap = root.querySelector('[data-cap]');
@@ -276,11 +276,12 @@
       const svg = newSvg(root, '0 0 600 260', 'Global loads with and without tiling');
       const x = 130, wmax = 440, ratio = exact ? 1 / t : tiled / naive;
       T(svg, 0, 50, 'no tiling', { 'font-size': 14 }); R(svg, x, 28, wmax, 36, { fill: '#C98A1B', rx: 3 });
-      T(svg, x + 8, 52, fmt(naive) + ' loads', { 'font-size': 13, fill: '#fff' });
+      T(svg, x + 8, 52, fmt(naive) + ' loads', { 'font-size': 14, fill: '#fff' });
       T(svg, 0, 120, `tiles ${t} × ${t}`, { 'font-size': 14 }); R(svg, x, 98, Math.max(2, wmax * ratio), 36, { fill: '#2F6FD0', rx: 3 });
-      T(svg, x + Math.max(2, wmax * ratio) + 8, 122, fmt(exact ? naive / t : tiled) + ' loads', { 'font-size': 13 });
-      T(svg, 0, 190, 'shared memory per block', { 'font-size': 13, class: 'lbl' }); T(svg, x + 120, 190, `2 × ${t}² × 4 B = ${fmt(2 * t * t * 4)} B`, { 'font-size': 13 });
-      T(svg, 0, 220, 'threads per block', { 'font-size': 13, class: 'lbl' }); T(svg, x + 120, 220, `${t}² = ${fmt(t * t)}${t * t > 1024 ? '  (over the 1024 limit!)' : ''}`, { 'font-size': 13, fill: t * t > 1024 ? '#B03A3A' : '#1A1A1A' });
+      const bw2 = Math.max(2, wmax * ratio), inside = bw2 > wmax - 180;
+      T(svg, inside ? x + 8 : x + bw2 + 8, 122, fmt(exact ? naive / t : tiled) + ' loads', { 'font-size': 14, fill: inside ? '#fff' : '#1A1A1A' });
+      T(svg, 0, 190, 'shared memory per block', { 'font-size': 14, class: 'lbl' }); T(svg, x + 120, 190, `2 × ${t}² × 4 B = ${fmt(2 * t * t * 4)} B`, { 'font-size': 14 });
+      T(svg, 0, 220, 'threads per block', { 'font-size': 14, class: 'lbl' }); T(svg, x + 120, 220, `${t}² = ${fmt(t * t)}${t * t > 1024 ? '  (over the 1024 limit!)' : ''}`, { 'font-size': 14, fill: t * t > 1024 ? '#B03A3A' : '#1A1A1A' });
     }
     ['w', 't'].forEach(n => q(n).addEventListener('input', update));
     root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [w, t] = b.dataset.p.split(','); q('w').value = w; q('t').value = t; update(); }));
@@ -303,16 +304,16 @@
     const N = mk(nX, nY, Nv, 'N'), M = mk(mX + 18, mY, Mv, 'M'), P = mk(pX, pY, null, 'P');
     const sx = 390;
     R(svg, sx - 8, 6, 170, 310, { fill: 'none', stroke: '#9a9a9a', 'stroke-dasharray': '5 4', rx: 4 });
-    T(svg, sx + 77, 300, 'shared memory', { ...mid, 'font-size': 12, class: 'lbl' });
+    T(svg, sx + 77, 300, 'shared memory', { ...mid, 'font-size': 13, class: 'lbl' });
     const sh = (y0, nm) => { T(svg, sx, y0 - 6, nm, { 'font-size': 13, 'font-weight': 600 }); const o = []; for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) { const rect = R(svg, sx + c * 52, y0 + r * 46, 48, 42, { class: 'cell', rx: 2 }); const t = T(svg, sx + c * 52 + 24, y0 + r * 46 + 27, '', { ...mid, 'font-size': 15 }); o.push({ rect, t }); } return o; };
     const Nds = sh(40, 'Nds'), Mds = sh(176, 'Mds');
     const barT = T(svg, sx + 77, 150, '', { ...mid, 'font-size': 13, fill: '#B03A3A', 'font-weight': 700 });
-    const tX = 572, cw = [64, 124, 110, 124], hdr = ['thread', 'phase 0 loads', 'Pvalue', 'phase 1 loads'];
+    const tX = 560, cw = [58, 126, 122, 126], hdr = ['thread', 'phase 0 loads', 'Pvalue', 'phase 1 loads'];
     let cx = tX; const colX = cw.map(w => { const x = cx; cx += w; return x; });
-    hdr.forEach((h, i) => T(svg, colX[i] + 4, 24, h, { 'font-size': 12, class: 'lbl' }));
+    hdr.forEach((h, i) => T(svg, colX[i] + 4, 24, h, { 'font-size': 13, class: 'lbl' }));
     const thr = [[0, 0], [0, 1], [1, 0], [1, 1]];
     const rows = thr.map(([ty, tx], i) => { const y = 34 + i * 70; T(svg, colX[0] + 4, y + 30, `(${ty}, ${tx})`, { 'font-size': 13 });
-      const c = [1, 2, 3].map(j => { R(svg, colX[j], y, cw[j] - 4, 62, { class: 'cell', rx: 2 }); return [T(svg, colX[j] + 6, y + 20, '', { 'font-size': 11 }), T(svg, colX[j] + 6, y + 37, '', { 'font-size': 11 }), T(svg, colX[j] + 6, y + 54, '', { 'font-size': 11 })]; });
+      const c = [1, 2, 3].map(j => { R(svg, colX[j], y, cw[j] - 4, 62, { class: 'cell', rx: 2 }); return [T(svg, colX[j] + 5, y + 19, '', { 'font-size': 13 }), T(svg, colX[j] + 5, y + 37, '', { 'font-size': 13 }), T(svg, colX[j] + 5, y + 55, '', { 'font-size': 13 })]; });
       return c; });
     const glob = T(svg, tX, 330, '', { 'font-size': 13 });
     const steps = ['start', 'load0', 'sync', 'comp0', 'sync2', 'load1', 'sync', 'comp1', 'store'];
@@ -381,10 +382,10 @@
       g(nX, nY, 'N', (r, c) => r === nr && c === Col ? 'hl' : inTile(r, c, ph, bx) ? 'soft2' : c === Col ? 'soft' : 'cell');
       g(pX, pY, 'P', (r, c) => r === Row && c === Col ? 'hl' : inTile(r, c, by, bx) ? 'soft' : 'cell');
       L(svg, mX, mY - 14, mX + (ph * Tw) * S, mY - 14, { stroke: '#1A1A1A', 'stroke-width': 2 });
-      T(svg, mX, mY - 20, `ph·TILE_WIDTH = ${ph * Tw}`, { 'font-size': 12 });
+      T(svg, mX, mY - 20, `ph·TILE_WIDTH = ${ph * Tw}`, { 'font-size': 14 });
       L(svg, nX + Wd * S + 10, nY, nX + Wd * S + 10, nY + ph * Tw * S, { stroke: '#1A1A1A', 'stroke-width': 2 });
-      T(svg, nX + Wd * S + 16, nY + 12, `${ph * Tw}`, { 'font-size': 12 });
-      T(svg, pX, pY + Wd * S + 22, `P[${Row}][${Col}]`, { 'font-size': 13, fill: '#2F6FD0', 'font-weight': 700 });
+      T(svg, nX + Wd * S + 16, nY + 12, `${ph * Tw}`, { 'font-size': 14 });
+      T(svg, pX, pY + Wd * S + 22, `P[${Row}][${Col}]`, { 'font-size': 14, fill: '#2F6FD0', 'font-weight': 700 });
       cap.innerHTML = `Row = by·T + ty = ${by}·${Tw} + ${ty} = <b>${Row}</b>    Col = bx·T + tx = ${bx}·${Tw} + ${tx} = <b>${Col}</b>\n` +
         `phase ph = <b>${ph}</b> of ${Wd / Tw}:\n` +
         `  M[Row·Width + ph·T + tx] = M[${Row}·8 + ${ph * Tw} + ${tx}] = M[${Row * Wd + mc}] → <i>M[${Row}][${mc}]</i>\n` +
@@ -448,8 +449,8 @@
     const combos = () => { const g = Math.ceil(Wd / Tw), out = []; for (let by = 0; by < g; by++) for (let bx = 0; bx < g; bx++) for (let ph = 0; ph < g; ph++) out.push([by, bx, ph]); return out; };
     function draw(k) {
       const g = Math.ceil(Wd / Tw), n = g * Tw, [by, bx, ph] = combos()[k];
-      const S = 30, svg = newSvg(root, '0 0 1000 400', 'Matrices padded to whole tiles; threads whose element does not exist load zero');
-      const mX = 40, mY = 200, nX = 300, nY = 8, pX = 300, pY = 200;
+      const S = 34, svg = newSvg(root, '0 0 1000 430', 'Matrices padded to whole tiles; threads whose element does not exist load zero');
+      const mX = 30, mY = 222, nX = 256, nY = 8, pX = 256, pY = 222;
       const draws = (x0, y0, nm, kind) => {
         for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
           const real = r < Wd && c < Wd;
@@ -458,13 +459,13 @@
           if (kind === 'N' && Math.floor(r / Tw) === ph && Math.floor(c / Tw) === bx) cls = real ? 'soft' : 'idle';
           if (kind === 'P' && Math.floor(r / Tw) === by && Math.floor(c / Tw) === bx) cls = real ? 'soft' : 'idle';
           R(svg, x0 + c * S, y0 + r * S, S - 2, S - 2, { class: cls, rx: 2 });
-          if (real) T(svg, x0 + c * S + S / 2 - 1, y0 + r * S + S / 2 + 4, `${r},${c}`, { ...mid, 'font-size': 10 });
+          if (real) T(svg, x0 + c * S + S / 2 - 1, y0 + r * S + S / 2 + 4, `${r},${c}`, { ...mid, 'font-size': 13 });
         }
         R(svg, x0 - 1, y0 - 1, Wd * S, Wd * S, { fill: 'none', stroke: '#1A1A1A', 'stroke-width': 2 });
         T(svg, x0 - 6, y0 + 14, nm, { 'text-anchor': 'end', 'font-size': 15, 'font-weight': 700 });
       };
       draws(mX, mY, 'M', 'M'); draws(nX, nY, 'N', 'N'); draws(pX, pY, 'P', 'P');
-      const sx = 560;
+      const sx = 520;
       T(svg, sx, 30, `block (${by}, ${bx}), phase ${ph}`, { 'font-size': 16, 'font-weight': 600 });
       const lines = [], thr = [[0, 0], [0, 1], [1, 0], [1, 1]];
       thr.forEach(([ty, tx], i) => {
@@ -474,7 +475,7 @@
         T(svg, sx, y, `thread (${ty}, ${tx})`, { 'font-size': 14, 'font-weight': 600 });
         T(svg, sx, y + 20, mOk ? `Mds ← M[${Row}][${mc}]` : `Mds ← 0.0f  (M[${Row}][${mc}] does not exist)`, { 'font-size': 13, fill: mOk ? '#1A1A1A' : '#B03A3A' });
         T(svg, sx, y + 38, nOk ? `Nds ← N[${nr}][${Col}]` : `Nds ← 0.0f  (N[${nr}][${Col}] does not exist)`, { 'font-size': 13, fill: nOk ? '#1A1A1A' : '#B03A3A' });
-        T(svg, sx, y + 56, pOk ? `computes P[${Row}][${Col}]` : 'computes no P element (still loads, still syncs)', { 'font-size': 12, class: pOk ? '' : 'lbl' });
+        T(svg, sx, y + 56, pOk ? `computes P[${Row}][${Col}]` : 'computes no P element (still loads, still syncs)', { 'font-size': 13, class: pOk ? '' : 'lbl' });
         if (!mOk) { R(svg, mX + mc * S + 4, mY + Row * S + 4, S - 10, S - 10, { fill: 'none', stroke: '#B03A3A', 'stroke-width': 2.5 }); lines.push(`M by thread (${ty},${tx})`); }
         else R(svg, mX + mc * S + 2, mY + Row * S + 2, S - 6, S - 6, { fill: 'none', stroke: '#2E7D4F', 'stroke-width': 2.5 });
         if (!nOk) { R(svg, nX + Col * S + 4, nY + nr * S + 4, S - 10, S - 10, { fill: 'none', stroke: '#B03A3A', 'stroke-width': 2.5 }); lines.push(`N by thread (${ty},${tx})`); }
@@ -506,9 +507,9 @@
       const svg = newSvg(root, '0 0 600 150', 'Shared memory of one SM filled by resident blocks');
       R(svg, 0, 20, 600, 50, { fill: '#EDEDED', rx: 3 });
       for (let b = 0; b < blocks && s > 0; b++) R(svg, 600 * b * s / smKB, 20, Math.max(1, 600 * s / smKB - 2), 50, { fill: b % 2 ? '#2F6FD0' : '#8FB3E8', rx: 2 });
-      T(svg, 0, 14, `shared memory of one SM: ${smKB} KB`, { 'font-size': 13, class: 'lbl' });
+      T(svg, 0, 14, `shared memory of one SM: ${smKB} KB`, { 'font-size': 14, class: 'lbl' });
       R(svg, 0, 96, 600, 30, { fill: '#EDEDED', rx: 3 }); R(svg, 0, 96, 600 * occ, 30, { fill: '#2E7D4F', rx: 3 });
-      T(svg, 0, 90, `thread slots: ${fmt(threads)} of 2,048 used`, { 'font-size': 13, class: 'lbl' });
+      T(svg, 0, 90, `thread slots: ${fmt(threads)} of 2,048 used`, { 'font-size': 14, class: 'lbl' });
     }
     ['t', 's', 'sm'].forEach(n => q(n).addEventListener('input', update));
     root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [t, s] = b.dataset.p.split(','); q('t').value = t; q('s').value = s; q('sm').value = 228; update(); }));

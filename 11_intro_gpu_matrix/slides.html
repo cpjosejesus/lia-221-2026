@@ -24,6 +24,7 @@ pre{font-family:var(--mono);font-size:.56em;line-height:1.45;background:var(--co
 code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
 pre code{background:none;padding:0;font-size:inherit}
 table{border-collapse:collapse;font-size:.7em;width:100%}th{text-align:left;font-size:.75em;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.4em .8em .4em 0}td{border-bottom:1px solid var(--line);padding:.5em .8em .5em 0;vertical-align:top}
+th code{font-size:1em}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
 .foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 8vw;font-size:.55em;color:var(--muted);font-family:var(--mono)}
 .note{border-left:3px solid var(--ink);padding-left:1em;color:var(--ink);max-width:60ch}
@@ -65,7 +66,7 @@ svg .outhit{fill:var(--bad-soft)!important;stroke:#c98a8a!important;stroke-dasha
 .gauge{position:relative;height:.9em;background:var(--code);border-radius:3px;margin:.7em 0;overflow:hidden}
 .gauge i{position:absolute;left:0;top:0;bottom:0;background:var(--acc);transition:width .4s ease, background .3s}
 .gauge i.over{background:var(--bad)}
-.gauge-max{position:absolute;right:.3em;top:0;font-size:.6em;font-family:var(--mono);color:var(--muted);line-height:1.5}
+.gauge-max{position:absolute;right:.3em;top:0;font-size:.7em;font-family:var(--mono);color:var(--muted);line-height:1.28}
 .cfg-line{font-family:var(--mono);font-size:.85em}
 .cfg-msg{margin-top:.7em;font-size:.9em}
 .cfg-msg.ok{color:var(--ok)} .cfg-msg.bad{color:var(--bad)}
@@ -267,8 +268,7 @@ __global__ void colorToGray(unsigned char* gray, const unsigned char* rgb,
 }</code></pre>
     <ul>
       <li>Lines 1–2 of the body: the thread’s column and row, as on slide 7; the guard lets only threads over a real pixel continue.</li>
-      <li><code>grayOffset</code>: the output pixel, one byte each.</li>
-      <li><code>rgbOffset</code>: the same pixel in the input, three bytes each, so the index is multiplied by 3.</li>
+      <li><code>grayOffset</code>: the output pixel, one byte each; <code>rgbOffset</code>: the same pixel in the input, three bytes each.</li>
       <li>Each thread reads 3 bytes and writes 1. No thread touches another thread’s pixel: a pure map.</li>
       <li>Weights: green counts most because the eye is most sensitive to it.</li>
     </ul>
@@ -310,7 +310,7 @@ __global__ void blurKernel(const unsigned char* in, unsigned char* out, int w, i
       <li>Same first lines and guard as grayscale: one thread per output pixel.</li>
       <li>Two nested loops visit the patch, from <code>-BLUR_SIZE</code> to <code>+BLUR_SIZE</code>; the inner <code>if</code> skips neighbours outside the picture.</li>
       <li><code>pixels</code> counts how many were really added: 4 at a corner, 6 on an edge, 9 inside. Dividing by 9 everywhere would darken the borders.</li>
-      <li>Threads now do real work, and neighbouring threads read overlapping inputs. Later chapters exploit that overlap.</li>
+      <li>Neighbouring threads read overlapping inputs; later chapters exploit that overlap.</li>
     </ul>
   </div>
   <p class="small muted">▶ Run it: <code>ec2/01_first_kernels/06_blur.cu</code> (step 6 of <code>colab_1_step_by_step.ipynb</code>)</p>
@@ -829,8 +829,8 @@ __global__ void matVecKernel(float* a, const float* B,
     for (let b = 0; b < 24; ++b) {
       const x = 20 + b * 40, ch = 'rgb'[b % 3], v = px[Math.floor(b / 3)][b % 3];
       const r = el('rect', { class: 'cell', x, y: 202, width: 38, height: 34 });
-      const t = el('text', { x: x + 19, y: 224, 'text-anchor': 'middle', 'font-size': 12 }, v);
-      const l = el('text', { class: 'lbl', x: x + 19, y: 250, 'text-anchor': 'middle', 'font-size': 11 }, `${ch}${b}`);
+      const t = el('text', { x: x + 19, y: 224, 'text-anchor': 'middle', 'font-size': 13 }, v);
+      const l = el('text', { class: 'lbl', x: x + 19, y: 251, 'text-anchor': 'middle', 'font-size': 13 }, `${ch}${b}`);
       svg.appendChild(r); svg.appendChild(t); svg.appendChild(l); bytes.push({ r, t });
     }
     svg.appendChild(el('text', { class: 'lbl', x: 20, y: 282, 'font-size': 16 }, 'gray array: 1 byte per pixel'));
@@ -839,7 +839,7 @@ __global__ void matVecKernel(float* a, const float* B,
       const r = el('rect', { class: 'cell', x, y: 268, width: 56, height: 34 });
       const t = el('text', { x: x + 28, y: 290, 'text-anchor': 'middle', 'font-size': 13 }, '');
       svg.appendChild(r); svg.appendChild(t);
-      svg.appendChild(el('text', { class: 'lbl', x: x + 28, y: 318, 'text-anchor': 'middle', 'font-size': 11 }, i));
+      svg.appendChild(el('text', { class: 'lbl', x: x + 28, y: 319, 'text-anchor': 'middle', 'font-size': 13 }, i));
       gbytes.push({ r, t });
     }
     const cap = root.querySelector('[data-cap]');

@@ -27,8 +27,8 @@
     const amps = [];
     for (let c = 0; c < COLS; c++) amps.push(R(svg, x0 + c * dx + 14, 300, 32, 22, { class: 'mem', rx: 2 }));
     T(svg, x0 + COLS * dx / 2, 346, 'sense amplifiers', { ...mid, 'font-size': 13, class: 'lbl' });
-    T(svg, 920, 30, 'about 1000 cells', { 'font-size': 11, class: 'lbl', 'text-anchor': 'end' });
-    T(svg, 920, 44, 'on each vertical line', { 'font-size': 11, class: 'lbl', 'text-anchor': 'end' });
+    T(svg, 920, 19, 'about 1000 cells', { 'font-size': 13, class: 'lbl', 'text-anchor': 'end' });
+    T(svg, 920, 35, 'on each vertical line', { 'font-size': 13, class: 'lbl', 'text-anchor': 'end' });
     const clock = T(svg, 500, 372, '', { ...mid, 'font-size': 13, fill: GOLD });
     const pulse = L(svg, x0 + 3 * dx + 30, y0 + 2 * dy + 20, x0 + 3 * dx + 30, 298, { stroke: GOLD, 'stroke-width': 4, 'marker-end': hA });
     const R0 = 2, C0 = 3;
@@ -59,11 +59,11 @@
     T(svg, 20, 28, 'DRAM locations (bursts of 8 consecutive locations)', { 'font-size': 13, class: 'lbl' });
     const cells = [], bursts = [];
     for (let b = 0; b < N / B; b++) bursts.push(R(svg, x0 + b * B * cw - 3, 38, B * cw + 2, 48, { fill: 'none', stroke: '#bdbdbd', 'stroke-width': 1.5, rx: 4 }));
-    for (let i = 0; i < N; i++) { cells.push(R(svg, x0 + i * cw, 44, cw - 3, 36, { class: 'mem', rx: 2 })); T(svg, x0 + i * cw + 13, 67, i, { ...mid, 'font-size': 10 }); }
+    for (let i = 0; i < N; i++) { cells.push(R(svg, x0 + i * cw, 44, cw - 3, 36, { class: 'mem', rx: 2 })); T(svg, x0 + i * cw + 13, 67, i, { ...mid, 'font-size': 13 }); }
     const reqs = [];
-    for (let t = 0; t < 8; t++) { const g = svg.appendChild(el('g')); g.appendChild(el('rect', { x: 0, y: 0, width: 46, height: 26, rx: 3, fill: '#C9DBF4' })); g.appendChild(el('text', { x: 23, y: 17, 'text-anchor': 'middle', 'font-size': 11 }, `t${t}`)); reqs.push(g); }
+    for (let t = 0; t < 8; t++) { const g = svg.appendChild(el('g', { transform: `translate(${40 + t * 116},150)` })); g.appendChild(el('rect', { x: 0, y: 0, width: 46, height: 26, rx: 3, fill: '#C9DBF4' })); g.appendChild(el('text', { x: 23, y: 18, 'text-anchor': 'middle', 'font-size': 13 }, `t${t}`)); reqs.push(g); }
     const lines = svg.appendChild(el('g'));
-    const bus = R(svg, 20, 240, 940, 26, { fill: '#F4F4F4', stroke: '#c9c9c9', rx: 3 }); T(svg, 490, 258, 'bus to the processor', { ...mid, 'font-size': 12, class: 'lbl' });
+    const bus = R(svg, 20, 240, 940, 26, { fill: '#F4F4F4', stroke: '#c9c9c9', rx: 3 }); T(svg, 490, 258, 'bus to the processor', { ...mid, 'font-size': 13, class: 'lbl' });
     const out = T(svg, 20, 292, '', { 'font-size': 14 });
     const A = { seq: [0, 1, 2, 3, 4, 5, 6, 7], scat: [3, 9, 14, 20, 26, 31, 5, 17] };
     const caps = {
@@ -96,7 +96,7 @@
       const seg = new Set(addr.map(a => Math.floor(a / 32)));
       const segs = [...seg].sort((a, b) => a - b);
       T(svg, 20, 26, `thread t reads a[${off ? off + ' + ' : ''}${stride === 1 ? '' : stride + ' × '}t]`, { 'font-size': 15, 'font-weight': 600 });
-      for (let t = 0; t < 32; t++) { R(svg, 60 + t * 29, 40, 25, 22, { fill: '#C9DBF4', rx: 2 }); T(svg, 72 + t * 29, 55, t, { ...mid, 'font-size': 10 }); }
+      for (let t = 0; t < 32; t++) { R(svg, 60 + t * 29, 40, 25, 22, { fill: '#C9DBF4', rx: 2 }); T(svg, 72 + t * 29, 56, t, { ...mid, 'font-size': 13 }); }
       const show = segs.slice(0, 4);
       show.forEach((s, j) => {
         const y = 130 + j * 40;
@@ -105,7 +105,7 @@
           const a = s * 32 + w, hit = addr.includes(a);
           R(svg, 60 + w * 29 + 1, y + 2, 27, 22, { fill: hit ? BLUE : '#fff', rx: 1 });
         }
-        T(svg, 54, y + 18, `seg ${s}`, { 'font-size': 11, class: 'lbl', 'text-anchor': 'end' });
+        T(svg, 54, y + 18, `seg ${s}`, { 'font-size': 13, class: 'lbl', 'text-anchor': 'end' });
         addr.forEach((a, t) => { if (Math.floor(a / 32) === s) svg.appendChild(el('line', { x1: 72 + t * 29, y1: 62, x2: 74 + (a % 32) * 29, y2: y, stroke: BLUE, 'stroke-width': 1, opacity: .55 })); });
       });
       if (segs.length > 4) T(svg, 500, 300, `… and ${segs.length - 4} more segments`, { ...mid, 'font-size': 13, fill: RED });
@@ -157,24 +157,24 @@
     const svg = newSvg(root, '0 0 1000 360', 'Four threads iterating down the rows of N; the elements they read in one iteration are adjacent in row-major layout and far apart in column-major layout');
     const hB = arrowHead(svg, 'pt-b', BLUE);
     const code = T(svg, 20, 30, '', { 'font-size': 15, 'font-weight': 600 });
-    T(svg, 20, 56, 'logical view: thread Tc walks down column c of N', { 'font-size': 12, class: 'lbl' });
+    T(svg, 20, 56, 'logical view: thread Tc walks down column c of N', { 'font-size': 13, class: 'lbl' });
     const shade = ['#FFFFFF', '#DCDCDC', '#9A9A9A', '#3A3A3A'], ink = ['#1A1A1A', '#1A1A1A', '#fff', '#fff'];
     const logical = [];
-    for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { logical.push(R(svg, 40 + c * 58, 100 + r * 36, 56, 34, { stroke: '#6f6f6f' })); T(svg, 68 + c * 58, 122 + r * 36, `N${r},${c}`, { ...mid, 'font-size': 12 }); }
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { logical.push(R(svg, 40 + c * 58, 100 + r * 36, 56, 34, { stroke: '#6f6f6f' })); T(svg, 68 + c * 58, 122 + r * 36, `N${r},${c}`, { ...mid, 'font-size': 13 }); }
     for (let c = 0; c < 4; c++) { T(svg, 68 + c * 58, 84, `T${c}`, { ...mid, 'font-size': 13, 'font-weight': 600 }); }
     const ltext = [...svg.querySelectorAll('text')].slice(-20, -4);
     T(svg, 14, 176, 'k', { 'font-size': 13, class: 'lbl' });
     L(svg, 26, 100, 26, 244, { stroke: GRAY, 'stroke-width': 2, 'marker-end': arrowHead(svg, 'pt-g', GRAY) });
-    T(svg, 340, 332, '', {}); const layoutT = svg.lastChild;
+    T(svg, 20, 332, '', {}); const layoutT = svg.lastChild;
     const phys = [], ptxt = [];
-    for (let i = 0; i < 16; i++) { phys.push(R(svg, 340 + i * 40, 280, 38, 34, { stroke: '#6f6f6f' })); ptxt.push(T(svg, 359 + i * 40, 302, '', { ...mid, 'font-size': 10 })); }
+    for (let i = 0; i < 16; i++) { phys.push(R(svg, 20 + i * 60, 280, 58, 34, { stroke: '#6f6f6f' })); ptxt.push(T(svg, 49 + i * 60, 302, '', { ...mid, 'font-size': 13 })); }
     const arr = svg.appendChild(el('g'));
-    const req = T(svg, 340, 354, '', { 'font-size': 13 });
+    const req = T(svg, 20, 354, '', { 'font-size': 13 });
     const cap = root.querySelector('[data-cap]');
     const st = stepper(root, () => 4, (k) => {
       code.textContent = mode === 'row' ? 'Pvalue += M[row*Width + k] * N[k*Width + col];' : 'Pvalue += M[row*Width + k] * N[col*Width + k];';
       layoutT.textContent = mode === 'row' ? 'physical view: N in row-major layout' : 'physical view: N in column-major layout';
-      layoutT.setAttribute('font-size', 12); layoutT.setAttribute('class', 'lbl');
+      layoutT.setAttribute('font-size', 13); layoutT.setAttribute('class', 'lbl');
       for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
         const s = mode === 'row' ? r : c, e = logical[r * 4 + c];
         e.setAttribute('fill', shade[s]); ltext[r * 4 + c].setAttribute('fill', ink[s]);
@@ -183,7 +183,7 @@
       const pos = (r, c) => mode === 'row' ? r * 4 + c : c * 4 + r;
       for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { const p = pos(r, c); const s = mode === 'row' ? r : c; phys[p].setAttribute('fill', shade[s]); ptxt[p].setAttribute('fill', ink[s]); ptxt[p].textContent = `N${r},${c}`; }
       arr.innerHTML = '';
-      for (let c = 0; c < 4; c++) { const p = pos(k, c); arr.appendChild(el('line', { x1: 68 + c * 58, y1: 100 + k * 36 + 34, x2: 359 + p * 40, y2: 278, stroke: BLUE, 'stroke-width': 2, 'marker-end': hB })); }
+      for (let c = 0; c < 4; c++) { const p = pos(k, c); arr.appendChild(el('line', { x1: 68 + c * 58, y1: 100 + k * 36 + 34, x2: 49 + p * 60, y2: 278, stroke: BLUE, 'stroke-width': 2, 'marker-end': hB })); }
       const ps = [0, 1, 2, 3].map(c => pos(k, c));
       req.textContent = mode === 'row' ? `iteration ${k}: addresses ${ps.join(', ')} are adjacent → one coalesced access` : `iteration ${k}: addresses ${ps.join(', ')} are Width apart → separate accesses`;
       req.setAttribute('fill', mode === 'row' ? GREEN : RED);
@@ -200,18 +200,18 @@
     let mode = 'no';
     const svg = newSvg(root, '0 0 1000 340', 'Loading a 4 by 4 tile of a column-major matrix N into shared memory, without and with corner turning');
     const hB = arrowHead(svg, 'cn-b', BLUE);
-    T(svg, 20, 26, 'tile of N (column-major)', { 'font-size': 12, class: 'lbl' });
+    T(svg, 20, 26, 'tile of N (column-major)', { 'font-size': 13, class: 'lbl' });
     const tile = [];
-    for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { tile.push(R(svg, 30 + c * 56, 40 + r * 36, 54, 34, { fill: '#fff', stroke: '#6f6f6f' })); T(svg, 57 + c * 56, 62 + r * 36, `N${r},${c}`, { ...mid, 'font-size': 12 }); }
-    T(svg, 300, 26, 'global memory: column 0, then column 1, …', { 'font-size': 12, class: 'lbl' });
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { tile.push(R(svg, 30 + c * 56, 40 + r * 36, 54, 34, { fill: '#fff', stroke: '#6f6f6f' })); T(svg, 57 + c * 56, 62 + r * 36, `N${r},${c}`, { ...mid, 'font-size': 13 }); }
+    T(svg, 270, 26, 'global memory: column 0, then column 1, …', { 'font-size': 13, class: 'lbl' });
     const mem = [];
-    for (let i = 0; i < 16; i++) { mem.push(R(svg, 300 + i * 43, 40, 41, 34, { fill: '#fff', stroke: '#6f6f6f' })); T(svg, 320 + i * 43, 62, `N${i % 4},${Math.floor(i / 4)}`, { ...mid, 'font-size': 10 }); }
-    const thr = [0, 1, 2, 3].map(t => { const g = R(svg, 320 + t * 120, 150, 90, 30, { fill: '#C9DBF4', rx: 3 }); T(svg, 365 + t * 120, 170, `thread ${t}`, { ...mid, 'font-size': 12 }); return g; });
+    for (let i = 0; i < 16; i++) { mem.push(R(svg, 270 + i * 45, 40, 43, 34, { fill: '#fff', stroke: '#6f6f6f' })); T(svg, 291 + i * 45, 62, `N${i % 4},${Math.floor(i / 4)}`, { ...mid, 'font-size': 13 }); }
+    const thr = [0, 1, 2, 3].map(t => { const g = R(svg, 320 + t * 120, 150, 90, 30, { fill: '#C9DBF4', rx: 3 }); T(svg, 365 + t * 120, 170, `thread ${t}`, { ...mid, 'font-size': 13 }); return g; });
     const arr = svg.appendChild(el('g'));
-    T(svg, 30, 222, 'shared memory tile Nds', { 'font-size': 12, class: 'lbl' });
+    T(svg, 30, 222, 'shared memory tile Nds', { 'font-size': 13, class: 'lbl' });
     const sh = [];
     for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { sh.push(R(svg, 30 + c * 56, 232 + r * 24, 54, 22, { fill: '#F4F4F4', stroke: '#c9c9c9' })); }
-    const shT = sh.map((_, i) => T(svg, 57 + (i % 4) * 56, 248 + Math.floor(i / 4) * 24, '', { ...mid, 'font-size': 11 }));
+    const shT = sh.map((_, i) => T(svg, 57 + (i % 4) * 56, 248 + Math.floor(i / 4) * 24, '', { ...mid, 'font-size': 13 }));
     const res = T(svg, 300, 260, '', { 'font-size': 14 }), res2 = T(svg, 300, 286, '', { 'font-size': 13 });
     const cap = root.querySelector('[data-cap]');
     const st = stepper(root, () => 5, (k) => {
@@ -221,7 +221,7 @@
       tile.forEach((e, i) => { const r = Math.floor(i / 4), c = i % 4; const on = k < 4 && elems.some(([a, b]) => a === r && b === c); e.setAttribute('fill', on ? '#9DB7E3' : '#fff'); });
       const addrs = elems.map(([r, c]) => c * 4 + r);
       mem.forEach((e, i) => e.setAttribute('fill', k < 4 && addrs.includes(i) ? '#9DB7E3' : '#fff'));
-      if (k < 4) addrs.forEach((a, t) => arr.appendChild(el('line', { x1: 320 + a * 43, y1: 74, x2: 365 + t * 120, y2: 150, stroke: BLUE, 'stroke-width': 2, 'marker-start': hB })));
+      if (k < 4) addrs.forEach((a, t) => arr.appendChild(el('line', { x1: 291 + a * 45, y1: 74, x2: 365 + t * 120, y2: 150, stroke: BLUE, 'stroke-width': 2, 'marker-start': hB })));
       sh.forEach((e, i) => { const r = Math.floor(i / 4), c = i % 4; const done = mode === 'no' ? r <= Math.min(k, 3) : c <= Math.min(k, 3); shT[i].textContent = done ? `N${r},${c}` : ''; e.setAttribute('fill', done ? '#DCE7F8' : '#F4F4F4'); });
       const contiguous = Math.max(...addrs) - Math.min(...addrs) === 3;
       res.textContent = k < 4 ? `load ${k}: addresses ${addrs.join(', ')} → ${contiguous ? 'adjacent, coalesced' : '4 apart, not coalesced'}` : (mode === 'no' ? 'every load instruction was un-coalesced' : 'every load instruction was coalesced');
@@ -243,12 +243,12 @@
     for (let l = 1; l < 4; l++) L(svg, 20, 30 + l * 37.5, 620, 30 + l * 37.5, { stroke: '#fff', 'stroke-width': 2, 'stroke-dasharray': '14 10' });
     const cars = [];
     for (let i = 0; i < 32; i++) { const g = svg.appendChild(el('g', { class: 'tok' })); g.appendChild(el('rect', { x: 0, y: 0, width: 34, height: 20, rx: 5, fill: BLUE })); cars.push(g); }
-    const bus = svg.appendChild(el('g', { class: 'tok' })); bus.appendChild(el('rect', { x: 0, y: 0, width: 150, height: 26, rx: 6, fill: GREEN })); bus.appendChild(el('text', { x: 75, y: 18, 'text-anchor': 'middle', 'font-size': 12, fill: '#fff' }, '32 passengers'));
-    const dram = R(svg, 640, 30, 140, 150, { class: 'mem', rx: 4 }); T(svg, 710, 100, 'DRAM', { ...mid, 'font-size': 15 }); const q = T(svg, 710, 124, '', { ...mid, 'font-size': 12 });
+    const bus = svg.appendChild(el('g', { class: 'tok' })); bus.appendChild(el('rect', { x: 0, y: 0, width: 150, height: 26, rx: 6, fill: GREEN })); bus.appendChild(el('text', { x: 75, y: 18, 'text-anchor': 'middle', 'font-size': 13, fill: '#fff' }, '32 passengers'));
+    const dram = R(svg, 640, 30, 140, 150, { class: 'mem', rx: 4 }); T(svg, 710, 100, 'DRAM', { ...mid, 'font-size': 15 }); const q = T(svg, 710, 124, '', { ...mid, 'font-size': 13 });
     const tl = svg.appendChild(el('g'));
     const rowT = (y, name, items, ok) => {
-      tl.appendChild(el('text', { x: 20, y: y + 14, 'font-size': 12 }, name));
-      items.forEach(([a, b, s]) => { tl.appendChild(el('rect', { x: 120 + a * 80, y, width: (b - a) * 80 - 4, height: 20, rx: 3, fill: s === 'work' ? (ok ? '#86C495' : '#E7B467') : '#DCE7F8' })); tl.appendChild(el('text', { x: 120 + (a + b) * 40, y: y + 14, 'text-anchor': 'middle', 'font-size': 11 }, s)); });
+      tl.appendChild(el('text', { x: 20, y: y + 15, 'font-size': 13 }, name));
+      items.forEach(([a, b, s]) => { tl.appendChild(el('rect', { x: 120 + a * 80, y, width: (b - a) * 80 - 4, height: 20, rx: 3, fill: s === 'work' ? (ok ? '#86C495' : '#E7B467') : '#DCE7F8' })); tl.appendChild(el('text', { x: 120 + (a + b) * 40, y: y + 15, 'text-anchor': 'middle', 'font-size': 13 }, s)); });
     };
     const caps = [
       '<b>Traffic congestion</b>: too many cars, each with one person, on a road built for fewer. Every DRAM request is a car; with one request per thread, the queue at DRAM grows and the cores wait.',
@@ -267,7 +267,7 @@
         tl.appendChild(el('text', { x: 20, y: 206, 'font-size': 13, 'font-weight': 600, fill: k === 2 ? GREEN : RED }, k === 2 ? 'similar schedules: one car' : 'different schedules: no carpool'));
         rowT(218, 'worker A', k === 2 ? [[0, 3, 'sleep'], [3, 7, 'work'], [7, 9, 'dinner']] : [[0, 2, 'party'], [2, 6, 'sleep'], [6, 9, 'work']], true);
         rowT(246, 'worker B', [[0, 3, 'sleep'], [3, 7, 'work'], [7, 9, 'dinner']], k === 2);
-        tl.appendChild(el('text', { x: 120, y: 290, 'font-size': 12, class: 'lbl' }, 'time →'));
+        tl.appendChild(el('text', { x: 120, y: 290, 'font-size': 13, class: 'lbl' }, 'time →'));
       }
       cap.innerHTML = caps[k];
     }, 3200);
@@ -283,8 +283,8 @@
       const x = 60 + c * 235;
       chans.push(R(svg, x, 216, 130, 64, { class: 'mem', rx: 3 })); T(svg, x + 65, 254, `channel ${c}`, { ...mid, 'font-size': 13 });
       buses.push(L(svg, x + 110, 216, x + 110, 30, { class: 'wire', 'marker-end': hG, 'marker-start': hG }));
-      T(svg, x + 118, 26, 'bus', { 'font-size': 12, class: 'lbl' });
-      for (let b = 3; b >= 0; b--) { const r = R(svg, x - 6 + b * 12, 50 + b * 22, 90, 50, { fill: '#fff', stroke: '#9a9a9a', rx: 3 }); T(svg, x + 39 + b * 12, 80 + b * 22, b === 0 ? 'bank' : '', { ...mid, 'font-size': 11 }); banks.push({ c, b, r }); L(svg, x + 84 + b * 12, 70 + b * 22, x + 110, 70 + b * 22, { class: 'wire' }); }
+      T(svg, x + 118, 26, 'bus', { 'font-size': 13, class: 'lbl' });
+      for (let b = 3; b >= 0; b--) { const r = R(svg, x - 6 + b * 12, 50 + b * 22, 90, 50, { fill: '#fff', stroke: '#9a9a9a', rx: 3 }); T(svg, x + 39 + b * 12, 80 + b * 22, b === 0 ? 'bank' : '', { ...mid, 'font-size': 13 }); banks.push({ c, b, r }); L(svg, x + 84 + b * 12, 70 + b * 22, x + 110, 70 + b * 22, { class: 'wire' }); }
     }
     const caps = [
       'DRAM is parallel at several levels. A <b>channel</b> is a memory controller with its own <b>bus</b>; a processor has one to eight of them.',
@@ -329,22 +329,22 @@
       const cur = Math.min(SLOTS, Math.round((k + 1) / 20 * SLOTS));
       for (let b = 0; b < rowsB; b++) {
         const y = 20 + b * 34;
-        T(svg, 20, y + 17, `bank ${b}`, { 'font-size': 12 });
+        T(svg, 20, y + 17, `bank ${b}`, { 'font-size': 13 });
         R(svg, X0, y, W, 24, { fill: '#F7F7F7', rx: 2 });
         if (b < act) for (let t0 = b; t0 < SLOTS; t0 += Math.max(period, act)) {
           const a = Math.min(cur, t0), e = Math.min(cur, t0 + Rr), te = Math.min(cur, t0 + Rr + 1);
           if (e > a) R(svg, X0 + a * u, y, (e - a) * u, 24, { fill: '#E2E2E2' });
           if (te > e) R(svg, X0 + e * u, y, (te - e) * u, 24, { fill: INK });
-        } else if (cur > 0) T(svg, X0 + 8, y + 17, 'idle: the bus is already full', { 'font-size': 11, class: 'lbl' });
+        } else if (cur > 0) T(svg, X0 + 8, y + 17, 'idle: the bus is already full', { 'font-size': 13, class: 'lbl' });
       }
-      if (B > rowsB) T(svg, 20, 20 + rowsB * 34 + 14, `… ${B - rowsB} more banks`, { 'font-size': 12, class: 'lbl' });
+      if (B > rowsB) T(svg, 20, 20 + rowsB * 34 + 14, `… ${B - rowsB} more banks`, { 'font-size': 13, class: 'lbl' });
       const yc = 20 + Math.max(rowsB, B > rowsB ? rowsB + 1 : rowsB) * 34 + 16;
       svg.setAttribute('viewBox', `0 0 1000 ${yc + 56}`);
-      T(svg, 20, yc + 17, 'channel', { 'font-size': 12, 'font-weight': 600 });
+      T(svg, 20, yc + 17, 'channel', { 'font-size': 13, 'font-weight': 600 });
       R(svg, X0, yc, W, 24, { fill: '#F7F7F7', rx: 2, stroke: '#c9c9c9' });
       for (let t = 0; t < cur; t++) if (chanBusy[t] >= 0) R(svg, X0 + t * u + 1, yc, u - 2, 24, { fill: INK });
       L(svg, X0 + cur * u, 10, X0 + cur * u, yc + 30, { stroke: GOLD, 'stroke-width': 1.5, 'stroke-dasharray': '4 3' });
-      T(svg, X0, yc + 44, 'light = cell-array access latency · dark = burst on the bus · time →', { 'font-size': 11, class: 'lbl' });
+      T(svg, X0, yc + 44, 'light = cell-array access latency · dark = burst on the bus · time →', { 'font-size': 13, class: 'lbl' });
       const util = Math.min(1, B / period);
       out.innerHTML = `latency : transfer = <b>${Rr} : 1</b> · banks <b>${B}</b> → channel busy at most ${B} / ${period} = <b>${(util * 100).toFixed(1)} %</b>` +
         `<br>a 16 GB/s channel delivers about <b>${(16 * util).toFixed(2)} GB/s</b> · banks needed for full use: R + 1 = <b>${period}</b>`;
@@ -370,7 +370,7 @@
       for (let b = 1; b >= 0; b--) {
         const bx = x + (1 - b) * 30, by = 40 + (1 - b) * 0 + b * 0 + (b === 1 ? 20 : 110);
         const r = R(svg, bx, by, 140, 70, { fill: '#fff', stroke: '#9a9a9a', rx: 3 });
-        T(svg, bx + 8, by + 16, `bank ${b}`, { 'font-size': 11, class: 'lbl' });
+        T(svg, bx + 8, by + 17, `bank ${b}`, { 'font-size': 13, class: 'lbl' });
         const t = T(svg, bx + 70, by + 46, '', { ...mid, 'font-size': 15, 'font-weight': 600 });
         boxes[`${c}${b}`] = { r, t };
         L(svg, bx + 140, by + 35, x + 175, by + 35, { class: 'wire' });
@@ -403,10 +403,10 @@
     const cells = [];
     for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
       const L = r * 4 + c, e = R(svg, 30 + c * 64, 50 + r * 46, 62, 44, { stroke: '#6f6f6f' });
-      T(svg, 61 + c * 64, 70 + r * 46, `M${r},${c}`, { ...mid, 'font-size': 12 }); T(svg, 61 + c * 64, 86 + r * 46, `[${L}]`, { ...mid, 'font-size': 10, class: 'lbl' });
+      T(svg, 61 + c * 64, 68 + r * 46, `M${r},${c}`, { ...mid, 'font-size': 13 }); T(svg, 61 + c * 64, 87 + r * 46, `[${L}]`, { ...mid, 'font-size': 13, class: 'lbl' });
       cells.push({ e, L, r, c });
     }
-    T(svg, 30, 36, 'M (linear index in brackets)', { 'font-size': 12, class: 'lbl' });
+    T(svg, 30, 36, 'M (linear index in brackets)', { 'font-size': 13, class: 'lbl' });
     const chans = [0, 1, 2, 3].map(c => { const r = R(svg, 330 + c * 160, 250, 140, 56, { fill: '#fff', stroke: '#9a9a9a', rx: 4 }); T(svg, 400 + c * 160, 284, `channel ${c}`, { ...mid, 'font-size': 13 }); return r; });
     const rows = svg.appendChild(el('g'));
     const cap = root.querySelector('[data-cap]');
@@ -450,7 +450,7 @@
       for (let t = 0; t < nT; t++) {
         const x = 50 + t * w * 58, wd = w * 58 - 4;
         lanes.appendChild(el('rect', { x, y: 220, width: wd, height: 26, rx: 3, fill: '#C9DBF4' }));
-        lanes.appendChild(el('text', { x: x + wd / 2, y: 238, 'text-anchor': 'middle', 'font-size': 11 }, `t${t}`));
+        lanes.appendChild(el('text', { x: x + wd / 2, y: 238, 'text-anchor': 'middle', 'font-size': 13 }, `t${t}`));
         const yTop = 40 + k * 60 + 32;
         lines.appendChild(el('line', { x1: x + wd / 2, y1: 220, x2: x + wd / 2, y2: yTop + 2, stroke: BLUE, 'stroke-width': mode === 'scalar' ? 1.5 : 4, 'marker-end': k < 2 ? '' : hB, 'marker-start': k < 2 ? hB : '' }));
       }
@@ -474,15 +474,15 @@
       for (let t = 0; t < 32; t++) hits[(t * s) % 32]++;
       const deg = Math.max(...hits), used = hits.filter(h => h).length;
       T(svg, 20, 22, `thread t accesses a[t × ${s}] → bank (t × ${s}) mod 32`, { 'font-size': 14, 'font-weight': 600 });
-      for (let t = 0; t < 32; t++) { R(svg, 20 + t * 30, 34, 26, 20, { fill: '#C9DBF4', rx: 2 }); T(svg, 33 + t * 30, 48, t, { ...mid, 'font-size': 9 }); }
+      for (let t = 0; t < 32; t++) { R(svg, 20 + t * 30, 34, 26, 20, { fill: '#C9DBF4', rx: 2 }); T(svg, 33 + t * 30, 49, t, { ...mid, 'font-size': 13 }); }
       for (let t = 0; t < 32; t++) { const b = (t * s) % 32; svg.appendChild(el('line', { x1: 33 + t * 30, y1: 54, x2: 33 + b * 30, y2: 120, stroke: hits[b] > 1 ? RED : BLUE, 'stroke-width': 1.2, opacity: .7 })); }
       for (let b = 0; b < 32; b++) {
-        R(svg, 20 + b * 30, 120, 26, 24, { fill: '#EDEDED', stroke: '#bdbdbd', rx: 2 }); T(svg, 33 + b * 30, 136, b, { ...mid, 'font-size': 9 });
+        R(svg, 20 + b * 30, 120, 26, 24, { fill: '#EDEDED', stroke: '#bdbdbd', rx: 2 }); T(svg, 33 + b * 30, 137, b, { ...mid, 'font-size': 13 });
         const h = hits[b] * 4;
         if (hits[b]) R(svg, 21 + b * 30, 150, 24, h, { fill: hits[b] > 1 ? RED : GREEN, rx: 1 });
-        if (hits[b] > 1) T(svg, 33 + b * 30, 162 + h, hits[b], { ...mid, 'font-size': 10, fill: RED });
+        if (hits[b] > 1) T(svg, 33 + b * 30, 164 + h, hits[b], { ...mid, 'font-size': 13, fill: RED });
       }
-      T(svg, 20, 116, 'banks (4 B wide)', { 'font-size': 11, class: 'lbl' });
+      T(svg, 20, 115, 'banks (4 B wide)', { 'font-size': 13, class: 'lbl' });
       root.querySelector('[data-out]').innerHTML = `banks used: <b>${used}</b> · conflict degree: <b>${deg}-way</b> → the hardware splits the access into <b>${deg}</b> pass${deg > 1 ? 'es' : ''} (gcd(${s}, 32) = ${gcd(s, 32)})`;
       root.querySelector('[data-cap]').innerHTML = deg === 1 ? 'Every thread reaches a <b>different bank</b>: all 32 accesses are served in parallel.'
         : `${32 / deg} bank${used > 1 ? 's' : ''} receive${used > 1 ? '' : 's'} ${deg} requests each: a <b>${deg}-way bank conflict</b>. The bank can serve one request at a time, so the access takes ${deg} times as long.`;
@@ -507,13 +507,13 @@
         const lin = r * cols + c, b = lin % NB, pad = c === NB;
         const hit = c === ty && k >= 1;
         R(svg, 20 + c * cell, 36 + r * cell, cell - 2, cell - 2, { fill: pad ? '#fff' : pal[b], 'fill-opacity': pad ? 1 : (hit ? 1 : .35), stroke: hit ? INK : (pad ? '#bdbdbd' : 'none'), 'stroke-width': hit ? 2.5 : 1, 'stroke-dasharray': pad ? '3 3' : '' });
-        T(svg, 20 + c * cell + 16, 36 + r * cell + 21, pad ? '' : b, { ...mid, 'font-size': 11 });
+        T(svg, 20 + c * cell + 16, 36 + r * cell + 21, pad ? '' : b, { ...mid, 'font-size': 13 });
       }
-      T(svg, 20, 36 + NB * cell + 18, 'number = bank of each element; dashed column = padding, never used', { 'font-size': 11, class: 'lbl' });
+      T(svg, 20, 36 + NB * cell + 18, 'number = bank of each element; dashed column = padding, never used', { 'font-size': 13, class: 'lbl' });
       const X = 380;
       T(svg, X, 52, `the warp (tx = 0 … 7, ty = ${ty}) writes column ${ty}:`, { 'font-size': 13 });
       const banks = [];
-      for (let tx = 0; tx < NB; tx++) { const lin = tx * cols + ty, b = lin % NB; banks.push(b); if (k >= 1) T(svg, X, 80 + tx * 22, `tx ${tx}: a[${tx}][${ty}] = index ${tx}×${cols}+${ty} = ${lin} → bank ${b}`, { 'font-size': 12, fill: k >= 2 ? (new Set(banks).size === banks.length || mode === 'pad' ? INK : RED) : INK }); }
+      for (let tx = 0; tx < NB; tx++) { const lin = tx * cols + ty, b = lin % NB; banks.push(b); if (k >= 1) T(svg, X, 80 + tx * 22, `tx ${tx}: a[${tx}][${ty}] = index ${tx}×${cols}+${ty} = ${lin} → bank ${b}`, { 'font-size': 13, fill: k >= 2 ? (new Set(banks).size === banks.length || mode === 'pad' ? INK : RED) : INK }); }
       const deg = Math.max(...Array.from({ length: NB }, (_, b) => banks.filter(x => x === b).length));
       if (k >= 2) T(svg, X, 270, deg === 1 ? 'all different banks: no conflict' : `all in bank ${banks[0]}: ${deg}-way conflict`, { 'font-size': 15, 'font-weight': 600, fill: deg === 1 ? GREEN : RED });
       const caps = {
@@ -548,8 +548,8 @@
         tasks.push({ s, start, t });
       }
       const total = Math.max(...tasks.map(o => o.start + ov + per * wk));
-      for (let s = 0; s < rows; s++) { T(svg, 20, 30 + s * 30 + 14, `slot ${s}`, { 'font-size': 11 }); R(svg, X0, 30 + s * 30, 8 * u, 22, { fill: '#F7F7F7', rx: 2 }); }
-      if (slots > rows) T(svg, 20, 30 + rows * 30 + 14, `… ${slots - rows} more slots`, { 'font-size': 11, class: 'lbl' });
+      for (let s = 0; s < rows; s++) { T(svg, 20, 30 + s * 30 + 16, `slot ${s}`, { 'font-size': 13 }); R(svg, X0, 30 + s * 30, 8 * u, 22, { fill: '#F7F7F7', rx: 2 }); }
+      if (slots > rows) T(svg, 20, 30 + rows * 30 + 14, `… ${slots - rows} more slots`, { 'font-size': 13, class: 'lbl' });
       const lim = (k + 1) / 8 * total;
       tasks.forEach(o => {
         if (o.s >= rows) return;
@@ -557,7 +557,7 @@
         const a = Math.min(lim, o.start), b = Math.min(lim, o.start + ov);
         if (b > a) R(svg, X0 + a * u, y, (b - a) * u - 1, 22, { fill: '#9a9a9a', rx: 2 });
         for (let j = 0; j < per; j++) { const c = o.start + ov + j * wk, d = Math.min(lim, c + wk); if (d > c) R(svg, X0 + c * u, y, (d - c) * u - 1, 22, { fill: BLUE, rx: 2 }); }
-        if (lim >= o.start + ov) T(svg, X0 + o.start * u + 4, y + 15, `t${o.t}`, { 'font-size': 10, fill: '#fff' });
+        if (lim >= o.start + ov) T(svg, X0 + o.start * u + 5, y + 16, `t${o.t}`, { 'font-size': 13, fill: '#fff' });
       });
       const yb = 30 + (rows + (slots > rows ? 1 : 0)) * 30 + 22;
       svg.setAttribute('viewBox', `0 0 1000 ${yb + 14}`);
@@ -583,20 +583,20 @@
       svg.innerHTML = '';
       const row = (y, blocks, len, label) => {
         const waves = blocks / C, full = Math.ceil(waves - 1e-9);
-        T(svg, 20, y + 17, label, { 'font-size': 13 });
-        const u = Math.min(60, 440 / Math.max(1, full * len));
+        T(svg, 4, y + 18, label, { 'font-size': 14 });
+        const u = Math.min(60, 440 / Math.max(1, full * len)), X = 150;
         for (let w = 0; w < full; w++) {
           const frac = Math.min(1, waves - w);
-          R(svg, 140 + w * len * u, y, len * u - 3, 26, { fill: '#F4F4F4', stroke: '#c9c9c9', rx: 2 });
-          R(svg, 140 + w * len * u, y, (len * u - 3) * frac, 26, { fill: frac < 1 ? GOLD : BLUE, rx: 2 });
+          R(svg, X + w * len * u, y, len * u - 3, 26, { fill: '#F4F4F4', stroke: '#c9c9c9', rx: 2 });
+          R(svg, X + w * len * u, y, (len * u - 3) * frac, 26, { fill: frac < 1 ? GOLD : BLUE, rx: 2 });
         }
         return { waves, time: full * len };
       };
       const a = row(30, B, 1, `${fmt(B)} blocks`);
       const nb = Math.ceil(B / f);
       const b = row(90, nb, f, `${fmt(nb)} blocks × ${f}`);
-      T(svg, 20, 140, 'one bar per wave; length = time (a coarsened block runs f times longer)', { 'font-size': 11, class: 'lbl' });
-      T(svg, 20, 158, 'blue = full wave, gold = partial wave', { 'font-size': 11, class: 'lbl' });
+      T(svg, 4, 142, 'one bar per wave; length = time (a coarsened block runs f times longer)', { 'font-size': 14, class: 'lbl' });
+      T(svg, 4, 162, 'blue = full wave, gold = partial wave', { 'font-size': 14, class: 'lbl' });
       out.innerHTML = `before: ${a.waves.toFixed(2)} waves → time <b>${a.time}</b> · after coarsening by ${f}: ${b.waves.toFixed(2)} waves → time <b>${b.time}</b>` +
         `<br>${b.waves < 1 ? `<span style="color:#B03A3A">only ${Math.round(b.waves * 100)} % of the GPU is used</span>` : Math.abs(b.waves - Math.round(b.waves)) > 1e-9 ? '<span style="color:#B03A3A">partial last wave: tail effect</span>' : 'whole waves only'} (ignores the overhead saved by coarsening)`;
     };
@@ -622,11 +622,12 @@
       for (let i = 0; i < shown; i++) {
         const x = s[i], c = x === '·' ? PINK : x === 'br' ? '#9a9a9a' : x[0] === 'A' ? BLUE : GOLD;
         R(svg, 20 + i * u, 50, u - 3, 40, { fill: c, rx: 2 });
-        T(svg, 20 + i * u + (u - 3) / 2, 75, x === '·' ? 'stall' : x, { ...mid, 'font-size': x === '·' ? 8 : 12, fill: x === '·' ? RED : '#fff' });
+        if (x !== '·') T(svg, 20 + i * u + (u - 3) / 2, 75, x, { ...mid, 'font-size': 13, fill: '#fff' });
       }
-      T(svg, 20, 36, 'cycles →', { 'font-size': 12, class: 'lbl' });
+      T(svg, 20, 36, 'cycles →', { 'font-size': 13, class: 'lbl' });
+      R(svg, 20 + 27 * u - 14, 24, 14, 14, { fill: PINK, rx: 2 }); T(svg, 20 + 27 * u - 20, 36, 'stall', { 'font-size': 13, fill: RED, 'text-anchor': 'end' });
       T(svg, 20, 130, `cycles for 4 iterations: ${s.length} · branches: ${s.filter(x => x === 'br').length} · stall cycles: ${s.filter(x => x === '·').length}`, { 'font-size': 14, 'font-weight': 600 });
-      T(svg, 20, 160, 'toy timing: B(i) needs the result of A(i), ready 3 cycles after A starts; a branch stalls the thread 2 cycles (no branch prediction)', { 'font-size': 11, class: 'lbl' });
+      T(svg, 20, 160, 'toy timing: B(i) needs the result of A(i), ready 3 cycles after A starts; a branch stalls the thread 2 cycles (no branch prediction)', { 'font-size': 13, class: 'lbl' });
       const c = {
         rolled: 'The plain loop: after each A(i) the thread waits for its result before B(i), and every iteration ends with a branch that stalls it again.',
         unrolled: 'Unrolled by 4: the body is copied 4 times, so there is one branch instead of four. The waits between A and B remain.',
@@ -661,17 +662,17 @@
       const { ev, bars, total } = sim(), u = 760 / 9.5, X0 = 120, lim = (k + 1) / 10 * total;
       ev.forEach((list, j) => {
         const y = 30 + j * 40;
-        T(svg, 20, y + 18, `thread ${j}`, { 'font-size': 12 });
+        T(svg, 20, y + 18, `thread ${j}`, { 'font-size': 13 });
         list.forEach(([kind, a, b, it]) => {
           const e = Math.min(b, lim); if (e <= a) return;
           const c = kind === 'w' ? PINK : kind === 'R' ? BLUE : GOLD;
           R(svg, X0 + a * u, y, (e - a) * u - 1, 26, { fill: c, rx: 2 });
-          if (kind !== 'w' && e - a > .5) T(svg, X0 + a * u + 4, y + 17, kind === 'R' ? (mode === 'two' ? `read ${'AB'[it % 2]}` : 'read') : (mode === 'two' ? `write ${'BA'[it % 2]}` : 'write'), { 'font-size': 10, fill: '#fff' });
+          if (kind !== 'w' && e - a > .65) T(svg, X0 + a * u + 4, y + 18, kind === 'R' ? (mode === 'two' ? `read ${'AB'[it % 2]}` : 'read') : (mode === 'two' ? `write ${'BA'[it % 2]}` : 'write'), { 'font-size': 13, fill: '#fff', style: 'font-family:var(--body)' });
         });
       });
       bars.forEach(b => { if (b <= lim) L(svg, X0 + b * u, 24, X0 + b * u, 192, { stroke: INK, 'stroke-width': 2.5 }); });
       T(svg, 20, 220, `barriers: ${bars.length} · time for 3 iterations: ${total.toFixed(1)} · pink = waiting at a barrier`, { 'font-size': 14, 'font-weight': 600 });
-      T(svg, 20, 248, mode === 'one' ? 'one buffer: read buffer[other]; barrier; write buffer[mine]; barrier' : 'two buffers: read in[other]; write out[mine]; barrier; swap(in, out)', { 'font-size': 12, class: 'lbl' });
+      T(svg, 20, 248, mode === 'one' ? 'one buffer: read buffer[other]; barrier; write buffer[mine]; barrier' : 'two buffers: read in[other]; write out[mine]; barrier; swap(in, out)', { 'font-size': 13, class: 'lbl' });
       root.querySelector('[data-cap]').innerHTML = mode === 'one'
         ? 'With one buffer, each iteration needs <b>two barriers</b>: after the reads (write-after-read: do not overwrite what others still read) and after the writes (read-after-write: do not read before the value is there). Every barrier makes the fast threads wait for the slowest.'
         : 'Reads come from one buffer and writes go to the other, so a write can never clobber a value someone is still reading: the write-after-read barrier is gone. One barrier per iteration (the true dependence) and the buffers swap roles: <b>double buffering</b>.';
@@ -717,10 +718,10 @@
     let bn = 'bw';
     const svg = newSvg(root, '0 0 1000 300', 'The optimization cycle: measure, find the bottleneck, apply an optimization that relieves it, measure again');
     const nodes = [['measure', 'profiler, roofline'], ['find the bottleneck', 'which resource limits it?'], ['pick an optimization', 'that relieves that resource'], ['check side effects', 'does it overload another?'], ['measure again', 'close to the roof? stop']];
-    const pos = nodes.map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / 5; return [220 + 170 * Math.cos(a), 150 + 120 * Math.sin(a)]; });
+    const pos = nodes.map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / 5; return [250 + 160 * Math.cos(a), 150 + 120 * Math.sin(a)]; });
     const hG = arrowHead(svg, 'st-g', GRAY);
     pos.forEach((p, i) => { const q = pos[(i + 1) % 5]; svg.appendChild(el('line', { x1: p[0] + (q[0] - p[0]) * .3, y1: p[1] + (q[1] - p[1]) * .3, x2: p[0] + (q[0] - p[0]) * .7, y2: p[1] + (q[1] - p[1]) * .7, stroke: GRAY, 'stroke-width': 2, 'marker-end': hG })); });
-    const nb = nodes.map(([a, b], i) => { const [x, y] = pos[i]; const r = R(svg, x - 85, y - 24, 170, 48, { class: 'mem', rx: 6 }); T(svg, x, y - 4, a, { ...mid, 'font-size': 13, 'font-weight': 600 }); T(svg, x, y + 14, b, { ...mid, 'font-size': 10, class: 'lbl' }); return r; });
+    const nb = nodes.map(([a, b], i) => { const [x, y] = pos[i]; const r = R(svg, x - 92, y - 24, 184, 48, { class: 'mem', rx: 6 }); T(svg, x, y - 4, a, { ...mid, 'font-size': 13, 'font-weight': 600 }); T(svg, x, y + 15, b, { ...mid, 'font-size': 13, class: 'lbl' }); return r; });
     const side = svg.appendChild(el('g'));
     const B = {
       bw: ['global memory bandwidth (memory-bound, far below the roof)', ['coalesced accesses', 'shared memory tiling', 'register tiling', 'vector loads'], ['watch shared memory and registers: they can cut occupancy']],
@@ -735,10 +736,10 @@
       nb.forEach((r, i) => r.classList.toggle('on', i === k));
       side.innerHTML = '';
       const [name, good, bad] = B[bn];
-      const add = (y, s, c, w) => side.appendChild(el('text', { x: 470, y, 'font-size': 13, fill: c, 'font-weight': w || 400 }, s));
-      add(40, `bottleneck: ${name}`, INK, 600);
-      add(74, 'try:', GREEN, 600); good.forEach((g, i) => add(98 + i * 22, `✓ ${g}`, GREEN));
-      add(110 + good.length * 22, 'careful:', RED, 600); bad.forEach((g, i) => add(134 + good.length * 22 + i * 22, `✗ ${g}`, RED));
+      const add = (y, s, c, w) => side.appendChild(el('text', { x: 510, y, 'font-size': 13, fill: c, 'font-weight': w || 400 }, s));
+      add(40, 'bottleneck:', INK, 600); add(62, name, INK, 600);
+      add(96, 'try:', GREEN, 600); good.forEach((g, i) => add(120 + i * 22, `✓ ${g}`, GREEN));
+      add(132 + good.length * 22, 'careful:', RED, 600); bad.forEach((g, i) => add(156 + good.length * 22 + i * 22, `✗ ${g}`, RED));
       cap.innerHTML = ['<b>Measure</b> first: a profiler (Nsight Compute) reports how close each resource is to its limit.',
         'The <b>bottleneck</b> is the resource that limits this kernel on this GPU. Another GPU may have a different one.',
         'Choose an optimization that relieves <b>that</b> resource. Optimizations trade one resource for another; relieving one that is not the bottleneck gains nothing.',

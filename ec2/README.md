@@ -1,5 +1,9 @@
 # EC2 — CUDA from the first kernel to the parallel patterns
 
+**Never used Colab or CUDA before?** Start with the setup guide
+[`../00_cuda_colab_setup/cuda_colab_setup.pdf`](../00_cuda_colab_setup/cuda_colab_setup.pdf): it walks you
+through your first Colab notebook, getting a GPU, and compiling and running a CUDA hello world.
+
 Runnable CUDA for the GPU part of the course, following *Programming Massively Parallel
 Processors* (Hwu, Kirk, El Hajj) and the slide decks 11 to 18. The numbered folders form one
 learning path: start at `01_first_kernels` and go in order. Inside every folder the work goes from
