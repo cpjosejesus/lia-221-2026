@@ -1,0 +1,532 @@
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 17</div>
+  <h1>Parallel histogram: atomics and privatization</h1>
+  <p class="muted">The first GPU pattern where any thread may write any output element. This session is about making those updates <b>correct</b> with <code>cuda::atomic_ref</code>, understanding why atomics are <b>slow</b> under contention, and making them fast with <b>privatization</b> at the block and thread level and with <b>thread coarsening</b>.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 9 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/histogram</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>What you already know</h2>
+  <div class="cols">
+    <div style="display:grid;gap:.8em">
+<pre style="font-size:.5em"><code>void histogram_sequential(unsigned char* image,
+    unsigned int* bins, unsigned int width,
+    unsigned int height) {
+  for (unsigned int i = 0; i &lt; width*height; ++i) {
+    unsigned char b = image[i];
+    ++bins[b];             // one bin per intensity
+  }
+}</code></pre>
+      <table>
+        <tr><th>session 10, CPU, 10 tasks</th><th>30 M increments</th></tr>
+        <tr><td>shared vector + mutex</td><td>~750 ms</td></tr>
+        <tr><td>shared vector of atomics</td><td>~1200 ms</td></tr>
+        <tr><td>private histogram per task, merged once</td><td>~3 ms</td></tr>
+      </table>
+    </div>
+    <ul class="small">
+      <li>A histogram counts how many inputs fall in each bin. The sequential loop is O(N), streams the input and keeps the bins in L1: memory-bound.</li>
+      <li>Session 08: <code>++x</code> on shared data is a <b>read-modify-write</b> race; <code>std::atomic</code>, <code>fetch_add</code>, memory orders and CAS fix it.</li>
+      <li>Session 10: atomics are correct but slow when everybody hammers the same counters. <b>Accumulate privately, merge rarely</b> was 250 to 400 times faster.</li>
+      <li>Today: the same story with <b>hundreds of thousands</b> of threads. What changes is the hardware: where atomics execute, how many copies we can afford, and where they live (global, shared, registers).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>One thread per pixel: output interference</h2>
+  <div class="diagram" data-anim="tree">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="seq" class="on">sequential scan</button><button data-mode="par">one thread per pixel</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">8 × 8 grayscale tree, 4 intervals of 64 intensities</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Read-modify-write: the lost update</h2>
+  <div class="diagram" data-anim="race">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="a" class="on">no overlap</button><button data-mode="b">overlap</button><button data-mode="atomic">atomic</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">two threads increment bins[x], initially 0</span></div>
+  </div>
+  <p class="small muted">The same race outside computers: two customers see seat 9C free on the seat map, both pick it, both mark it taken; two kiosks hand out the same ticket number. Read, modify, write must be one <b>indivisible</b> unit.</p>
+</section>
+
+<section class="slide">
+  <h2>Atomic operations in CUDA C++</h2>
+  <div class="cols wc">
+<pre><code>#include &lt;cuda/atomic&gt;
+
+template &lt;typename T, cuda::thread_scope Scope&gt;
+class cuda::atomic_ref;          // like C++20 std::atomic_ref
+
+// wrap an existing object, then operate on it
+cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+    bins_ref(bins[b]);
+unsigned int old =
+    bins_ref.fetch_add(1, cuda::memory_order_relaxed);
+
+// T fetch_add(T arg, cuda::std::memory_order order);
+// returns the value *before* the addition. Also:
+// fetch_sub, fetch_min, fetch_max, fetch_and, fetch_or,
+// fetch_xor, exchange, compare_exchange_*, load, store
+
+// the older C-style API, still common:
+atomicAdd(&amp;bins[b], 1u);        // device scope, relaxed
+atomicAdd_block(&amp;bins_s[b], 1u); // block scope</code></pre>
+    <ul class="small">
+      <li>An atomic operation performs read, modify and write so that no other atomic on the same location can overlap it. The hardware <b>serializes</b> them, in no particular order.</li>
+      <li><code>atomic_ref</code> does not own the data: it gives atomic access to an ordinary <code>unsigned int</code> in a plain array. Constructing it costs nothing at run time.</li>
+      <li>Two template parameters: the type <code>T</code> (<code>int</code>, <code>unsigned int</code>, <code>float</code> …) and the <b>scope</b> of threads that must see the operation as atomic.</li>
+      <li>The argument of <code>fetch_add</code> has type <code>T</code>: <code>1</code> becomes an <code>unsigned int</code>.</li>
+      <li>Why not <code>cuda::atomic&lt;T&gt;</code>? It makes <i>every</i> access atomic from creation; the bins are also zeroed and read non-atomically, so the chapter uses <code>atomic_ref</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the basic histogram kernel</h2>
+  <div class="cols wc">
+<pre><code>#include &lt;cuda/atomic&gt;
+#define NUM_BINS 256
+
+__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  unsigned int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i &lt; width*height) {
+    unsigned char b = image[i];
+    cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+        bins_ref(bins[b]);
+    bins_ref.fetch_add(1, cuda::memory_order_relaxed);
+  }
+}
+
+// host: bins must start at zero
+cudaMemset(bins_d, 0, NUM_BINS*sizeof(unsigned int));
+histogram_kernel&lt;&lt;&lt;cdiv(width*height, 256), 256&gt;&gt;&gt;(
+    image_d, bins_d, width, height);</code></pre>
+    <ul class="small">
+      <li>The sequential loop becomes the usual thread index plus a boundary check: one thread per pixel.</li>
+      <li><code>++bins[b]</code> becomes an atomic reference to <code>bins[b]</code> and a <code>fetch_add</code>.</li>
+      <li><b>Device scope</b>: threads of <i>different blocks</i> update the same bins, so the increments must be atomic across the whole GPU.</li>
+      <li>The returned old value is ignored: the thread only needs the increment to happen.</li>
+      <li>Correct, simple, and slow on real images. The rest of the session explains why and fixes it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread scopes: who must see the operation as atomic?</h2>
+  <div class="diagram" data-anim="scopes">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="thread">thread_scope_thread</button><button data-mode="block">thread_scope_block</button><button data-mode="device" class="on">thread_scope_device</button><button data-mode="system">thread_scope_system</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why <code>memory_order_relaxed</code> is enough</h2>
+  <div class="cols wl">
+    <div style="display:grid;gap:.8em">
+<pre style="font-size:.5em"><code>unsigned char b = image[i];                     // (1) load
+cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+    bins_ref(bins[b]);                 // the address needs b
+bins_ref.fetch_add(1, cuda::memory_order_relaxed);  // (2)</code></pre>
+      <table>
+        <tr><th>order</th><th>guarantees</th><th>histogram?</th></tr>
+        <tr><td><code>relaxed</code></td><td>the RMW is atomic; nothing about other accesses</td><td class="ok">enough</td></tr>
+        <tr><td><code>acquire</code> / <code>release</code></td><td>also orders the thread's earlier or later accesses around it</td><td>when the atomic publishes other data (a flag)</td></tr>
+        <tr><td><code>seq_cst</code></td><td>plus one total order of all seq_cst operations</td><td>default of <code>std::atomic</code>; extra cost, no benefit here</td></tr>
+      </table>
+    </div>
+    <ul class="small">
+      <li>The order parameter tells the compiler and the hardware which <b>reorderings</b> of this thread's other memory accesses are allowed around the atomic.</li>
+      <li>The only other access is the load of <code>image[i]</code>, and the atomic's <b>address depends on its value</b>: the data dependence already forces (1) before (2).</li>
+      <li>Nobody reads the bins while the kernel runs. Results become visible at the kernel boundary (or after <code>__syncthreads()</code> in the privatized kernels).</li>
+      <li>Stronger orders matter when an atomic signals that <i>other</i> data is ready, as in the single-pass scan of a later chapter. Later chapters also use the <b>returned value</b>, e.g. to claim a slot in an output queue.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Contention: many threads, few bins</h2>
+  <div class="diagram" data-anim="contend">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><label style="font-family:var(--mono)">hot-bin share % <input data-in="s" type="number" min="12.5" max="100" step="12.5" value="50" style="font:inherit;width:4em"></label><button data-p="12.5">uniform</button><button data-p="50" class="on">tree image</button><button data-p="75">75 %</button><button data-p="100">all one bin</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>An atomic costs a full memory round trip</h2>
+  <div class="diagram" data-anim="timeline">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">atomics on one location, 1 GHz clock; latencies are the book's DRAM example and illustrative cache values</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Atomic throughput versus memory bandwidth</h2>
+  <div class="cfg" data-anim="thru">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">channels × bytes</span><input type="number" min="1" max="64" value="8" data-in="ch" style="width:3.5em"><input type="number" min="1" max="64" value="8" data-in="bw" style="width:3.5em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">clock (GHz)</span><input type="number" min="0.1" max="5" step="0.1" value="1" data-in="f"></div>
+      <div class="cfg-row"><span class="cfg-lbl">DRAM latency (cyc)</span><input type="number" min="1" max="2000" value="200" data-in="ld"></div>
+      <div class="cfg-row"><span class="cfg-lbl">L2 latency (cyc)</span><input type="number" min="1" max="500" value="20" data-in="ll"></div>
+      <div class="cfg-row"><span class="cfg-lbl">bins</span><input type="number" min="1" max="65536" value="256" data-in="n"></div>
+      <div class="cfg-row"><span class="cfg-lbl">hottest bin (% of data)</span><input type="number" min="0" max="100" step="any" value="0" data-in="p"></div>
+      <div class="presets"><button data-p="8,8,1,200,20,256,0" class="on">book example</button><button data-p="8,8,1,200,20,4,50">tree image</button><button data-p="8,8,1,200,20,256,30">skewed photo</button></div>
+      <p class="small muted" style="margin:0">DDR: 2 transfers per clock per channel. 0 % = uniform. An atomic = one load latency + one store latency.</p>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Privatization: a private histogram per block</h2>
+  <div class="diagram" data-anim="priv">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">3 blocks of 8 threads, 4 bins (real blocks have up to 1024 threads)</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: private copies in global memory</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int* bins_pool,
+    unsigned int width, unsigned int height) {
+  unsigned int* bins_priv = &amp;bins_pool[blockIdx.x*NUM_BINS];
+
+  unsigned int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i &lt; width*height) {
+    unsigned char b = image[i];
+    cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+        bins_priv_ref(bins_priv[b]);
+    bins_priv_ref.fetch_add(1, cuda::memory_order_relaxed);
+  }
+  __syncthreads();
+
+  for (unsigned int b = threadIdx.x; b &lt; NUM_BINS; b += blockDim.x) {
+    if (bins_priv[b] &gt; 0) {
+      cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+          bins_ref(bins[b]);
+      bins_ref.fetch_add(bins_priv[b], cuda::memory_order_relaxed);
+    }
+  }
+}</code></pre>
+    <ul class="small">
+      <li><code>bins_pool</code>: gridDim.x × NUM_BINS counters, allocated <b>and zeroed</b> by the host. Block k owns the slice starting at k × NUM_BINS.</li>
+      <li>Contention drops by roughly the number of active blocks. The copies are small and hot, so they stay in L2.</li>
+      <li><b>Block scope</b> for the private copy: only this block touches it, which may allow a faster atomic.</li>
+      <li><code>__syncthreads()</code>, then each thread commits bins b, b + blockDim.x, …: works for any number of bins. Zero bins are skipped.</li>
+      <li>The commit is <b>device scope</b>, but at most one thread per block hits each public bin.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Where the private copy lives</h2>
+  <div class="diagram" data-anim="levels">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="public">no privatization</button><button data-mode="global" class="on">per block, global</button><button data-mode="shared">per block, shared</button><button data-mode="cluster">per cluster, DSMEM</button><button data-mode="thread">per thread, registers</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: private copies in shared memory</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  __shared__ unsigned int bins_s[NUM_BINS];
+  for (unsigned int b = threadIdx.x; b &lt; NUM_BINS; b += blockDim.x)
+    bins_s[b] = 0;
+  __syncthreads();
+
+  unsigned int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i &lt; width*height) {
+    unsigned char b = image[i];
+    cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+        bins_s_ref(bins_s[b]);
+    bins_s_ref.fetch_add(1, cuda::memory_order_relaxed);
+  }
+  __syncthreads();
+
+  for (unsigned int b = threadIdx.x; b &lt; NUM_BINS; b += blockDim.x) {
+    if (bins_s[b] &gt; 0) {
+      cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+          bins_ref(bins[b]);
+      bins_ref.fetch_add(bins_s[b], cuda::memory_order_relaxed);
+    }
+  }
+}</code></pre>
+    <ul class="small">
+      <li>The only changes: <code>bins_s</code> is <code>__shared__</code>, so the block zeroes it itself, and needs a <b>first barrier</b> before anyone updates it.</li>
+      <li>Shared memory is on the SM, with a latency of a few cycles: shorter latency → <b>higher atomic throughput</b>.</li>
+      <li>Possible only if NUM_BINS counters fit in shared memory (256 bins: 1 KB).</li>
+      <li><b>Thread block clusters</b> (Hopper and later): blocks of a cluster can share one copy in <b>distributed shared memory</b>, wait for each other with a cluster barrier and commit once per cluster: room for more bins.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The price of privatization: init and commit per block</h2>
+  <div class="cfg" data-anim="cost">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">pixels</span><input type="number" min="1024" value="16777216" data-in="N" style="width:8em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">NUM_BINS</span><input type="number" min="1" max="65536" value="256" data-in="B"></div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input type="number" min="32" max="1024" step="32" value="256" data-in="T"></div>
+      <div class="cfg-row"><span class="cfg-lbl">SMs × blocks per SM</span><input type="number" min="1" max="1000" value="132" data-in="S" style="width:4em"><input type="number" min="1" max="32" value="8" data-in="K" style="width:3.5em"></div>
+      <div class="presets"><button data-p="16777216,256,256,132,8" class="on">4096², H100</button><button data-p="1048576,256,256,40,4">1024², T4</button><button data-p="16777216,4096,256,132,8">4096 bins</button></div>
+      <ul class="small" style="margin-top:.4em">
+        <li>Every block zeroes NUM_BINS counters and commits up to NUM_BINS atomics, however few pixels it processes.</li>
+        <li>Worth it when blocks <b>run at the same time</b>. Blocks beyond what fits on the GPU run in later waves: their overhead buys nothing.</li>
+        <li>Fix: <b>coarsening</b>, fewer blocks with more pixels per thread (next slide).</li>
+      </ul>
+    </div>
+    <div class="cfg-out" data-out></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread coarsening: contiguous or interleaved?</h2>
+  <div class="diagram" data-anim="partition">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="cont" class="on">contiguous</button><button data-mode="inter">interleaved</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy warp of 8 threads, COARSE_FACTOR = 4, 8-byte memory segments</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: coarsening, one line apart</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  __shared__ unsigned int bins_s[NUM_BINS];
+  // ... zero bins_s, __syncthreads() (as before)
+
+  unsigned int segment = COARSE_FACTOR*blockIdx.x*blockDim.x;
+  for (unsigned int c = 0; c &lt; COARSE_FACTOR; ++c) {
+    // contiguous: each thread walks its own run of pixels
+    // unsigned int i = segment + threadIdx.x*COARSE_FACTOR + c;
+    // interleaved: the block sweeps blockDim.x pixels at a time
+<span class="hl-line">    unsigned int i = segment + c*blockDim.x + threadIdx.x;  </span>
+    if (i &lt; width*height) {
+      unsigned char b = image[i];
+      cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+          bins_s_ref(bins_s[b]);
+      bins_s_ref.fetch_add(1, cuda::memory_order_relaxed);
+    }
+  }
+  __syncthreads();
+  // ... commit bins_s to bins (as before)
+}
+// launch: cdiv(width*height, COARSE_FACTOR*256) blocks of 256</code></pre>
+    <ul class="small">
+      <li>Each block owns a segment of COARSE_FACTOR × blockDim.x pixels; the grid shrinks by COARSE_FACTOR.</li>
+      <li><b>Contiguous</b> is the natural CPU choice: each thread streams its own cache lines, and with few threads per cache the lines stay.</li>
+      <li>On a GPU, a warp's 32 loads then hit 32 different places, and with thousands of threads per SM the lines are evicted before the thread comes back.</li>
+      <li><b>Interleaved</b>: in every iteration the warp reads 32 consecutive bytes, one <b>coalesced</b> transaction.</li>
+      <li>Refinement: read 4 pixels (one 32-bit word) per thread per iteration to use the full width of the load path.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread-level privatization</h2>
+  <div class="diagram" data-anim="tpriv">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">one block of 4 threads, COARSE_FACTOR = 6, interleaved, 4 bins</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: thread-level privatization</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>#define NUM_BINS 4            // few bins: 64 intensities each
+__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  __shared__ unsigned int bins_s[NUM_BINS];
+  // ... zero bins_s, __syncthreads() (as before)
+
+  unsigned int bins_t[NUM_BINS] = {};    // private to the thread
+  unsigned int segment = COARSE_FACTOR*blockIdx.x*blockDim.x;
+  for (unsigned int c = 0; c &lt; COARSE_FACTOR; ++c) {
+    unsigned int i = segment + c*blockDim.x + threadIdx.x;
+    if (i &lt; width*height) {
+      unsigned int bin = image[i] / (256/NUM_BINS);
+      #pragma unroll
+      for (unsigned int b = 0; b &lt; NUM_BINS; ++b)
+        bins_t[b] += (bin == b);            // no atomic at all
+    }
+  }
+  for (unsigned int b = 0; b &lt; NUM_BINS; ++b)   // thread -&gt; block
+    if (bins_t[b] &gt; 0) {
+      cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+          bins_s_ref(bins_s[b]);
+      bins_s_ref.fetch_add(bins_t[b], cuda::memory_order_relaxed);
+    }
+  __syncthreads();
+  // ... commit bins_s to bins (as before)      block -&gt; device
+}</code></pre>
+    <ul class="small">
+      <li>Nobody else can see <code>bins_t</code>, so a plain <code>+=</code> is correct.</li>
+      <li>Atomics on shared memory drop from one per pixel to at most NUM_BINS per thread.</li>
+      <li>Why the odd loop instead of <code>++bins_t[bin]</code>? Registers cannot be indexed at run time, so such an array usually lands in <b>local memory</b> (off-chip, cached). With the unrolled compare-and-add every index is a constant and <code>bins_t</code> stays in <b>registers</b>.</li>
+      <li>Three levels now: registers → shared (block scope) → global (device scope).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Many bins: keep only the frequent ones</h2>
+  <div class="cfg" data-anim="hot">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">NUM_BINS</span><input type="number" min="1" max="65536" value="256" data-in="n"></div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input type="number" min="32" max="1024" step="32" value="256" data-in="t"></div>
+      <div class="cfg-row"><span class="cfg-lbl">hot bins per thread</span><input type="number" min="0" max="256" value="4" data-in="k"></div>
+      <div class="cfg-row"><span class="cfg-lbl">skew (Zipf s)</span><input type="number" min="0" max="4" step="0.1" value="1" data-in="s"></div>
+      <div class="presets"><button data-p="4,256,4,1" >4 bins</button><button data-p="256,256,4,1" class="on">256, s = 1</button><button data-p="256,256,8,1.5">256, s = 1.5</button><button data-p="256,256,16,0">uniform</button></div>
+      <ul class="small" style="margin-top:.4em">
+        <li>A full private copy per thread costs NUM_BINS counters per thread: fine for 4 bins, impossible for 256.</li>
+        <li>Many data sets concentrate on a few values (the sky, a background colour). Keep counters only for those in registers; the rare bins go straight to the shared copy with an atomic.</li>
+        <li>The hot bins must be known in advance (a sample, the previous frame) or tracked on the fly.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Privatize only the most recent bin</h2>
+  <div class="diagram" data-anim="agg">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">the elements one thread processes, in order</span></div>
+  </div>
+  <p class="small muted">The book's thread-level privatization for many bins: each thread privatizes <b>one</b> bin, the most recently accessed one, as a counter <code>bin_r</code> in a register. Identical values in localized areas (a sky, a background) become one atomic per <b>run</b> instead of one per pixel. With interleaved partitioning a thread's consecutive pixels are blockDim.x apart, so runs are shorter than in the image itself, but large uniform regions still produce them. (The previous edition called this <i>aggregation</i>.)</p>
+</section>
+
+<section class="slide">
+  <h2>Code: privatizing the most recent bin</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  __shared__ unsigned int bins_s[NUM_BINS];
+  // ... zero bins_s, __syncthreads() (as before)
+  unsigned int segment = COARSE_FACTOR*blockIdx.x*blockDim.x;
+  if (segment + threadIdx.x &lt; width*height) {
+    unsigned int b = image[segment + threadIdx.x];  // first pixel
+    unsigned int bin_r = 1;              // private bin: count of b
+    for (unsigned int c = 1; c &lt; COARSE_FACTOR; ++c) {
+      unsigned int i = segment + c*blockDim.x + threadIdx.x;
+      if (i &lt; width*height) {
+        unsigned char bNext = image[i];
+        if (bNext == b) {
+          ++bin_r;                       // same bin: register only
+        } else {                         // flush, then switch bins
+          cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+              bins_s_ref(bins_s[b]);
+          bins_s_ref.fetch_add(bin_r, cuda::memory_order_relaxed);
+          b = bNext;
+          bin_r = 1;
+        }
+      }
+    }
+    cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+        bins_s_ref(bins_s[b]);           // the last run
+    bins_s_ref.fetch_add(bin_r, cuda::memory_order_relaxed);
+  }
+  __syncthreads();
+  // ... commit bins_s to bins (as before)
+}</code></pre>
+    <ul class="small">
+      <li>The first pixel is loaded before the loop, after a boundary check, and <code>bin_r</code> starts at 1; the loop starts at <code>c = 1</code>.</li>
+      <li>Each new pixel <code>bNext</code> is compared with the private bin: equal, increment the register; different, add the old count to the block's bin with one atomic, then switch.</li>
+      <li>The update is always <b>one element behind</b>, so after the loop one more atomic flushes the last run.</li>
+      <li>More statements and variables: with little similarity between consecutive pixels it can be <b>slower</b> than the previous kernel; with high repetitiveness, much faster.</li>
+      <li>The <code>if</code> can diverge, but with no similarity or heavy similarity all threads take the same path, and reduced contention usually pays for it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The kernels side by side</h2>
+  <table>
+    <tr><th></th><th>basic</th><th>private, global</th><th>private, shared</th><th>+ coarsening</th><th>+ thread-level</th></tr>
+    <tr><td>atomics on the public bins</td><td>1 per pixel</td><td>≤ NUM_BINS per block</td><td>≤ NUM_BINS per block</td><td>≤ NUM_BINS per block, fewer blocks</td><td>same</td></tr>
+    <tr><td>atomics per pixel, where</td><td>1, device scope, L2</td><td>1, block scope, L2</td><td>1, block scope, shared</td><td>1, block scope, shared</td><td>none (registers); ≤ NUM_BINS per thread to shared</td></tr>
+    <tr><td>worst contention</td><td>all threads of the grid</td><td>one block</td><td>one block</td><td>one block</td><td>none while counting</td></tr>
+    <tr><td>extra memory</td><td>—</td><td>gridDim.x × NUM_BINS in global</td><td>NUM_BINS per block in shared</td><td>same</td><td>NUM_BINS per thread in registers</td></tr>
+    <tr><td>init / commit</td><td>—</td><td>host memset / per block</td><td>per block</td><td>per block, amortized</td><td>per thread + per block</td></tr>
+    <tr><td>limits</td><td>skewed data</td><td>global latency</td><td>bins must fit in shared</td><td>enough blocks to fill the GPU</td><td>few bins only</td></tr>
+  </table>
+  <p class="small muted">The same structure appears whenever you count by category: words, intensities, events per type, orders per restaurant. Run all versions and compare: <code>ec2/histogram/histogram_image.cu</code>.</p>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>A histogram's output location depends on the data, so the <b>owner-computes rule</b> does not apply: any thread may update any bin (<b>output interference</b>). Plain <code>++bins[b]</code> loses updates through read-modify-write races.</li>
+    <li><code>cuda::atomic_ref&lt;T, scope&gt;</code> plus <code>fetch_add(1, memory_order_relaxed)</code> makes each update atomic. The scope says which threads must agree; relaxed is enough because nothing else is ordered by the update.</li>
+    <li>Atomics on one location are <b>serialized</b>: their throughput is about the inverse of <b>twice the memory latency</b>. One per 400 cycles is 2.5 M/s against 32 G elements/s of bandwidth. Skewed data concentrates them. Doing them in the last-level cache helps by an order of magnitude.</li>
+    <li><b>Privatization</b> gives subsets of threads their own copies: per block in global memory, per block in shared memory, per cluster in distributed shared memory, per thread in registers. Less contention and lower latency, paid for with init and commit.</li>
+    <li><b>Coarsening</b> reduces the number of private copies to initialize and merge; use <b>interleaved</b> partitioning so warps coalesce. <b>Thread-level privatization</b> goes one level further: a whole copy per thread when there are few bins, or only the most recent bin, which pays off when neighbouring data elements are similar.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 17.1–17.8</h2>
+  <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.3em;font-size:.72em">
+    <li>Each atomic operation in a DRAM system has a total latency of 100 ns. What is the maximal throughput of atomic operations on the same global memory variable?</li>
+    <li>A processor supports atomics in L2: 4 ns in L2, 100 ns in DRAM, and 90 % of the atomics hit in L2. What is the approximate throughput of atomics on the same global memory variable?</li>
+    <li>In 17.1, a kernel performs 5 floating-point operations per atomic operation. What is its maximal floating-point throughput, as limited by the atomics?</li>
+    <li>In 17.1, the variable is privatized into shared memory with a 1 ns access latency; every global atomic becomes a shared one, and the extra global atomics that merge the private copies add 10 % to the execution time. With 5 floating-point operations per atomic, what is the maximal floating-point throughput?</li>
+    <li>A histogram kernel processes 524 288 elements into 128 bins with 1024 threads per block. How many atomics on global memory does (a) the basic kernel perform, (b) the shared-memory privatized kernel without coarsening perform at most, (c) the same with a coarsening factor of 4 perform at most?</li>
+    <li>The private-copies-in-global kernel is launched with 2048 blocks and 256 bins of <code>unsigned int</code>. How large is <code>bins_pool</code>? Why must the host zero it? Which scope does each of its two atomics use, and why?</li>
+    <li>A warp of 32 threads, 1-byte pixels, COARSE_FACTOR = 8, aligned 32-byte sectors. How many sectors does one load of the warp touch with contiguous and with interleaved partitioning, and how many over the whole coarsening loop?</li>
+    <li>A thread of the most-recent-bin kernel sees the bins 7 7 7 2 2 7 7 7 7 1. How many shared-memory atomics does it issue, and where? Why does interleaved partitioning usually produce shorter runs than the image itself?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 17.1–17.8</h2>
+  <table style="font-size:.62em">
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>17.1</td><td>Atomics on one variable are serialized: 1 / 100 ns = <b>10 M atomic operations/s</b>.</td></tr>
+    <tr><td>17.2</td><td>Average latency 0.9 × 4 + 0.1 × 100 = 13.6 ns → 1 / 13.6 ns ≈ <b>73.5 M atomics/s</b>, 7.4 times 17.1.</td></tr>
+    <tr><td>17.3</td><td>5 × 10 M = <b>50 MFLOP/s</b>.</td></tr>
+    <tr><td>17.4</td><td>Shared atomics: 1 / 1 ns = 1 G/s; the merge adds 10 % to the time: 1 G / 1.1 ≈ 0.91 G atomics/s × 5 ≈ <b>4.5 GFLOP/s</b>, about 90 times 17.3.</td></tr>
+    <tr><td>17.5</td><td>(a) one per element: <b>524 288</b>. (b) 524 288 / 1024 = 512 blocks, each commits ≤ 128 bins: <b>≤ 65 536</b>. (c) 128 blocks × 128 bins: <b>≤ 16 384</b>.</td></tr>
+    <tr><td>17.6</td><td>2048 × 256 × 4 B = <b>2 MB</b>. The kernel only adds to its private copy, so it must start at 0 (<code>cudaMemset</code>). Private update: <b>block</b> scope, only this block touches the copy. Commit: <b>device</b> scope, all blocks add into the same public bins.</td></tr>
+    <tr><td>17.7</td><td>Contiguous: thread t reads byte 8t + c, spanning 256 B → <b>8 sectors</b> per load, <b>64</b> over 8 iterations (the same 8 sectors re-read, hits only if they survive in L1). Interleaved: 32 consecutive bytes → <b>1 sector</b> per load, <b>8</b> in total.</td></tr>
+    <tr><td>17.8</td><td>Runs 7 7 7 | 2 2 | 7 7 7 7 | 1 → <b>4 atomics</b> instead of 10: three in the loop, when the bin changes to 2, 7 and 1, and one after the loop for the last run. With interleaving, a thread's consecutive pixels are blockDim.x apart, not neighbours, so they are less likely to share a bin.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study and code</h2>
+  <ul class="small">
+    <li><code>ec2/histogram/histogram_image.cu</code>: the kernels of this session written with <code>cuda::atomic_ref</code> on a 256-bin grayscale image: sequential, basic, private in global, private in shared, contiguous and interleaved coarsening, thread-level privatization with 16 bins, and the book's kernel that privatizes the most recent bin, for 256 bins. Every version is checked against the CPU.</li>
+    <li><code>race_demo.cu</code>: the lost update, live. Plain <code>++bins[b]</code> against <code>atomic_ref</code> on the same input.</li>
+    <li><code>histogram.cu</code>: the text histogram (letters in 7 bins) with <code>atomicAdd</code>, from the basic kernel to coarsening and <b>aggregation</b>, with atomic counts and timings.</li>
+    <li><code>bikeshare_trip_durations.cu</code> and <code>bikeshare_station_hour.cu</code>: ideas for your project from another domain, a bike-sharing system: trip durations with percentiles, and rentals per station and hour.</li>
+    <li><code>colab.ipynb</code>: run everything on a Colab GPU. On a laptop without a GPU: <code>g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code>. Kernels are launched with <code>launch(kernel, grid, block, args...)</code> so the same file compiles both ways.</li>
+    <li><b>Exercise</b>: measure the basic kernel on a uniform image and on an all-white one, then add each optimization and explain every change in time.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>17 · Parallel histogram</span><span id="counter"></span></div>

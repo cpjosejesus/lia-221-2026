@@ -1,0 +1,915 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Convolution on the GPU</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+--acc:#2F6FD0;--acc-soft:#DCE7F8;--acc2:#C98A1B;--acc2-soft:#F6EAD2;--line-strong:#BDBDBD;--bad-soft:#F6DADA;--ok-soft:#D6EBDC}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:5vh 7vw 7vh;display:none;flex-direction:column;justify-content:center;gap:1rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.45em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:62ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.4em}
+.small{font-size:.78em}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2.5vw;align-items:start}
+.cols.wl{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
+.cols.wr{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr)}
+@media (max-width:820px){.cols,.cols.wl,.cols.wr{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.54em;line-height:1.45;background:var(--code);padding:.8em 1em;border-radius:3px;margin:0;overflow:auto;max-height:70vh;white-space:pre-wrap;overflow-wrap:break-word}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.66em;width:100%}th{text-align:left;font-size:.78em;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.35em .8em .35em 0}td{border-bottom:1px solid var(--line);padding:.4em .8em .4em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 7vw;font-size:.55em;color:var(--muted);font-family:var(--mono);background:var(--bg)}
+.note{border-left:3px solid var(--ink);padding-left:1em;max-width:62ch}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+
+.diagram{width:100%;max-width:1150px}
+.svgwrap svg{width:100%;height:auto;max-height:54vh;display:block}
+.dctl{display:flex;gap:.5em;align-items:center;flex-wrap:wrap;font-size:.56em;margin-top:.4em}
+.dctl button{font:inherit;border:1px solid var(--line-strong);background:#fff;color:var(--ink);border-radius:3px;padding:.2em .75em;cursor:pointer}
+.dctl button:hover{border-color:var(--ink)}
+.dctl button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dctl button:focus-visible,.cfg input:focus-visible,.cfg button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.cap{font-family:var(--mono);font-size:.54em;line-height:1.55;min-height:3.2em;margin-top:.3em;white-space:pre-wrap}
+.cap b{color:var(--acc)}
+.cap i{font-style:normal;color:var(--acc2);font-weight:600}
+
+svg text{font-family:var(--mono)}
+svg text:not([fill]){fill:var(--ink)}
+svg .lbl{font-family:var(--body);fill:var(--muted)}
+svg .frame{fill:none;stroke:#9a9a9a;stroke-width:1.5;transition:stroke .3s,stroke-width .3s}
+svg .frame.on{stroke:var(--acc);stroke-width:4}
+svg .dash{fill:none;stroke:#c9c9c9;stroke-width:1.2;stroke-dasharray:5 4}
+svg .sp{fill:#C9DBF4;transition:fill .3s}
+svg .sp.on{fill:var(--acc)}
+svg .ctl{fill:#E6E6E6}
+svg .mem{fill:#EDEDED;stroke:#bdbdbd;stroke-width:1;transition:fill .3s,stroke .3s}
+svg .mem.on{fill:var(--acc2-soft);stroke:var(--acc2);stroke-width:2.5}
+svg .wire{stroke:#bdbdbd;stroke-width:1.5;fill:none;transition:stroke .3s}
+svg .wire.on{stroke:var(--acc2);stroke-width:3}
+svg .wire.blue.on{stroke:var(--acc)}
+svg .chip{fill:#EDEDED;stroke:#9a9a9a;transition:fill .3s,stroke .3s,opacity .3s}
+svg .chip.run{fill:var(--acc-soft);stroke:var(--acc);stroke-width:2}
+svg .chip.done{fill:var(--ok-soft);stroke:var(--ok)}
+svg .chip.gone{opacity:.18}
+svg .bar{fill:var(--acc)}
+svg .bar2{fill:var(--acc2)}
+svg .barok{fill:var(--ok)}
+svg .hatch{fill:url(#hatch)}
+svg .cell{fill:#fff;stroke:#d0d0d0}
+svg .on-a{fill:#86C495}
+svg .on-b{fill:#E7B467}
+svg .on-c{fill:var(--acc)}
+svg .on-y{fill:#F2C230}
+svg .faint{fill:#F4F4F4;stroke:#e2e2e2}
+svg .busy{fill:#5f5f5f}
+svg .idle{fill:var(--bad-soft)}
+svg .ready{fill:#EEF3FB}
+svg .tok{transition:transform .7s ease}
+svg .red{stroke:var(--bad)!important}
+svg .hidden{display:none}
+@media (prefers-reduced-motion:reduce){svg .tok,svg .frame,svg .sp,svg .mem,svg .chip{transition:none}}
+
+/* calculators */
+.cfg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:2.5vw;align-items:start;font-size:.66em}
+@media (max-width:820px){.cfg{grid-template-columns:1fr}}
+.cfg-row{display:flex;gap:.7em;align-items:center;flex-wrap:wrap;margin-bottom:.6em}
+.cfg-lbl{font-family:var(--mono);min-width:9.5em;color:var(--muted)}
+.cfg input{font:inherit;font-family:var(--mono);width:6em;padding:.15em .4em;border:1px solid var(--line-strong);border-radius:3px}
+.cfg .presets{display:flex;flex-wrap:wrap;gap:.4em;margin:.3em 0 .8em}
+.cfg .presets button{font:inherit;font-size:.82em;border:1px solid var(--line-strong);background:#fff;border-radius:3px;padding:.15em .55em;cursor:pointer}
+.cfg .presets button:hover{border-color:var(--ink)}
+.cfg-out{font-family:var(--mono);font-size:.92em;line-height:1.6}
+.cfg-out b{color:var(--acc)}
+.cfg pre{font-size:.82em}
+.cfg-big{font-size:2em;font-weight:600;font-family:var(--mono);line-height:1.1}
+.cfg-big small{font-size:.38em;font-weight:400;color:var(--muted);font-family:var(--body)}
+.cfg-msg{margin-top:.5em}
+.cfg-msg.ok{color:var(--ok)}.cfg-msg.bad{color:var(--bad)}
+.gauge{position:relative;height:.9em;background:var(--code);border-radius:3px;margin:.5em 0;overflow:hidden}
+.gauge i{position:absolute;left:0;top:0;bottom:0;background:var(--acc);transition:width .4s ease}
+canvas[data-canvas]{display:block;max-width:100%}
+.legend{list-style:none;padding:0;margin:.3em 0 0;font-size:.85em;display:flex;flex-wrap:wrap;gap:.3em 1.2em}
+.legend li{display:flex;gap:.45em;align-items:center}
+.legend i{display:inline-block;width:.9em;height:.9em;border:1px solid #aaa;flex:none}
+
+/* 2D -> linear */
+.flat{position:relative;width:100%}
+.flat .fc{position:absolute;display:flex;align-items:center;justify-content:center;font-family:var(--mono);box-sizing:border-box;border:1px solid #fff;transition:left .6s ease,top .6s ease}
+.flat .pad{position:absolute;box-sizing:border-box;border:1px dashed #c9c9c9;background:#fff}
+.flat .wl{position:absolute;font-family:var(--mono);color:var(--acc);font-size:.5em;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.flat .fc{transition:none}}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.5vw}
+
+svg .hl{fill:var(--acc)}
+svg .soft{fill:var(--acc-soft);stroke:#9db7e3}
+svg .soft2{fill:var(--acc2-soft);stroke:#d9b06a}
+.cfg .presets button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.cfg-out table{font-size:.95em}
+[data-anim=hazards] table td{padding:.35em .9em .35em 0}
+.cfg .cap{font-size:.86em}
+.cfg [data-legend] table{font-size:.9em;margin:.3em 0}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 15</div>
+  <h1>Convolution on the GPU</h1>
+  <p class="muted">You already know what a convolution computes. This session is about how to compute it <b>fast on a GPU</b>: mapping threads to outputs, ghost cells and divergence, the arithmetic intensity of each kernel, <b>constant memory</b> and the cache hierarchy, and <b>tiling</b> when input tiles are larger than output tiles.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 7 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/conv</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>Why convolution is a good GPU problem, and a tricky one</h2>
+  <div class="cols">
+    <ul>
+      <li>Every output element is computed <b>independently</b>: ideal data parallelism, one thread per output.</li>
+      <li>Many operations per output: (2r + 1)² multiply-adds in 2D, so large images mean huge amounts of work.</li>
+      <li>But neighbouring outputs <b>share most of their inputs</b>: the same input element is read by up to (2r + 1)² threads.</li>
+      <li>And the edges need <b>boundary handling</b> (ghost cells), in 2D on four sides.</li>
+      <li>Sharing plus awkward boundaries make convolution the classic case for sophisticated tiling and data staging.</li>
+    </ul>
+    <table>
+      <tr><th>Kernel</th><th>Idea</th></tr>
+      <tr><td>basic</td><td>one thread per output, everything from global memory</td></tr>
+      <tr><td>constant memory</td><td>the filter in the constant cache</td></tr>
+      <tr><td>tiled, halo in shared</td><td>block = input tile, load once, reuse</td></tr>
+      <tr><td>tiled, cached halo</td><td>block = output tile, halo from L2</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Threads to output elements</h2>
+  <div class="diagram" data-anim="mapping">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">16 × 16 image, 4 × 4 blocks of 4 × 4 threads, 5 × 5 filter (r = 2)</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the basic 2D kernel</h2>
+  <div class="cols wl">
+<pre><code>__global__ void convolution_2D_basic_kernel(
+    const float* N, const float* F, float* P,
+    int r, int width, int height) {
+  int outCol = blockIdx.x * blockDim.x + threadIdx.x;
+  int outRow = blockIdx.y * blockDim.y + threadIdx.y;
+  if (outRow &lt; height &amp;&amp; outCol &lt; width) {
+    float Pvalue = 0.0f;                 // in a register
+    for (int fRow = 0; fRow &lt; 2*r + 1; ++fRow)
+      for (int fCol = 0; fCol &lt; 2*r + 1; ++fCol) {
+        int inRow = outRow - r + fRow;
+        int inCol = outCol - r + fCol;
+        if (inRow &gt;= 0 &amp;&amp; inRow &lt; height &amp;&amp;
+            inCol &gt;= 0 &amp;&amp; inCol &lt; width)   // skip ghost cells
+          Pvalue += F[fRow*(2*r + 1) + fCol]
+                  * N[inRow*width + inCol];
+      }
+    P[outRow*width + outCol] = Pvalue;
+  }
+}</code></pre>
+    <ul class="small">
+      <li>Same thread mapping as the grayscale kernel: a 2D grid, typically 32 × 32 threads per block.</li>
+      <li>The patch of each output starts at <code>(outRow − r, outCol − r)</code>; the double loop walks the filter.</li>
+      <li>Ghost cells count as 0, so the test simply <b>skips</b> them.</li>
+      <li><code>Pvalue</code> accumulates in a register and is written once at the end.</li>
+      <li>The outer <code>if</code> handles images whose size is not a multiple of the block.</li>
+      <li>Linearized indices: N, F and P are dynamically allocated 1D arrays.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Ghost cells cause divergence, but only at the edges</h2>
+  <div class="cfg" data-anim="ghost">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">width</span><input type="number" min="4" max="64" value="48" data-in="w"></div>
+      <div class="cfg-row"><span class="cfg-lbl">height</span><input type="number" min="4" max="40" value="24" data-in="h"></div>
+      <div class="cfg-row"><span class="cfg-lbl">filter radius r</span><input type="number" min="1" max="7" value="2" data-in="r"></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>Threads near an edge skip a different number of filter positions, so threads of the same warp take different paths in the inner <code>if</code>: <b>control divergence</b>.</li>
+        <li>Its cost grows with the filter radius and shrinks with the image size. For real images and small filters it is minor.</li>
+        <li>The bigger problem is memory bandwidth (next slide).</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide" id="s-ai">
+  <h2>Arithmetic intensity: the real bottleneck</h2>
+  <div class="diagram" data-anim="ai">
+    <div class="svgwrap" data-svg></div>
+    <div class="cfg-out" data-out style="font-size:.56em"></div>
+    <div class="dctl"><label style="font-family:var(--mono)">filter m <input data-in="m" type="number" min="1" max="21" step="2" value="5" style="font:inherit;width:3.5em"></label><label style="font-family:var(--mono)">output tile t <input data-in="t" type="number" min="1" max="128" value="28" style="font:inherit;width:3.5em"></label><button data-p="3,28">3 × 3</button><button data-p="5,28" class="on">5 × 5</button><button data-p="11,28">11 × 11</button><button data-p="13,64">13 × 13, t 64</button></div>
+  </div>
+  <p class="small muted">Ideal: an n × n image, n² outputs × m² multiply-adds = 2n²m² FLOP; reading the input and writing the output once = 8n² B (the filter is negligible) → m²/4 FLOP/B. A 3 × 3 filter (2.25) can never be compute-bound on an H100; an 11 × 11 one (30.25) can. The basic kernel loads 8 B (one N, one F) for every 2 FLOP: 0.25, whatever the filter.</p>
+</section>
+
+<section class="slide">
+  <h2>The filter belongs in constant memory</h2>
+  <div class="diagram" data-anim="bcast">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy warp of 8 threads computing 8 consecutive outputs of one row</span></div>
+  </div>
+  <p class="small muted">Three properties of F: it is <b>small</b> (radius 7 or less in most applications; even in 3D at most 7³ = 343 elements), it <b>does not change</b> while the kernel runs, and <b>all threads</b> read it, in the <b>same order</b>. Constant memory is limited to 64 KB, which F easily fits.</p>
+</section>
+
+<section class="slide">
+  <h2>Code: declaring, filling and using constant memory</h2>
+  <div class="cols wl">
+<pre><code>#define FILTER_RADIUS 2
+// global scope, outside any function
+__constant__ float F_c[2*FILTER_RADIUS + 1][2*FILTER_RADIUS + 1];
+
+// host: copy the filter once, before the launches
+cudaMemcpyToSymbol(F_c, F_h,
+    (2*FILTER_RADIUS + 1) * (2*FILTER_RADIUS + 1) * sizeof(float));
+
+__global__ void convolution_2D_const_mem_kernel(
+    const float* N, float* P, int width, int height) {
+  int outCol = blockIdx.x * blockDim.x + threadIdx.x;
+  int outRow = blockIdx.y * blockDim.y + threadIdx.y;
+  if (outRow &gt;= height || outCol &gt;= width) return;
+  float Pvalue = 0.0f;
+  for (int fRow = 0; fRow &lt; 2*FILTER_RADIUS + 1; ++fRow)
+    for (int fCol = 0; fCol &lt; 2*FILTER_RADIUS + 1; ++fCol) {
+      int inRow = outRow - FILTER_RADIUS + fRow;
+      int inCol = outCol - FILTER_RADIUS + fCol;
+      if (inRow &gt;= 0 &amp;&amp; inRow &lt; height &amp;&amp; inCol &gt;= 0 &amp;&amp; inCol &lt; width)
+        Pvalue += F_c[fRow][fCol] * N[inRow*width + inCol];
+    }
+  P[outRow*width + outCol] = Pvalue;
+}</code></pre>
+    <ul class="small">
+      <li><code>__constant__</code> must be at file scope. Kernels use it as a global variable: <b>no pointer parameter</b> for F.</li>
+      <li><code>cudaMemcpyToSymbol(dest, src, bytes)</code> also tells the runtime the data will not change during kernel execution.</li>
+      <li>Only N comes from global memory now: 2 FLOP per 4 B = <b>0.5 FLOP/B</b>, twice the basic kernel.</li>
+      <li>Normal C++ scoping applies: if host and kernel code are in different files, the kernel file needs an <code>extern</code> declaration of <code>F_c</code>.</li>
+      <li>Alternative: put the weights in a struct and pass it <b>by value</b>. Kernel parameters live in constant memory too, and the runtime copies them at each launch, so different launches can use different filters.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Caches, the constant cache, and shared memory</h2>
+  <div class="diagram" data-anim="hier">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">some CPUs add an L3 of hundreds of MB</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Input tiles are larger than output tiles</h2>
+  <div class="cfg" data-anim="tiles">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">output tile t</span><input type="number" min="1" max="12" value="4" data-in="t"></div>
+      <div class="cfg-row"><span class="cfg-lbl">filter radius r</span><input type="number" min="1" max="4" value="2" data-in="r"></div>
+      <div class="presets"><button data-p="4,2" class="on">4 × 4, r 2</button><button data-p="8,2">8 × 8, r 2</button><button data-p="12,1">12 × 12, r 1</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li><b>Output tile</b>: the outputs one block computes. <b>Input tile</b>: every input element needed for them.</li>
+        <li>The input tile extends r elements beyond the output tile on every side: the <b>halo</b>.</li>
+        <li>A 4 × 4 output tile with a 5 × 5 filter needs an 8 × 8 input tile, 4 times larger. Real tiles are bigger: 16 × 16 → 20 × 20 = 400 elements, still about 1.6 times.</li>
+        <li>Unlike the matrix product of session 13, the tiles differ in size, which is what complicates the kernel.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Two thread organizations</h2>
+  <div class="diagram" data-anim="orgs">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="input" class="on">block = input tile</button><button data-mode="output">block = output tile</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">3 × 3 filter: input tile 8 × 8, output tile 6 × 6</span></div>
+  </div>
+</section>
+
+<section class="slide" id="s-tiled">
+  <h2>The tiled kernel, step by step</h2>
+  <div class="diagram" data-anim="tiled">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">FILTER_RADIUS = 1, IN_TILE_DIM = 8, OUT_TILE_DIM = 6</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: tiled kernel with the halo in shared memory</h2>
+  <div class="cols wl">
+<pre><code>#define IN_TILE_DIM 32
+#define OUT_TILE_DIM (IN_TILE_DIM - 2*FILTER_RADIUS)
+__constant__ float F_c[2*FILTER_RADIUS+1][2*FILTER_RADIUS+1];
+
+__global__ void convolution_tiled_2D_const_mem_kernel(
+    const float* N, float* P, int width, int height) {
+  int col = blockIdx.x*OUT_TILE_DIM + threadIdx.x - FILTER_RADIUS;
+  int row = blockIdx.y*OUT_TILE_DIM + threadIdx.y - FILTER_RADIUS;
+  // phase 1: every thread loads one element of the input tile
+  __shared__ float N_s[IN_TILE_DIM][IN_TILE_DIM];
+  if (row &gt;= 0 &amp;&amp; row &lt; height &amp;&amp; col &gt;= 0 &amp;&amp; col &lt; width)
+    N_s[threadIdx.y][threadIdx.x] = N[row*width + col];
+  else
+    N_s[threadIdx.y][threadIdx.x] = 0.0f;   // ghost cell
+  __syncthreads();
+  // phase 2: only the inner threads compute an output element
+  int tileCol = threadIdx.x - FILTER_RADIUS;
+  int tileRow = threadIdx.y - FILTER_RADIUS;
+  if (col &gt;= 0 &amp;&amp; col &lt; width &amp;&amp; row &gt;= 0 &amp;&amp; row &lt; height &amp;&amp;
+      tileCol &gt;= 0 &amp;&amp; tileCol &lt; OUT_TILE_DIM &amp;&amp;
+      tileRow &gt;= 0 &amp;&amp; tileRow &lt; OUT_TILE_DIM) {
+    float Pvalue = 0.0f;
+    for (int fRow = 0; fRow &lt; 2*FILTER_RADIUS + 1; ++fRow)
+      for (int fCol = 0; fCol &lt; 2*FILTER_RADIUS + 1; ++fCol)
+        Pvalue += F_c[fRow][fCol] * N_s[tileRow + fRow][tileCol + fCol];
+    P[row*width + col] = Pvalue;
+  }
+}
+// launch: dim3 block(IN_TILE_DIM, IN_TILE_DIM),
+//         grid(cdiv(width, OUT_TILE_DIM), cdiv(height, OUT_TILE_DIM))</code></pre>
+    <ul class="small">
+      <li>Blocks are spaced <b>OUT_TILE_DIM</b> apart but are <b>IN_TILE_DIM</b> wide: neighbouring blocks overlap by 2r, each loading its own copy of the halo.</li>
+      <li>Ghost cells are stored as 0, so phase 2 needs no boundary test on the filter loop.</li>
+      <li>One barrier: the read-after-write dependence between loading and using the tile. There is no second phase, so no write-after-read barrier.</li>
+      <li>The thread at (tx, ty) computes output (tx − r, ty − r) of the tile from the patch starting at <code>N_s[ty − r][tx − r]</code>.</li>
+      <li>All global loads happen before the loop: the loop itself only touches shared memory and the constant cache.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>How much did tiling buy?</h2>
+  <div class="cols wl">
+    <div data-anim="aitable" style="font-size:.74em">
+      <div class="cfg-row" style="font-family:var(--mono)">ridge (FLOP/B) <input data-in="ridge" type="number" min="1" value="20" style="font:inherit;width:4em;margin-left:.5em"></div>
+      <div data-out></div>
+    </div>
+    <ul class="small">
+      <li>Internal block: t² outputs × m² multiply-adds = 2t²m² FLOP. It loads (t + m − 1)² inputs and stores t² outputs, 4 B each.</li>
+      <li>Intensity = 2t²m² / (4((t + m − 1)² + t²)): it approaches the ideal m²/4 as t grows, because a larger output tile reuses each loaded element more.</li>
+      <li>Example: 5 × 5 filter, 32 × 32 blocks → 28 × 28 output tiles: <b>5.42 FLOP/B</b>, close to the ideal 6.25 and 21 times the basic kernel.</li>
+      <li>Small filters stay memory-bound however large the tile. Large filters with large tiles become compute-bound.</li>
+      <li>t is capped by the 1024 threads per block and by shared memory; later chapters show ways around both.</li>
+      <li>Blocks at the image edge load fewer elements (ghost cells are not loaded); for large images that effect is negligible.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The cost of block = input tile</h2>
+  <div class="cfg" data-anim="idle">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">IN_TILE_DIM</span><input type="number" min="2" max="32" value="32" data-in="in"></div>
+      <div class="cfg-row"><span class="cfg-lbl">FILTER_RADIUS</span><input type="number" min="0" max="15" value="2" data-in="r"></div>
+      <div class="cfg-row"><span class="cfg-lbl">image width</span><input type="number" min="1" value="4096" data-in="w"></div>
+      <div class="presets"><button data-p="32,1">3 × 3</button><button data-p="32,2">5 × 5</button><button data-p="32,5">11 × 11</button><button data-p="32,8">17 × 17</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <ul class="small">
+      <li><b>Idle threads</b>: the outer ring only loads. Fine for a memory-bound kernel (more loads in flight), wasteful for a compute-bound one.</li>
+      <li><b>Odd tile widths</b>: 32 − 2r is not a power of two, so each block's output rows start at unaligned addresses and stores are less efficient.</li>
+      <li><b>Large filters shrink the output tile</b>: the input tile cannot grow past 32 × 32, so bigger r means smaller t, lower intensity and both problems above made worse.</li>
+      <li>Fixes: make the block the size of the output tile and let threads loop to load the input tile, or do not put the halo in shared memory at all (next slide).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Leaving the halo to the caches</h2>
+  <div class="diagram" data-anim="halo">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy tiles of 6 × 6, 3 × 3 filter</span></div>
+  </div>
+  <p class="small muted">The halo of one tile is the interior of its neighbours. By the time a block needs it, the neighbour has very probably loaded it, so it is waiting in L2 and costs no extra DRAM traffic.</p>
+</section>
+
+<section class="slide">
+  <h2>Code: tiled kernel with cached halos</h2>
+  <div class="cols wl">
+<pre><code>#define TILE_DIM 32
+__global__ void convolution_cached_tiled_2D_const_mem_kernel(
+    const float* N, float* P, int width, int height) {
+  int col = blockIdx.x*TILE_DIM + threadIdx.x;
+  int row = blockIdx.y*TILE_DIM + threadIdx.y;
+  __shared__ float N_s[TILE_DIM][TILE_DIM];      // tile only
+  if (row &lt; height &amp;&amp; col &lt; width)
+    N_s[threadIdx.y][threadIdx.x] = N[row*width + col];
+  else
+    N_s[threadIdx.y][threadIdx.x] = 0.0f;
+  __syncthreads();
+  if (col &lt; width &amp;&amp; row &lt; height) {
+    float Pvalue = 0.0f;
+    for (int fRow = 0; fRow &lt; 2*FILTER_RADIUS + 1; ++fRow)
+      for (int fCol = 0; fCol &lt; 2*FILTER_RADIUS + 1; ++fCol) {
+        int sx = threadIdx.x - FILTER_RADIUS + fCol;
+        int sy = threadIdx.y - FILTER_RADIUS + fRow;
+        if (sx &gt;= 0 &amp;&amp; sx &lt; TILE_DIM &amp;&amp; sy &gt;= 0 &amp;&amp; sy &lt; TILE_DIM) {
+          Pvalue += F_c[fRow][fCol] * N_s[sy][sx];        // inside the tile
+        } else {
+          int gy = row - FILTER_RADIUS + fRow, gx = col - FILTER_RADIUS + fCol;
+          if (gy &gt;= 0 &amp;&amp; gy &lt; height &amp;&amp; gx &gt;= 0 &amp;&amp; gx &lt; width)
+            Pvalue += F_c[fRow][fCol] * N[gy*width + gx];  // halo: L2
+        }                                                   // else: ghost
+      }
+    P[row*width + col] = Pvalue;
+  }
+}</code></pre>
+    <ul class="small">
+      <li>Input tile, output tile and block are all <b>TILE_DIM × TILE_DIM</b>: loading is one element per thread, and nobody is idle.</li>
+      <li>The loading condition is simpler: no halo, so only the usual "inside the image" test.</li>
+      <li>The compute loop is more complex: each patch element is either in the tile (shared memory), in the halo (global memory, usually an L2 hit) or a ghost cell (skipped).</li>
+      <li>Power-of-two tiles also mean aligned stores and less memory and control divergence than the previous kernel.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The four kernels side by side</h2>
+  <table>
+    <tr><th></th><th>basic</th><th>constant F</th><th>tiled, halo in shared</th><th>tiled, cached halo</th></tr>
+    <tr><td>global loads per output</td><td>2m² (N and F)</td><td>m² (N)</td><td>(t + m − 1)² / t² (once per tile)</td><td>1 + halo reads, mostly L2 hits</td></tr>
+    <tr><td>FLOP/B (5 × 5, 32 × 32 blocks)</td><td>0.25</td><td>0.5</td><td>5.42</td><td>about 6.25 if every halo read hits L2</td></tr>
+    <tr><td>threads per block</td><td>any</td><td>any</td><td>input tile (32 × 32), outputs (32 − 2r)²</td><td>output tile, all compute</td></tr>
+    <tr><td>shared memory</td><td>—</td><td>—</td><td>IN_TILE_DIM² × 4 B</td><td>TILE_DIM² × 4 B</td></tr>
+    <tr><td>divergence</td><td>edges of the image</td><td>edges of the image</td><td>idle ring + image edges</td><td>tile edges in the compute loop</td></tr>
+    <tr><td>code complexity</td><td>low</td><td>low</td><td>medium</td><td>medium-high</td></tr>
+  </table>
+  <p class="small muted">The same ideas carry to 1D and 3D: only the index arithmetic and the loop nesting change. Run all four kernels and compare: <code>ec2/conv/conv.cu</code>.</p>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>One thread per output element, a 2D grid of 2D blocks; ghost cells are skipped, causing divergence only near the edges.</li>
+    <li>The basic kernel reaches 0.25 FLOP/B, far from the ideal m²/4: convolution kernels are limited by memory bandwidth unless they reuse data on chip.</li>
+    <li><b>Constant memory</b> fits the filter: small, read-only during the kernel, read in the same order by all threads. The constant cache broadcasts it and removes all DRAM traffic for F (0.5 FLOP/B).</li>
+    <li><b>Tiling</b>: blocks load an input tile, larger than their output tile by the halo, into shared memory and reuse it. Intensity approaches m²/4 as tiles grow.</li>
+    <li>Block = input tile is simple to load but leaves threads idle and tiles of odd width; caching the halo in L2 keeps tiles, blocks and outputs the same power-of-two size.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 15.1–15.8</h2>
+  <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.4em">
+    <li>1D convolution of N = {4, 1, 3, 2, 3} with F = {2, 1, 4}, ghost cells 0. What is the output array?</li>
+    <li>1D convolution of an array of size N with a filter of size M = 2r + 1: how many ghost cells are there, and how many multiplications are performed if ghost cells are multiplied by 0, and if they are skipped?</li>
+    <li>The same questions for an N × N image and an M × M filter.</li>
+    <li>For the tiled kernel with the halo in shared memory, an N × N image, an M × M filter and T × T output tiles: how many blocks, how many threads per block and how much shared memory per block? And for the cached-halo kernel?</li>
+    <li>IN_TILE_DIM = 32 and a 7 × 7 filter: what is the output tile, what fraction of the threads only loads, and how many blocks does a 1024 × 1024 image need?</li>
+    <li>N is read-only during the kernel too. Why do we put F in constant memory but not N?</li>
+    <li>In the cached-halo kernel with TILE_DIM = 32 and r = 2, what fraction of a block's threads reads at least one element from global memory during the compute loop?</li>
+    <li>A 3 × 3 filter on an H100: what is the best throughput the tiled kernel can reach, in TFLOPS, with 30 × 30 output tiles?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 15.1–15.8</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>15.1</td><td>y0 = 2·0 + 1·4 + 4·1 = 8; y1 = 2·4 + 1·1 + 4·3 = 21; y2 = 2·1 + 3 + 4·2 = 13; y3 = 2·3 + 2 + 4·3 = 20; y4 = 2·2 + 3 + 0 = 7 → <b>{8, 21, 13, 20, 7}</b>.</td></tr>
+    <tr><td>15.2</td><td>Ghost cells: r on each side = <b>M − 1</b>. With zeros multiplied: <b>N·M</b>. Skipped: the first and last r outputs miss r, r−1, …, 1 taps each → <b>N·M − r(r + 1)</b>.</td></tr>
+    <tr><td>15.3</td><td>Ghost cells: (N + M − 1)² − N². Multiplying zeros: <b>N²M²</b>. Skipped: rows and columns are independent → <b>(N·M − r(r + 1))²</b>.</td></tr>
+    <tr><td>15.4</td><td>Halo in shared: ⌈N/T⌉² blocks, (T + M − 1)² threads, (T + M − 1)² × 4 B. Cached halo: ⌈N/T⌉² blocks, T² threads, T² × 4 B.</td></tr>
+    <tr><td>15.5</td><td>r = 3 → output tile <b>26 × 26</b>; idle 1 − 676/1024 = <b>34 %</b>; ⌈1024/26⌉² = 40² = <b>1600</b> blocks.</td></tr>
+    <tr><td>15.6</td><td>N is far larger than the 64 KB of constant memory, and threads of a warp read <b>different</b> N elements, so a broadcast cache gives no benefit. F is tiny and every thread reads the same element at the same time.</td></tr>
+    <tr><td>15.7</td><td>Threads within r of a tile edge: 1 − (32 − 4)²/32² = 1 − 784/1024 = <b>23 %</b>.</td></tr>
+    <tr><td>15.8</td><td>t = 30, m = 3: 2·900·9 / (4·(32² + 30²)) = 16200 / 7696 = 2.10 FLOP/B, memory-bound: 3.35 TB/s × 2.10 ≈ <b>7.1 TFLOPS</b>, about 11 % of the peak.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study and code</h2>
+  <ul>
+    <li><b>Run it</b>: <code>ec2/conv</code> has all four kernels with checks and timings, and an idea for your project from another domain (a smoothed demand map of a bike-sharing city). It compiles with <code>nvcc</code> on Google Colab, or with <code>g++</code> on any laptop through a small CPU emulation of CUDA.</li>
+    <li><b>Exercise</b>: rewrite the tiled kernel with block = output tile, threads looping to load the larger input tile.</li>
+    <li><b>Exercise</b>: turn the basic, constant-memory and tiled kernels into 3D convolutions.</li>
+    <li><b>Chapter 8</b>: stencils, a special case of convolution used in PDE solvers (<code>ec2/stencil</code>). Later: convolutional neural networks build on the same ideas.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>15 · Convolution on the GPU</span><span id="counter"></span></div>
+
+<script>
+(function () {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  const R = (p, x, y, w, h, a = {}) => p.appendChild(el('rect', { x, y, width: w, height: h, ...a }));
+  const T = (p, x, y, s, a = {}) => p.appendChild(el('text', { x, y, ...a }, s));
+  const L = (p, x1, y1, x2, y2, a = {}) => p.appendChild(el('line', { x1, y1, x2, y2, ...a }));
+  const mid = { 'text-anchor': 'middle' };
+  const newSvg = (root, vb, label) => { const host = root.querySelector('[data-svg]'); host.innerHTML = ''; const s = el('svg', { viewBox: vb, role: 'img', 'aria-label': label }); host.appendChild(s); return s; };
+  const fmt = (n) => n.toLocaleString('en-US');
+  const pct = (x) => (Math.round(x * 1000) / 10) + ' %';
+
+  function stepper(root, steps, render, ms) {
+    let k = 0, timer = null;
+    const play = root.querySelector('[data-act=play]');
+    const draw = () => render(k);
+    const tick = () => { k = (k + 1) % steps(); draw(); };
+    const start = () => { if (timer || reduce) return; timer = setInterval(tick, ms); if (play) play.textContent = 'Pause'; };
+    const stop = () => { clearInterval(timer); timer = null; if (play) play.textContent = 'Play'; };
+    if (play) play.addEventListener('click', () => timer ? stop() : start());
+    root.querySelector('[data-act=step]')?.addEventListener('click', () => { stop(); tick(); });
+    root.querySelector('[data-act=reset]')?.addEventListener('click', () => { stop(); k = 0; draw(); });
+    return { enter() { draw(); start(); }, leave: stop, reset() { stop(); k = 0; draw(); start(); }, get k() { return k; } };
+  }
+  const modeButtons = (root, attr, onPick) => root.querySelectorAll(`[data-${attr}]`).forEach(b => b.addEventListener('click', () => {
+    root.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset[attr]);
+  }));
+
+  const ANIM = {};
+
+  const arrowHead = (svg, id, color) => {
+    const d = svg.querySelector('defs') || svg.insertBefore(el('defs'), svg.firstChild);
+    const m = el('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto-start-reverse' });
+    m.appendChild(el('path', { d: 'M0,0 L10,5 L0,10 z', fill: color })); d.appendChild(m);
+    return `url(#${id})`;
+  };
+  const GRAY = '#9a9a9a', BLUE = '#2F6FD0', GOLD = '#C98A1B', RED = '#B03A3A', GREEN = '#2E7D4F', INK = '#1A1A1A';
+  const LBLUE = '#C9DBF4', LGOLD = '#F6EAD2', LRED = '#F6DADA', LGREEN = '#D6EBDC';
+  const syncButtons = (root, attr, val) => root.querySelectorAll(`[data-${attr}]`).forEach(b => b.classList.toggle('on', b.dataset[attr] === val));
+  const grid = (svg, x0, y0, n, m, cs, fillFn, opts = {}) => {
+    const cells = [];
+    for (let r = 0; r < n; r++) for (let c = 0; c < m; c++) cells.push(R(svg, x0 + c * cs, y0 + r * cs, cs - (opts.gap ?? 1), cs - (opts.gap ?? 1), { fill: fillFn ? fillFn(r, c) : '#fff', stroke: opts.stroke || '#d0d0d0', 'stroke-width': .6 }));
+    return cells;
+  };
+  const tileLines = (svg, x0, y0, n, cs, every) => { for (let k = 0; k <= n; k += every) { L(svg, x0 + k * cs, y0, x0 + k * cs, y0 + n * cs, { stroke: INK, 'stroke-width': 1.6 }); L(svg, x0, y0 + k * cs, x0 + n * cs, y0 + k * cs, { stroke: INK, 'stroke-width': 1.6 }); } };
+
+  // ------------------------------------------------------------ thread → output element → input patch
+  ANIM.mapping = (root) => {
+    const svg = newSvg(root, '0 0 1000 460', 'A 16 by 16 output computed by 4 by 4 blocks of 4 by 4 threads; each thread reads the input patch centred on its output element');
+    const N = 16, cs = 22, xi = 70, xo = 590, y0 = 70, r = 2;
+    T(svg, xi - 50, 20, 'input N (global memory)', { 'font-size': 13, class: 'lbl' }); T(svg, xo, 20, 'output P', { 'font-size': 13, class: 'lbl' });
+    const inC = grid(svg, xi, y0, N, N, cs), outC = grid(svg, xo, y0, N, N, cs);
+    tileLines(svg, xi, y0, N, cs, 4); tileLines(svg, xo, y0, N, cs, 4);
+    const ghost = svg.appendChild(el('g'));
+    const hA = arrowHead(svg, 'mp-a', BLUE);
+    const arrow = L(svg, 0, 0, 0, 0, { stroke: BLUE, 'stroke-width': 2.5, 'marker-end': hA });
+    const info = T(svg, 20, 452, '', { 'font-size': 14 });
+    const S = [[1, 1, 1, 1], [0, 0, 0, 0], [3, 2, 3, 1], [1, 3, 2, 3]];   // blockY, blockX, threadY, threadX
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length, (k) => {
+      const [by, bx, ty, tx] = S[k], row = by * 4 + ty, col = bx * 4 + tx;
+      inC.forEach((e, i) => { const rr = Math.floor(i / N), cc = i % N; const inP = Math.abs(rr - row) <= r && Math.abs(cc - col) <= r; e.setAttribute('fill', rr === row && cc === col ? BLUE : inP ? '#9DB7E3' : '#fff'); });
+      outC.forEach((e, i) => { const rr = Math.floor(i / N), cc = i % N; e.setAttribute('fill', rr === row && cc === col ? GREEN : (Math.floor(rr / 4) === by && Math.floor(cc / 4) === bx ? LGREEN : '#fff')); });
+      ghost.innerHTML = '';
+      let g = 0;
+      for (let dr = -r; dr <= r; dr++) for (let dc = -r; dc <= r; dc++) {
+        const rr = row + dr, cc = col + dc;
+        if (rr < 0 || cc < 0 || rr >= N || cc >= N) { g++; ghost.appendChild(el('rect', { x: xi + cc * cs, y: y0 + rr * cs, width: cs - 1, height: cs - 1, fill: LRED, stroke: RED, 'stroke-dasharray': '3 2' })); }
+      }
+      arrow.setAttribute('x1', xi + col * cs + cs / 2); arrow.setAttribute('y1', y0 + row * cs + cs / 2);
+      arrow.setAttribute('x2', xo + col * cs + cs / 2 - 6); arrow.setAttribute('y2', y0 + row * cs + cs / 2);
+      info.textContent = `block (${bx},${by}), thread (${tx},${ty}) → P[${row}][${col}] · reads rows ${row - r}…${row + r}, cols ${col - r}…${col + r}${g ? ` · ${g} ghost cells skipped` : ''}`;
+      cap.innerHTML = k === 0 ? 'The same mapping as the grayscale kernel of session 11: <code>outCol = blockIdx.x*blockDim.x + threadIdx.x</code>, and the same for rows. Each thread owns <b>one output element</b>.'
+        : k === 1 ? 'Thread (0,0) of block (0,0): its patch hangs over the top-left corner. The missing input elements are <b>ghost cells</b>; with value 0 the thread simply skips them.'
+        : k === 2 ? 'The patch always starts at <code>(outRow − r, outCol − r)</code>: two nested loops over the (2r + 1)² filter positions give the input element of each multiplication.'
+        : 'Neighbouring threads read overlapping patches: every input element is read by up to (2r + 1)² threads. That reuse is what tiling will exploit.';
+    }, 2800);
+  };
+
+  // ------------------------------------------------------------ ghost cells and divergence
+  ANIM.ghost = (root) => {
+    const svg = newSvg(root, '0 0 540 320', 'Output elements coloured by how many filter positions fall on ghost cells');
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const draw = () => {
+      svg.innerHTML = '';
+      const W = Math.max(4, Math.min(64, +q('w').value | 0)), H = Math.max(4, Math.min(40, +q('h').value | 0)), r = Math.max(1, Math.min(7, +q('r').value | 0));
+      const cs = Math.min(20, Math.floor(500 / W), Math.floor(270 / H));
+      const m = 2 * r + 1, valid = (i, n) => Math.min(i + r, n - 1) - Math.max(i - r, 0) + 1;
+      let edge = 0, skipped = 0;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const v = valid(x, W) * valid(y, H), miss = m * m - v; skipped += miss; if (miss) edge++;
+        const a = Math.min(1, miss / (m * m) * 2.2);
+        R(svg, 20 + x * cs, 20 + y * cs, cs - 1, cs - 1, { fill: miss ? `rgba(176,58,58,${.15 + .85 * a})` : LBLUE });
+      }
+      T(svg, 20, 20 + H * cs + 18, 'blue: no ghost cells · red: skips some positions (darker = more)', { 'font-size': 12, class: 'lbl' });
+      out.innerHTML = `${W} × ${H} output, ${m} × ${m} filter: <b>${edge}</b> of ${W * H} elements (${(edge / (W * H) * 100).toFixed(1)} %) touch ghost cells · skipped multiplications: ${skipped} of ${W * H * m * m} (${(skipped / (W * H * m * m) * 100).toFixed(1)} %)` +
+        `<br>a 4096 × 4096 image with this filter: ${(100 * (1 - (4096 - 2 * r) ** 2 / 4096 ** 2)).toFixed(2)} % of the elements touch ghost cells`;
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', draw));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ arithmetic intensity of the kernels
+  ANIM.ai = (root) => {
+    const svg = newSvg(root, '0 0 1000 300', 'Arithmetic intensity of four convolution kernels against the H100 ridge of 20 FLOP per byte');
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const tiled = (t, m) => (t * t * m * m * 2) / (((t + m - 1) ** 2 + t * t) * 4);
+    const draw = () => {
+      svg.innerHTML = '';
+      const m = Math.max(1, (+q('m').value | 0)), t = Math.max(1, +q('t').value | 0);
+      const rows = [['basic kernel', .25, '2 FLOP per 8 B: N and F from global memory'], ['constant memory for F', .5, '2 FLOP per 4 B: only N from global'], [`tiled, ${t} × ${t} output tile`, tiled(t, m), 'each input loaded once per block'], ['ideal (each element once)', m * m / 4, 'm² / 4']];
+      const max = Math.max(25, ...rows.map(r => r[1])) * 1.05, sc = 640 / max, X0 = 260;
+      rows.forEach(([name, v, note], i) => {
+        const y = 30 + i * 60;
+        T(svg, 20, y + 22, name, { 'font-size': 13, 'font-weight': 600 }); T(svg, 20, y + 40, note, { 'font-size': 11, class: 'lbl' });
+        R(svg, X0, y, Math.max(3, v * sc), 30, { fill: v < 20 ? '#E7B467' : '#86C495', rx: 2 });
+        T(svg, X0 + Math.max(3, v * sc) + 8, y + 21, `${v.toFixed(2)} FLOP/B`, { 'font-size': 13 });
+      });
+      const rx = X0 + 20 * sc;
+      L(svg, rx, 18, rx, 270, { stroke: RED, 'stroke-width': 2, 'stroke-dasharray': '6 4' }); T(svg, rx + 6, 286, 'H100 ridge: 20 FLOP/B', { 'font-size': 12, fill: RED });
+      out.innerHTML = `${m} × ${m} filter (r = ${(m - 1) / 2}): the basic kernel reaches at most 3.35 TB/s × 0.25 = <b>0.84 TFLOPS</b>; the tiled one ${(3.35 * Math.min(20, tiled(t, m))).toFixed(1)} TFLOPS` +
+        ` (${tiled(t, m) < 20 ? 'still memory-bound' : 'compute-bound: up to 66.9'}).`;
+      syncButtons(root, 'p', `${m},${t}`);
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', draw));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [m, t] = b.dataset.p.split(','); q('m').value = m; q('t').value = t; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ constant cache broadcast
+  ANIM.bcast = (root) => {
+    const svg = newSvg(root, '0 0 1000 330', 'Eight threads of a warp each compute their own output; in every loop iteration they all read the same filter element, served by one broadcast from the constant cache');
+    const hB = arrowHead(svg, 'bc-b', BLUE), hG = arrowHead(svg, 'bc-g', GOLD);
+    T(svg, 20, 26, 'F in constant memory (3 × 3)', { 'font-size': 12, class: 'lbl' });
+    const fc = grid(svg, 20, 36, 3, 3, 40, null, { stroke: '#9a9a9a' });
+    const fT = fc.map((_, i) => T(svg, 40 + (i % 3) * 40, 61 + Math.floor(i / 3) * 40, `F${Math.floor(i / 3)}${i % 3}`, { ...mid, 'font-size': 11 }));
+    const cc = R(svg, 20, 170, 120, 44, { class: 'mem', rx: 3 }); T(svg, 80, 197, 'constant cache', { ...mid, 'font-size': 12 });
+    T(svg, 300, 26, 'input row of N (global memory, L1/L2)', { 'font-size': 12, class: 'lbl' });
+    const nRow = Array.from({ length: 10 }, (_, i) => { const e = R(svg, 300 + i * 62, 36, 58, 34, { fill: '#fff', stroke: '#9a9a9a' }); T(svg, 329 + i * 62, 58, `N[${i}]`, { ...mid, 'font-size': 11 }); return e; });
+    const lanes = Array.from({ length: 8 }, (_, t) => { const e = R(svg, 362 + t * 62, 240, 58, 34, { fill: LBLUE, rx: 3 }); T(svg, 391 + t * 62, 262, `t${t}`, { ...mid, 'font-size': 12 }); return e; });
+    const lines = svg.appendChild(el('g'));
+    const cnt = T(svg, 20, 316, '', { 'font-size': 14 });
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 3, (k) => {
+      lines.innerHTML = '';
+      fc.forEach((e, i) => e.setAttribute('fill', i === 3 + k ? BLUE : '#fff')); fT.forEach((e, i) => e.setAttribute('fill', i === 3 + k ? '#fff' : INK));
+      nRow.forEach((e, i) => e.setAttribute('fill', i >= k && i < k + 8 ? '#9DB7E3' : '#fff'));
+      lines.appendChild(el('line', { x1: 140, y1: 192, x2: 356, y2: 230, stroke: BLUE, 'stroke-width': 3, 'marker-end': hB }));
+      lines.appendChild(el('rect', { x: 362, y: 226, width: 8 * 62 - 4, height: 6, fill: BLUE, rx: 2 }));
+      for (let t = 0; t < 8; t++) lines.appendChild(el('line', { x1: 329 + (t + k) * 62, y1: 72, x2: 391 + t * 62, y2: 238, stroke: GOLD, 'stroke-width': 1.5, opacity: .8, 'marker-end': hG }));
+      cnt.textContent = `fCol = ${k}: 1 constant-cache read, broadcast to 8 threads · 8 different N elements from global/L1`;
+      cap.innerHTML = ['Each thread computes a different output, but in the first inner iteration <b>all</b> of them need <code>F[1][0]</code>. One read from the constant cache is broadcast to the whole warp.',
+        'Next iteration: all threads move to <code>F[1][1]</code> together, while each one reads its own, shifted element of N.',
+        'F is small, never changes during the kernel and is read in the same order by every thread: exactly what constant memory and its cache are built for. The N reads still go to global memory (or L1/L2).'][k];
+    }, 2600);
+  };
+
+  // ------------------------------------------------------------ cache hierarchy
+  ANIM.hier = (root) => {
+    const svg = newSvg(root, '0 0 1000 350', 'Cores with registers, per-SM L1 and constant caches, a shared L2 cache, and DRAM; and where a load is served from');
+    const hG = arrowHead(svg, 'hi-g', GOLD);
+    R(svg, 10, 10, 980, 230, { class: 'frame', rx: 5 }); T(svg, 26, 32, 'the GPU chip', { 'font-size': 13, class: 'lbl' });
+    const sms = [0, 1, 2].map(i => {
+      const x = 40 + i * 320;
+      R(svg, x, 44, 290, 110, { fill: '#fff', stroke: '#6f6f6f', rx: 4 }); T(svg, x + 10, 62, `SM ${i}`, { 'font-size': 12, class: 'lbl' });
+      const core = R(svg, x + 14, 70, 80, 36, { class: 'sp', rx: 3 }); T(svg, x + 54, 93, 'regs', { ...mid, 'font-size': 12 });
+      const l1 = R(svg, x + 104, 70, 170, 36, { class: 'mem', rx: 3 }); T(svg, x + 189, 93, 'L1 / shared memory', { ...mid, 'font-size': 11 });
+      const cc = R(svg, x + 104, 112, 170, 32, { class: 'mem', rx: 3 }); T(svg, x + 189, 133, 'constant cache', { ...mid, 'font-size': 11 });
+      return { core, l1, cc };
+    });
+    const l2 = R(svg, 40, 172, 930, 50, { class: 'mem', rx: 4 }); T(svg, 505, 202, 'L2 cache (shared by all SMs)', { ...mid, 'font-size': 14 });
+    const dram = R(svg, 40, 264, 930, 56, { class: 'mem', rx: 4 }); T(svg, 505, 297, 'DRAM: global and constant memory', { ...mid, 'font-size': 14 });
+    const path = svg.appendChild(el('g'));
+    const S = [
+      { on: [], cap: 'Every SM has registers, an L1 cache (whose capacity it shares with shared memory) and a small <b>constant cache</b>. All SMs share one L2. Behind it sits DRAM. Closer means faster and smaller: L1 runs near core speed but holds up to about 128 KB; L2 holds hundreds of KB to tens of MB and takes tens to hundreds of cycles.' },
+      { on: ['l1'], cap: 'A load from global memory first looks in the SM\'s <b>L1</b>. If a recent load brought that data, it is served on chip.' },
+      { on: ['l1', 'l2'], cap: 'If not, <b>L2</b>: maybe another SM (another block) loaded it recently. This is why the halo cells of a tile are often cheap: the neighbouring block has just read them.' },
+      { on: ['l1', 'l2', 'dram'], cap: 'Only on a miss in both does the request reach <b>DRAM</b>, with its long latency and shared bandwidth.' },
+      { on: ['cc'], cap: 'Constant memory lives in DRAM too, but kernels cannot write it, so its cache needs no write logic: small, cheap in area and power, and able to <b>broadcast</b> one value to a whole warp. With a filter of a few hundred bytes, practically every read of F hits it.' },
+      { on: ['shared'], cap: 'Caches are <b>transparent</b>: the program uses the original address and the hardware decides what to keep. Shared memory is a <b>scratchpad</b>: the program declares <code>__shared__</code> variables and copies data in explicitly, so it controls what stays on chip.' }
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length, (k) => {
+      const on = S[k].on; path.innerHTML = '';
+      sms.forEach((s, i) => { s.l1.classList.toggle('on', i === 0 && (on.includes('l1') || on.includes('shared'))); s.cc.classList.toggle('on', on.includes('cc')); s.core.classList.toggle('on', i === 0 && k > 0); });
+      l2.classList.toggle('on', on.includes('l2')); dram.classList.toggle('on', on.includes('dram'));
+      const pts = [[134, 88]]; if (on.includes('l1')) pts.push([229, 106]); if (on.includes('l2')) pts.push([229, 172]); if (on.includes('dram')) pts.push([229, 264]);
+      for (let i = 0; i + 1 < pts.length; i++) path.appendChild(el('line', { x1: pts[i][0], y1: pts[i][1], x2: pts[i + 1][0], y2: pts[i + 1][1], stroke: GOLD, 'stroke-width': 3, 'marker-end': hG }));
+      cap.innerHTML = S[k].cap;
+    }, 3400);
+  };
+
+  // ------------------------------------------------------------ input tile vs output tile
+  ANIM.tiles = (root) => {
+    const svg = newSvg(root, '0 0 600 330', 'An output tile and the larger input tile, extended by the filter radius on every side');
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const draw = () => {
+      svg.innerHTML = '';
+      const t = Math.max(1, Math.min(12, +q('t').value | 0)), r = Math.max(1, Math.min(4, +q('r').value | 0)), inT = t + 2 * r;
+      const n = Math.max(inT + 4, 16), cs = Math.min(17, Math.floor(280 / n));
+      const ox = 2 + r, oy = 2 + r;
+      T(svg, 10, 18, 'input', { 'font-size': 13, class: 'lbl' }); T(svg, 310, 18, 'output', { 'font-size': 13, class: 'lbl' });
+      grid(svg, 10, 24, n, n, cs, (rr, cc) => (rr >= oy && rr < oy + t && cc >= ox && cc < ox + t) ? BLUE : (rr >= oy - r && rr < oy + t + r && cc >= ox - r && cc < ox + t + r) ? '#9DB7E3' : '#fff');
+      grid(svg, 310, 24, n, n, cs, (rr, cc) => (rr >= oy && rr < oy + t && cc >= ox && cc < ox + t) ? GREEN : '#fff');
+      out.innerHTML = `output tile ${t} × ${t} = <b>${t * t}</b> elements · filter ${2 * r + 1} × ${2 * r + 1} · input tile (${t} + 2·${r})² = ${inT} × ${inT} = <b>${inT * inT}</b> elements · ratio <b>${(inT * inT / (t * t)).toFixed(2)}</b>` +
+        `<br>halo cells (light blue): ${inT * inT - t * t} · with a 16 × 16 output tile and the same filter: ratio ${((16 + 2 * r) ** 2 / 256).toFixed(2)}`;
+      syncButtons(root, 'p', `${t},${r}`);
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', draw));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [t, r] = b.dataset.p.split(','); q('t').value = t; q('r').value = r; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ two thread organizations
+  ANIM.orgs = (root) => {
+    let mode = 'input';
+    const svg = newSvg(root, '0 0 1000 320', 'Block size equal to the input tile versus equal to the output tile, in the load phase and the compute phase');
+    const IN = 8, OUT = 6, cs = 30;
+    const draw = (k) => {
+      svg.innerHTML = '';
+      const phase = k === 0 ? 'load' : 'compute';
+      [0, 1].forEach(p => {
+        const x0 = 40 + p * 480, ph = p === 0 ? 'load' : 'compute';
+        T(svg, x0, 22, ph === 'load' ? 'phase 1: load the 8 × 8 input tile' : 'phase 2: compute the 6 × 6 output tile', { 'font-size': 13, 'font-weight': 600, fill: ph === phase ? INK : GRAY });
+        for (let r = 0; r < IN; r++) for (let c = 0; c < IN; c++) {
+          const inner = r >= 1 && r < 7 && c >= 1 && c < 7;
+          let f = '#fff', label = '';
+          if (mode === 'input') { f = ph === 'load' ? BLUE : (inner ? BLUE : '#E2E2E2'); label = ph === 'load' || inner ? '' : 'idle'; }
+          else {
+            if (ph === 'load') { const idx = r * IN + c; f = idx < 36 ? BLUE : '#9DB7E3'; label = idx < 36 ? '1st' : '2nd'; }
+            else { f = inner ? BLUE : '#fff'; }
+          }
+          R(svg, x0 + c * cs, 34 + r * cs, cs - 2, cs - 2, { fill: f, rx: 2, opacity: ph === phase ? 1 : .35 });
+          if (label && ph === phase) T(svg, x0 + c * cs + 14, 34 + r * cs + 18, label, { ...mid, 'font-size': 8, fill: f === BLUE ? '#fff' : INK });
+        }
+      });
+      T(svg, 40, 300, mode === 'input' ? '64 threads per block: each loads one element, 36 of them compute (44 % idle in phase 2)' : '36 threads per block: they load 64 elements in two rounds (28 threads load twice), all 36 compute', { 'font-size': 13 });
+      root.querySelector('[data-cap]').innerHTML = mode === 'input'
+        ? (k === 0 ? '<b>Block = input tile</b> (8 × 8 threads for a 3 × 3 filter): loading is trivial, one element per thread.' : 'But only the inner 6 × 6 threads have an output element; the outer ring sits idle while the others compute. This is the organization of the kernel on the next slides.')
+        : (k === 0 ? '<b>Block = output tile</b> (6 × 6 threads): the input tile has more elements than threads, so the threads loop to load it.' : 'In return every thread computes, and the block, input tile and output tile can have the same power-of-two width.');
+    };
+    const st = stepper(root, () => 2, draw, 2600);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ tiled kernel walkthrough
+  ANIM.tiled = (root) => {
+    const svg = newSvg(root, '0 0 1000 350', 'An 8 by 8 block over an 8 by 8 input tile with a 3 by 3 filter: all threads load, the inner 6 by 6 threads compute the output tile');
+    const IN = 8, OUT = 6, cs = 34, X0 = 40, Y0 = 30;
+    T(svg, X0, 20, 'input tile in shared memory N_s = thread block (8 × 8)', { 'font-size': 12, class: 'lbl' });
+    const cells = [];
+    for (let r = 0; r < IN; r++) for (let c = 0; c < IN; c++) { cells.push({ r, c, e: R(svg, X0 + c * cs, Y0 + r * cs, cs - 2, cs - 2, { fill: '#fff', stroke: '#c9c9c9', rx: 2 }), t: T(svg, X0 + c * cs + 16, Y0 + r * cs + 21, '', { ...mid, 'font-size': 9 }) }); }
+    const box = svg.appendChild(el('rect', { x: X0 + cs - 1, y: Y0 + cs - 1, width: OUT * cs, height: OUT * cs, fill: 'none', stroke: INK, 'stroke-width': 3 }));
+    const patch = svg.appendChild(el('rect', { fill: 'none', stroke: GOLD, 'stroke-width': 3, 'stroke-dasharray': '6 3' }));
+    T(svg, 600, 20, 'output tile (6 × 6)', { 'font-size': 12, class: 'lbl' });
+    const outC = []; for (let r = 0; r < OUT; r++) for (let c = 0; c < OUT; c++) { outC.push(R(svg, 600 + c * cs, Y0 + r * cs, cs - 2, cs - 2, { fill: '#fff', stroke: '#c9c9c9', rx: 2 })); }
+    const hA = arrowHead(svg, 'tl-a', GREEN); const arrow = L(svg, 0, 0, 0, 0, { stroke: GREEN, 'stroke-width': 2.5, 'marker-end': hA });
+    const info = T(svg, 600, 260, '', { 'font-size': 13 }), info2 = T(svg, 600, 282, '', { 'font-size': 13 });
+    const ghostCol = 0;   // this block sits at the left edge of the image: column 0 of the tile is a ghost column
+    const S = [
+      { cap: 'One thread per input-tile element. <code>col = blockIdx.x*OUT_TILE_DIM + threadIdx.x − r</code>: the block starts r elements before its output tile. This block is at the left edge of the image.' },
+      { cap: 'Every thread loads one element into N_s. Elements outside the image (here column 0) are <b>ghost cells</b>: the thread stores 0 instead of loading.' },
+      { cap: '<code>__syncthreads()</code>: no thread may start computing until the whole input tile, halo included, is in shared memory.' },
+      { cap: 'Thread (1,1) has <code>tileCol = tileRow = 0</code>: it computes output element (0,0) of the tile from the 3 × 3 patch starting at N_s[0][0].', t: [1, 1] },
+      { cap: 'Thread (6,6) computes output element (5,5) from the patch starting at N_s[5][5]. All patch reads now hit shared memory.', t: [6, 6] },
+      { cap: 'The outer ring of threads (tileCol or tileRow outside 0…5) does no computation: they existed only to load the halo. For a 5 × 5 filter and 32 × 32 blocks, 28 × 28 compute and 23 % of the threads are idle.' }
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length, (k) => {
+      cells.forEach(o => {
+        const ghost = o.c === ghostCol, inner = o.r >= 1 && o.r < 7 && o.c >= 1 && o.c < 7;
+        let f = '#fff';
+        if (k === 0) f = '#EEF3FB';
+        if (k >= 1) f = ghost ? LRED : '#9DB7E3';
+        if (k === 5 && !inner) f = '#E2E2E2';
+        o.e.setAttribute('fill', f); o.t.textContent = k >= 1 ? (ghost ? '0' : 'N') : `${o.c},${o.r}`;
+      });
+      box.setAttribute('opacity', k >= 3 ? 1 : .25);
+      const s = S[k];
+      if (s.t) {
+        const [tx, ty] = s.t; patch.setAttribute('x', X0 + (tx - 1) * cs - 2); patch.setAttribute('y', Y0 + (ty - 1) * cs - 2); patch.setAttribute('width', 3 * cs + 2); patch.setAttribute('height', 3 * cs + 2); patch.setAttribute('opacity', 1);
+        outC.forEach((e, i) => e.setAttribute('fill', i === (ty - 1) * OUT + (tx - 1) ? GREEN : LGREEN));
+        arrow.setAttribute('x1', X0 + tx * cs + 16); arrow.setAttribute('y1', Y0 + ty * cs + 16); arrow.setAttribute('x2', 600 + (tx - 1) * cs + 10); arrow.setAttribute('y2', Y0 + (ty - 1) * cs + 16); arrow.setAttribute('opacity', 1);
+        info.textContent = `thread (${tx},${ty}): tileCol = ${tx - 1}, tileRow = ${ty - 1}`; info2.textContent = `patch N_s[${ty - 1}…${ty + 1}][${tx - 1}…${tx + 1}] → output (${tx - 1},${ty - 1})`;
+      } else {
+        patch.setAttribute('opacity', 0); arrow.setAttribute('opacity', 0); info.textContent = k === 2 ? '__syncthreads()' : ''; info2.textContent = '';
+        outC.forEach(e => e.setAttribute('fill', k === 5 ? LGREEN : '#fff'));
+      }
+      cap.innerHTML = s.cap;
+    }, 2800);
+  };
+
+  // ------------------------------------------------------------ arithmetic intensity table
+  ANIM.aitable = (root) => {
+    const out = root.querySelector('[data-out]'), inp = root.querySelector('[data-in=ridge]');
+    const ts = [8, 16, 28, 32, 64], ms = [3, 5, 7, 9, 11, 13];
+    const f = (t, m) => (t * t * m * m * 2) / (((t + m - 1) ** 2 + t * t) * 4);
+    const draw = () => {
+      const ridge = Math.max(0.1, +inp.value || 20);
+      let h = '<table><tr><th>filter</th>' + ts.map(t => `<th>t = ${t}</th>`).join('') + '<th>ideal</th></tr>';
+      ms.forEach(m => {
+        h += `<tr><td><b>${m} × ${m}</b></td>` + ts.map(t => { const v = f(t, m); return `<td style="background:${v < ridge ? '#F6DADA' : '#D6EBDC'}">${v.toFixed(2)}</td>`; }).join('');
+        const id = m * m / 4; h += `<td style="background:${id < ridge ? '#F6DADA' : '#D6EBDC'}"><b>${id.toFixed(2)}</b></td></tr>`;
+      });
+      out.innerHTML = h + '</table>' + `<p class="small" style="margin:.4em 0 0">FLOP/B of internal blocks of the tiled kernel; red: below the ridge (${ridge} FLOP/B) → memory-bound, green: compute-bound.</p>`;
+    };
+    inp.addEventListener('input', draw);
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ idle threads and output tile size
+  ANIM.idle = (root) => {
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const update = () => {
+      const IN = Math.max(2, Math.min(32, +q('in').value | 0)), r = Math.max(0, Math.min(15, +q('r').value | 0)), W = Math.max(1, +q('w').value | 0);
+      const OUT = IN - 2 * r;
+      if (OUT <= 0) { out.innerHTML = '<span style="color:#B03A3A">the filter does not fit: OUT_TILE_DIM = IN_TILE_DIM − 2r ≤ 0</span>'; return; }
+      const m = 2 * r + 1, t = OUT, ai = (t * t * m * m * 2) / (((t + m - 1) ** 2 + t * t) * 4), blocks = Math.ceil(W / OUT) ** 2;
+      const pow2 = (OUT & (OUT - 1)) === 0;
+      out.innerHTML = `OUT_TILE_DIM = ${IN} − 2·${r} = <b>${OUT}</b>${pow2 ? ' (power of two)' : ' (not a power of two: output rows start at unaligned addresses)'}` +
+        `<br>threads that only load: ${IN * IN - OUT * OUT} of ${IN * IN} = <b>${((1 - OUT * OUT / (IN * IN)) * 100).toFixed(0)} %</b>` +
+        `<br>blocks for a ${W} × ${W} image: ⌈${W} / ${OUT}⌉² = <b>${fmt(blocks)}</b> · intensity of internal blocks: <b>${ai.toFixed(2)} FLOP/B</b> (ideal ${(m * m / 4).toFixed(2)})`;
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', update));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [a, r] = b.dataset.p.split(','); q('in').value = a; q('r').value = r; update(); }));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ cached halo kernel
+  ANIM.halo = (root) => {
+    const svg = newSvg(root, '0 0 1000 280', 'With block equal to output tile, interior patch elements come from shared memory and halo elements directly from global memory, usually hitting L2');
+    const T0 = 6, cs = 34, X0 = 40, Y0 = 30, r = 1, n = T0 * 2;   // a 12 × 12 image of 4 tiles; we look at tile (0,1)
+    const tileX = 6, tileY = 0;
+    T(svg, X0, 20, 'image (12 × 12) with four 6 × 6 tiles; the outlined tile is this block', { 'font-size': 12, class: 'lbl' });
+    const cells = []; for (let rr = 0; rr < n; rr++) for (let cc = 0; cc < n; cc++) cells.push({ rr, cc, e: R(svg, X0 + cc * cs * .6, Y0 + rr * cs * .6, cs * .6 - 2, cs * .6 - 2, { fill: '#fff', stroke: '#d0d0d0', rx: 1 }) });
+    svg.appendChild(el('rect', { x: X0 + tileX * cs * .6 - 1, y: Y0 + tileY * cs * .6 - 1, width: T0 * cs * .6, height: T0 * cs * .6, fill: 'none', stroke: INK, 'stroke-width': 3 }));
+    const legend = [['shared memory (N_s)', BLUE], ['global memory, likely an L2 hit', GOLD], ['ghost cell: skipped', LRED]];
+    legend.forEach(([s, c], i) => { R(svg, 520, 40 + i * 30, 22, 18, { fill: c, rx: 2 }); T(svg, 552, 54 + i * 30, s, { 'font-size': 13 }); });
+    const info = T(svg, 520, 160, '', { 'font-size': 14, 'font-weight': 600 }), info2 = T(svg, 520, 186, '', { 'font-size': 13 }), info3 = T(svg, 520, 210, '', { 'font-size': 13 });
+    const S = [[2, 2], [0, 3], [5, 0], [0, 0]];   // threadIdx (x, y) inside the tile
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length + 1, (k) => {
+      if (k === 0) {
+        cells.forEach(o => { const inTile = o.cc >= tileX && o.cc < tileX + T0 && o.rr >= tileY && o.rr < tileY + T0; o.e.setAttribute('fill', inTile ? '#9DB7E3' : '#fff'); });
+        info.textContent = 'load phase'; info2.textContent = '36 threads load exactly the 36 elements of their tile'; info3.textContent = 'no halo in shared memory, no idle threads';
+        cap.innerHTML = 'Block = output tile = input tile, all 32 × 32 on a real GPU (a power of two). Each thread loads its own element; shared memory holds <b>only the tile</b>, no halo.';
+        return;
+      }
+      const [tx, ty] = S[k - 1], row = tileY + ty, col = tileX + tx;
+      let sh = 0, gl = 0, gh = 0;
+      cells.forEach(o => {
+        const inP = Math.abs(o.rr - row) <= r && Math.abs(o.cc - col) <= r, inTile = o.cc >= tileX && o.cc < tileX + T0 && o.rr >= tileY && o.rr < tileY + T0;
+        o.e.setAttribute('fill', inTile ? '#EEF3FB' : '#fff');
+        if (inP) { if (inTile) { o.e.setAttribute('fill', BLUE); sh++; } else { o.e.setAttribute('fill', GOLD); gl++; } }
+      });
+      for (let dr = -r; dr <= r; dr++) for (let dc = -r; dc <= r; dc++) { const rr = row + dr, cc = col + dc; if (rr < 0 || cc < 0 || rr >= n || cc >= n) gh++; }
+      info.textContent = `thread (${tx},${ty}) → output (${col},${row})`;
+      info2.textContent = `from shared memory: ${sh} · from global (halo): ${gl}`; info3.textContent = gh ? `ghost cells skipped: ${gh}` : '';
+      cap.innerHTML = [
+        'An interior thread: its whole 3 × 3 patch lies inside the tile, every read comes from <b>shared memory</b>.',
+        'A thread on the left edge of the tile: three patch elements belong to the tile on the left. They are read from <b>global memory</b>, but that block has just loaded them, so they are probably in <b>L2</b>.',
+        'A thread on the right edge, top row: the patch crosses the tile edge (global reads) and the image edge (ghost cells, skipped).',
+        'The price: every patch element needs a test (inside the tile? inside the image?), so the compute loop has more branches and more divergence. In exchange, no idle threads and power-of-two tiles.'][k - 1];
+    }, 3000);
+  };
+
+  // ------------------------------------------------------------ deck navigation
+  const slides = [...document.querySelectorAll('.slide')];
+  const counter = document.getElementById('counter');
+  document.querySelectorAll('[data-ref]').forEach(e => { const t = document.getElementById(e.dataset.ref); e.textContent = t ? slides.indexOf(t) + 1 : '?'; });
+  const inst = new Map();
+  slides.forEach(s => s.querySelectorAll('[data-anim]').forEach(d => { if (ANIM[d.dataset.anim]) inst.set(s, ANIM[d.dataset.anim](d)); }));
+  let i = Math.max(0, Math.min(slides.length - 1, (parseInt(location.hash.slice(1), 10) || 1) - 1)), current = null;
+  function show(n) {
+    if (current) current.leave();
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    history.replaceState(null, '', '#' + (i + 1));
+    current = inst.get(slides[i]) || null;
+    if (current) current.enter();
+  }
+  const typing = (t) => t && t.closest && t.closest('input, select, textarea');
+  document.addEventListener('keydown', e => {
+    if (typing(e.target)) return;
+    if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { if (e.target.closest && e.target.closest('button')) return; e.preventDefault(); show(i + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'p') { if (current) current.leave(); slides.forEach(s => s.classList.add('active')); inst.forEach(a => a.enter && a.enter()); inst.forEach(a => a.leave && a.leave()); window.print(); }
+  });
+  document.addEventListener('click', e => {
+    if (e.target.closest('a, pre, code, button, input, label, select, canvas, svg, .diagram, .cfg, table, .flat')) return;
+    show(e.clientX > innerWidth / 2 ? i + 1 : i - 1);
+  });
+  show(i);
+})();
+</script>
+</body>
+</html>
+</body>
+</html>

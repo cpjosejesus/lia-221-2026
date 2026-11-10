@@ -1,0 +1,2031 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory and Data Locality</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+--acc:#2F6FD0;--acc-soft:#DCE7F8;--acc2:#C98A1B;--acc2-soft:#F6EAD2;--line-strong:#BDBDBD;--bad-soft:#F6DADA;--ok-soft:#D6EBDC}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:5vh 7vw 7vh;display:none;flex-direction:column;justify-content:center;gap:1rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.45em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:62ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.4em}
+.small{font-size:.78em}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2.5vw;align-items:start}
+.cols.wl{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
+.cols.wr{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr)}
+@media (max-width:820px){.cols,.cols.wl,.cols.wr{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.54em;line-height:1.45;background:var(--code);padding:.8em 1em;border-radius:3px;margin:0;overflow:auto;max-height:70vh;white-space:pre-wrap;overflow-wrap:break-word}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.66em;width:100%}th{text-align:left;font-size:.78em;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.35em .8em .35em 0}td{border-bottom:1px solid var(--line);padding:.4em .8em .4em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 7vw;font-size:.55em;color:var(--muted);font-family:var(--mono);background:var(--bg)}
+.note{border-left:3px solid var(--ink);padding-left:1em;max-width:62ch}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+
+.diagram{width:100%;max-width:1150px}
+.svgwrap svg{width:100%;height:auto;max-height:54vh;display:block}
+.dctl{display:flex;gap:.5em;align-items:center;flex-wrap:wrap;font-size:.56em;margin-top:.4em}
+.dctl button{font:inherit;border:1px solid var(--line-strong);background:#fff;color:var(--ink);border-radius:3px;padding:.2em .75em;cursor:pointer}
+.dctl button:hover{border-color:var(--ink)}
+.dctl button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dctl button:focus-visible,.cfg input:focus-visible,.cfg button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.cap{font-family:var(--mono);font-size:.54em;line-height:1.55;min-height:3.2em;margin-top:.3em;white-space:pre-wrap}
+.cap b{color:var(--acc)}
+.cap i{font-style:normal;color:var(--acc2);font-weight:600}
+
+svg text{font-family:var(--mono)}
+svg text:not([fill]){fill:var(--ink)}
+svg .lbl{font-family:var(--body);fill:var(--muted)}
+svg .frame{fill:none;stroke:#9a9a9a;stroke-width:1.5;transition:stroke .3s,stroke-width .3s}
+svg .frame.on{stroke:var(--acc);stroke-width:4}
+svg .dash{fill:none;stroke:#c9c9c9;stroke-width:1.2;stroke-dasharray:5 4}
+svg .sp{fill:#C9DBF4;transition:fill .3s}
+svg .sp.on{fill:var(--acc)}
+svg .ctl{fill:#E6E6E6}
+svg .mem{fill:#EDEDED;stroke:#bdbdbd;stroke-width:1;transition:fill .3s,stroke .3s}
+svg .mem.on{fill:var(--acc2-soft);stroke:var(--acc2);stroke-width:2.5}
+svg .wire{stroke:#bdbdbd;stroke-width:1.5;fill:none;transition:stroke .3s}
+svg .wire.on{stroke:var(--acc2);stroke-width:3}
+svg .wire.blue.on{stroke:var(--acc)}
+svg .chip{fill:#EDEDED;stroke:#9a9a9a;transition:fill .3s,stroke .3s,opacity .3s}
+svg .chip.run{fill:var(--acc-soft);stroke:var(--acc);stroke-width:2}
+svg .chip.done{fill:var(--ok-soft);stroke:var(--ok)}
+svg .chip.gone{opacity:.18}
+svg .bar{fill:var(--acc)}
+svg .bar2{fill:var(--acc2)}
+svg .barok{fill:var(--ok)}
+svg .hatch{fill:url(#hatch)}
+svg .cell{fill:#fff;stroke:#d0d0d0}
+svg .on-a{fill:#86C495}
+svg .on-b{fill:#E7B467}
+svg .on-c{fill:var(--acc)}
+svg .on-y{fill:#F2C230}
+svg .faint{fill:#F4F4F4;stroke:#e2e2e2}
+svg .busy{fill:#5f5f5f}
+svg .idle{fill:var(--bad-soft)}
+svg .ready{fill:#EEF3FB}
+svg .tok{transition:transform .7s ease}
+svg .red{stroke:var(--bad)!important}
+svg .hidden{display:none}
+@media (prefers-reduced-motion:reduce){svg .tok,svg .frame,svg .sp,svg .mem,svg .chip{transition:none}}
+
+/* calculators */
+.cfg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:2.5vw;align-items:start;font-size:.66em}
+@media (max-width:820px){.cfg{grid-template-columns:1fr}}
+.cfg-row{display:flex;gap:.7em;align-items:center;flex-wrap:wrap;margin-bottom:.6em}
+.cfg-lbl{font-family:var(--mono);min-width:9.5em;color:var(--muted)}
+.cfg input{font:inherit;font-family:var(--mono);width:6em;padding:.15em .4em;border:1px solid var(--line-strong);border-radius:3px}
+.cfg .presets{display:flex;flex-wrap:wrap;gap:.4em;margin:.3em 0 .8em}
+.cfg .presets button{font:inherit;font-size:.82em;border:1px solid var(--line-strong);background:#fff;border-radius:3px;padding:.15em .55em;cursor:pointer}
+.cfg .presets button:hover{border-color:var(--ink)}
+.cfg-out{font-family:var(--mono);font-size:.92em;line-height:1.6}
+.cfg-out b{color:var(--acc)}
+.cfg pre{font-size:.82em}
+.cfg-big{font-size:2em;font-weight:600;font-family:var(--mono);line-height:1.1}
+.cfg-big small{font-size:.38em;font-weight:400;color:var(--muted);font-family:var(--body)}
+.cfg-msg{margin-top:.5em}
+.cfg-msg.ok{color:var(--ok)}.cfg-msg.bad{color:var(--bad)}
+.gauge{position:relative;height:.9em;background:var(--code);border-radius:3px;margin:.5em 0;overflow:hidden}
+.gauge i{position:absolute;left:0;top:0;bottom:0;background:var(--acc);transition:width .4s ease}
+canvas[data-canvas]{display:block;max-width:100%}
+.legend{list-style:none;padding:0;margin:.3em 0 0;font-size:.85em;display:flex;flex-wrap:wrap;gap:.3em 1.2em}
+.legend li{display:flex;gap:.45em;align-items:center}
+.legend i{display:inline-block;width:.9em;height:.9em;border:1px solid #aaa;flex:none}
+
+/* 2D -> linear */
+.flat{position:relative;width:100%}
+.flat .fc{position:absolute;display:flex;align-items:center;justify-content:center;font-family:var(--mono);box-sizing:border-box;border:1px solid #fff;transition:left .6s ease,top .6s ease}
+.flat .pad{position:absolute;box-sizing:border-box;border:1px dashed #c9c9c9;background:#fff}
+.flat .wl{position:absolute;font-family:var(--mono);color:var(--acc);font-size:.5em;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.flat .fc{transition:none}}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.5vw}
+
+svg .hl{fill:var(--acc)}
+svg .soft{fill:var(--acc-soft);stroke:#9db7e3}
+svg .soft2{fill:var(--acc2-soft);stroke:#d9b06a}
+.cfg .presets button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.cfg-out table{font-size:.95em}
+[data-anim=hazards] table td{padding:.35em .9em .35em 0}
+.cfg .cap{font-size:.86em}
+.cfg [data-legend] table{font-size:.9em;margin:.3em 0}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 13</div>
+  <h1>Memory architecture and data locality</h1>
+  <p class="muted">Session 12 showed how the GPU runs threads. This session is about feeding them: why most kernels so far are limited by memory, which memories CUDA gives us, and how <b>tiling</b> with shared memory cuts global memory traffic, on the GPU and on the CPU.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 5 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Diagrams are animated or interactive: use Play, Step and Reset, or type your own numbers. Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>Why memory, after compute</h2>
+  <div class="cols">
+    <ul>
+      <li>The kernels we wrote so far reach only a tiny fraction of the GPU's speed.</li>
+      <li>Reason: their data lives in <b>global memory</b>, off-chip DRAM with long latency (hundreds of cycles) and finite bandwidth.</li>
+      <li>Many warps can hide latency (session 12), but when every thread waits for DRAM, the memory paths congest and the SMs sit idle.</li>
+      <li>The fix: keep reused data in <b>on-chip memories</b> (registers, shared memory) so most accesses never reach DRAM.</li>
+    </ul>
+    <table>
+      <tr><th>Part</th><th>Question</th></tr>
+      <tr><td>Bandwidth as a limit</td><td>Is my kernel compute-bound or memory-bound?</td></tr>
+      <tr><td>CUDA memory types</td><td>Where can a variable live, who sees it, for how long?</td></tr>
+      <tr><td>Tiling</td><td>How do threads share loads to cut traffic?</td></tr>
+      <tr><td>Tiled matmul kernel</td><td>What does the code look like, line by line?</td></tr>
+      <tr><td>Boundary checks</td><td>What if the size is not a multiple of the tile?</td></tr>
+      <tr><td>Memory and occupancy</td><td>How much shared memory can a block use?</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The memory wall: why our kernels are slow</h2>
+  <div class="diagram" data-anim="wall">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">§5 introduction: long DRAM latency, finite bandwidth, congestion</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Two hardware limits: compute and memory bandwidth</h2>
+  <div class="cols">
+    <ul>
+      <li><b>Peak compute throughput</b>: arithmetic operations per second. H100: <b>66.9 TFLOPS</b> in single precision.</li>
+      <li><b>Peak memory bandwidth</b>: bytes per second from a memory. H100 global memory: <b>3.35 TB/s</b>.</li>
+      <li><b>Compute-bound</b> kernel: the arithmetic units are busy most of the time. <b>Memory-bound</b>: the cores wait for data.</li>
+      <li>The deciding number is the <b>compute-to-global-memory-access ratio</b> (arithmetic intensity), in FLOP per byte.</li>
+    </ul>
+    <div>
+<pre><code>threshold = peak FLOPS / peak bandwidth
+          = 66.9 TFLOPS / 3.35 TB/s
+          ≈ 20.0 FLOP/B   (H100)
+
+C[i] = A[i] + B[i];      // vector addition
+// 1 FLOP, 12 B (load A, load B, store C)
+// 1 / 12 = 0.083 FLOP/B  ≪ 20  → memory-bound</code></pre>
+      <p class="small muted" style="margin-top:.6em">The peaks are limits, not guarantees: only well-optimized kernels get close to them.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Compute-bound or memory-bound: who is waiting?</h2>
+  <div class="diagram" data-anim="bound">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="va" class="on">vector add</button><button data-mode="mm">naive matmul</button><button data-mode="tile">tiled 32 × 32</button><button data-mode="hi">40 FLOP/B</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">H100: 66.9 TFLOPS, 3.35 TB/s</span></div>
+  </div>
+</section>
+
+<section class="slide" id="s-roof">
+  <h2>The roofline model</h2>
+  <div class="cfg" data-anim="roofline" style="grid-template-columns:minmax(0,.9fr) minmax(0,1.3fr)">
+    <div>
+      <div class="presets" style="margin-top:0"><button data-dev="66.9,3.35" class="on">H100</button><button data-dev="0.2,0.1">200 GFLOPS, 100 GB/s</button><button data-dev="0.3,0.25">300 GFLOPS, 250 GB/s</button></div>
+      <div class="cfg-row"><span class="cfg-lbl" style="min-width:0">your kernel: FLOP</span><input id="rf-flop" type="number" min="0" step="1" value="36" data-in="flop" style="width:4em"><span class="cfg-lbl" style="min-width:0">bytes</span><input id="rf-bytes" type="number" min="1" step="1" value="28" data-in="bytes" style="width:4em"></div>
+      <div data-legend></div>
+      <div class="cap" data-cap></div>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Speed-of-light analysis: how close to the hardware?</h2>
+  <div class="cfg" data-anim="sol">
+    <div>
+<pre><code>C[i] = A[i] + B[i];   // 12 bytes per element</code></pre>
+      <div class="cfg-row" style="margin-top:.6em"><span class="cfg-lbl">elements</span><input id="sol-n" type="number" min="1" value="1000000000" data-in="n" style="width:9em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">measured time (ms)</span><input id="sol-t" type="number" min="0.01" step="0.1" value="4" data-in="t"></div>
+      <div class="cfg-row"><span class="cfg-lbl">peak bandwidth (TB/s)</span><input id="sol-bw" type="number" min="0.01" step="0.01" value="3.35" data-in="bw"></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <p class="small muted">Divide the bandwidth a memory-bound kernel achieves by the peak: that is how fast it runs relative to “the speed of light”. 90 % leaves only 10 % to gain from further optimization.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Matrix multiplication: high potential, low reality</h2>
+  <div class="cols">
+    <div>
+      <p><b>In principle</b> (each element loaded once):</p>
+<pre><code>work  = N² dot products × 2N = 2N³ FLOP
+data  = 3 matrices × N² × 4 B = 12N² B
+ratio = 2N³ / 12N² = N/6 FLOP/B
+N = 1024  →  ≈ 171 FLOP/B   (≫ 20: compute-bound)</code></pre>
+      <p style="margin-top:.6em"><b>Our kernel</b> from session 11, inner loop:</p>
+<pre><code>for (int k = 0; k &lt; Width; ++k)
+  Pvalue += M[row*Width + k] * N[k*Width + col];
+// 2 loads (8 B) for 2 FLOP  →  0.25 FLOP/B</code></pre>
+    </div>
+    <ul>
+      <li>0.25 FLOP/B &lt; 20: the kernel is <b>memory-bound</b>.</li>
+      <li>Best possible: 3.35 TB/s × 0.25 FLOP/B = <b>0.84 TFLOPS</b>, about 1.3 % of 66.9 TFLOPS.</li>
+      <li>Against the H100's tensor cores (989 TFLOPS) it is about 0.08 %.</li>
+      <li>Caches help a little in practice, but the real fix is to <b>reduce global memory accesses</b> in the code. That is what tiling does.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>CUDA memory types (Fig. 5.1)</h2>
+  <div class="diagram" data-anim="memtypes">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">R = read, W = write · after Fig. 5.1</span></div>
+  </div>
+</section>
+
+<section class="slide" id="s-reach">
+  <h2>Who can read and write each memory (Fig. 5.1)</h2>
+  <div class="diagram" data-anim="reach">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-role="host" class="on">Host</button><button data-role="t00">Thread (0,0), block 0</button><button data-role="t01">Thread (1,0), block 0</button><button data-role="t10">Thread (0,0), block 1</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">R = read, W = write</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The memory hierarchy at a glance (H100)</h2>
+  <div class="diagram" data-anim="pyramid">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">H100 SXM figures; latencies are rough orders of magnitude</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Inside a von Neumann processor (Fig. 5.2)</h2>
+  <div class="diagram" data-anim="fetch">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">registers inside the processor, memory outside</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why registers are fast: one instruction instead of two</h2>
+  <div class="diagram" data-anim="regs">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="reg" class="on">Operand in a register</button><button data-mode="mem">Operand in global memory</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Three reasons to keep operands in registers, and the price</h2>
+  <div class="diagram" data-anim="regwin">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><label style="font-family:var(--mono)">registers per thread <input data-in="r" type="number" min="1" max="255" value="32" style="font:inherit;width:4.5em;padding:.1em .3em;border:1px solid var(--line-strong);border-radius:3px"></label><span data-out style="font-family:var(--mono)"></span><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted"></span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Shared memory versus registers inside the SM</h2>
+  <div class="diagram" data-anim="shared">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">one processing block of an SM · after Fig. 5.3</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Distributed shared memory: blocks of a cluster (Hopper)</h2>
+  <div class="diagram" data-anim="dsmem">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">§5.2: thread block clusters, since Hopper</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Declaring where a variable lives</h2>
+  <div class="cols wl">
+<pre><code>__constant__ float coeff[64];   // constant memory
+__device__   int   negCount;    // global memory
+
+__global__ void kernel(const float* in, float* out,
+                       int n) {
+  __shared__ float tile[256];   // shared, per block
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  float acc = 0.0f;             // i, acc: registers
+
+  // global → shared
+  tile[threadIdx.x] = (i &lt; n) ? in[i] : 0.0f;
+  __syncthreads();              // every thread gets here
+
+  int left = threadIdx.x &gt; 0 ? threadIdx.x - 1 : 0;
+  acc = coeff[0] * tile[threadIdx.x]
+      + coeff[1] * tile[left];
+  if (i &lt; n) {
+    out[i] = acc;
+    if (acc &lt; 0) atomicAdd(&amp;negCount, 1);  // all threads
+  }
+}</code></pre>
+    <table>
+      <tr><th>Declaration</th><th>Memory</th><th>Scope</th><th>Lifetime</th></tr>
+      <tr><td>automatic scalar</td><td>register</td><td>thread</td><td>grid</td></tr>
+      <tr><td>automatic array</td><td>local</td><td>thread</td><td>grid</td></tr>
+      <tr><td><code>__shared__</code></td><td>shared</td><td>block</td><td>grid</td></tr>
+      <tr><td><code>__device__</code></td><td>global</td><td>grid</td><td>application</td></tr>
+      <tr><td><code>__constant__</code></td><td>constant</td><td>grid</td><td>application</td></tr>
+    </table>
+  </div>
+  <p class="small muted"><b>Scope</b>: which threads see the variable. <b>Lifetime</b>: one kernel run (grid) or the whole program (application). An automatic array such as <code>float w[8];</code> would go to local memory. Assumes blocks of 256 threads.</p>
+</section>
+
+<section class="slide">
+  <h2>Lifetime: one grid or the whole application</h2>
+  <div class="diagram" data-anim="lifetime">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">3 blocks × 256 threads per launch</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Scope and lifetime in practice</h2>
+  <div class="cols">
+    <ul class="small">
+      <li><b>Registers</b>: automatic scalars. One private copy per thread, gone when the thread ends. Fastest, but limited (too many cost occupancy, session 12).</li>
+      <li><b>Local memory</b>: automatic arrays and spilled registers. Private per thread, but stored in global memory: slow. The compiler may keep an array in registers if all indices are constants.</li>
+      <li><b>Shared memory</b>: <code>__shared__</code>. One copy per block, visible to all its threads, lives as long as the kernel. The tool for cooperation.</li>
+      <li><b>Constant memory</b>: <code>__constant__</code>, declared outside functions, read-only in kernels, cached; 64 KB in total.</li>
+      <li><b>Global variables</b>: <code>__device__</code>. Visible to all kernels and kept between launches; use sparingly (they hurt modularity).</li>
+    </ul>
+    <div class="cfg" data-anim="copies" style="grid-template-columns:1fr;font-size:.85em">
+      <div>
+        <div class="cfg-row"><span class="cfg-lbl">blocks in the grid</span><input id="cp-b" type="number" min="1" value="1000" data-in="b"></div>
+        <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input id="cp-t" type="number" min="1" max="1024" value="512" data-in="t"></div>
+        <div class="cfg-out" data-out></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Local memory: private, but in DRAM</h2>
+  <div class="diagram" data-anim="local">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="const" class="on">constant indices</button><button data-mode="dyn">index known at run time</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">automatic arrays and register spills</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Constant memory: one value for every thread</h2>
+  <div class="diagram" data-anim="cmem">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="same" class="on">same address</button><button data-mode="diff">different addresses</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">details of the constant cache in Chapter 7</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Choosing where a variable lives</h2>
+  <div class="diagram" data-anim="choose">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-ex="i" class="on">loop counter</button><button data-ex="w">array w[k]</button><button data-ex="tile">tile of M</button><button data-ex="coef">filter coefficients</button><button data-ex="mat">matrices</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted"></span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Tiling: small fast memory, large slow memory</h2>
+  <div class="cols">
+    <ul>
+      <li>Global memory is <b>large but slow</b>; shared memory is <b>small but fast</b>.</li>
+      <li>Strategy: split the data into <b>tiles</b> that fit in shared memory, like covering a big wall with small tiles.</li>
+      <li>The threads of a block load a tile together, then all of them reuse it from shared memory.</li>
+      <li>Requirement: the computation on each tile can be done independently of the others. Not every algorithm can be tiled.</li>
+    </ul>
+    <div class="note small">
+      <p>The rest of the session builds the tiled matrix product step by step:</p>
+      <ol style="margin:.3em 0 0;padding-left:1.2em;display:grid;gap:.3em">
+        <li>see that threads of a block load the same elements (next slide);</li>
+        <li>load each element once into shared memory, in phases;</li>
+        <li>write the kernel and its index arithmetic;</li>
+        <li>make it correct for any matrix size;</li>
+        <li>check what the shared memory costs in occupancy.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The same elements, loaded again and again</h2>
+  <div class="diagram" data-anim="access">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">4 × 4 matrices, 2 × 2 blocks; block (0, 0) computes the outlined tile of P · after Figs. 5.5 and 5.6</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>How much traffic does tiling save?</h2>
+  <div class="cfg" data-anim="reduce">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">Width</span><input id="rd-w" type="number" min="1" value="1024" data-in="w"></div>
+      <div class="cfg-row"><span class="cfg-lbl">TILE_WIDTH</span><input id="rd-t" type="number" min="1" max="64" value="16" data-in="t"></div>
+      <div class="presets"><button data-p="1024,1">no tiling</button><button data-p="1024,2">2 × 2</button><button data-p="1024,16">16 × 16</button><button data-p="1024,32">32 × 32</button><button data-p="8,4">8 × 8 matrix, 4 × 4</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Tiled matrix multiplication in phases</h2>
+  <div class="diagram" data-anim="phases">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-blk="0,0" class="on">block (0, 0)</button><button data-blk="0,1">block (0, 1)</button><button data-blk="1,0">block (1, 0)</button><button data-blk="1,1">block (1, 1)</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">after Figs. 5.7 and 5.8</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The tiled kernel (Fig. 5.9)</h2>
+  <div class="cols wl">
+<pre><code> 1  #define TILE_WIDTH 16
+ 2  __global__ void matrixMulKernel(float* M, float* N,
+                                    float* P, int Width) {
+ 3    __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
+ 4    __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
+ 5
+ 6    int bx = blockIdx.x;  int by = blockIdx.y;
+ 7    int tx = threadIdx.x; int ty = threadIdx.y;
+ 8
+ 9    // the P element this thread computes
+10    int Row = by * TILE_WIDTH + ty;
+11    int Col = bx * TILE_WIDTH + tx;
+12
+13    float Pvalue = 0;
+14    for (int ph = 0; ph &lt; Width / TILE_WIDTH; ++ph) {
+15      // load one M tile and one N tile together
+16      Mds[ty][tx] = M[Row*Width + ph*TILE_WIDTH + tx];
+17      Nds[ty][tx] = N[(ph*TILE_WIDTH + ty)*Width + Col];
+18      __syncthreads();
+19
+20      for (int k = 0; k &lt; TILE_WIDTH; ++k)
+21        Pvalue += Mds[ty][k] * Nds[k][tx];
+22      __syncthreads();
+23    }
+24    P[Row * Width + Col] = Pvalue;
+25  }</code></pre>
+    <ul class="small">
+      <li><b>3–4</b>: shared arrays, one copy per block, reused in every phase.</li>
+      <li><b>6–11</b>: automatic scalars, so registers; each thread computes P[Row][Col].</li>
+      <li><b>14</b>: one iteration per phase: Width / TILE_WIDTH phases. This is <b>strip-mining</b>: a long loop cut into phases.</li>
+      <li><b>16–17</b>: each thread loads <b>one</b> M element and <b>one</b> N element.</li>
+      <li><b>18</b>: wait until the whole tile is loaded (read-after-write).</li>
+      <li><b>20–21</b>: TILE_WIDTH multiply-adds, all from shared memory.</li>
+      <li><b>22</b>: wait until everyone has used the tile before it is overwritten (write-after-read).</li>
+      <li><b>Pvalue</b> stays in a register the whole time: <b>register tiling</b>.</li>
+      <li>Assumes Width is a multiple of TILE_WIDTH; fixed later.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Which element does each thread load? (Fig. 5.10)</h2>
+  <div class="cfg" data-anim="index">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">TILE_WIDTH</span><span class="presets" style="margin:0"><button data-tw="2" class="on">2</button><button data-tw="4">4</button></span><span class="muted">Width = 8</span></div>
+      <div class="cfg-row"><span class="cfg-lbl">block (bx, by)</span><input id="ix-bx" type="number" min="0" value="1" data-in="bx" style="width:3.5em"><input id="ix-by" type="number" min="0" value="2" data-in="by" style="width:3.5em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">thread (tx, ty)</span><input id="ix-tx" type="number" min="0" value="1" data-in="tx" style="width:3.5em"><input id="ix-ty" type="number" min="0" value="0" data-in="ty" style="width:3.5em"></div>
+      <div class="cap" data-cap></div>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why both barriers are needed</h2>
+  <div class="diagram" data-anim="hazards">
+    <div data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="both" class="on">Both barriers</button><button data-mode="no18">Without line 18</button><button data-mode="no22">Without line 22</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">two threads of one block, thread 1 is slower</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Strip-mining: one long loop becomes phases</h2>
+  <div class="diagram" data-anim="strip">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">Width = 8, TILE_WIDTH = 4 · lines 16–28 of Fig. 5.9</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>What tiling buys, and what it does not</h2>
+  <div class="cols">
+    <ul>
+      <li>Global loads drop by a factor of <b>TILE_WIDTH</b>. With 32 × 32 tiles: 0.25 → <b>8 FLOP/B</b>.</li>
+      <li>On an H100: 3.35 TB/s × 8 FLOP/B = <b>26.8 TFLOPS</b>, against 0.84 without tiling.</li>
+      <li>Still memory-bound (8 &lt; 20): 40 % of the peak. Chapter 15 pushes further; libraries such as <b>cuBLAS</b> and <b>CUTLASS</b> already do.</li>
+      <li><b>Locality</b>: each phase works on a small subset of the data, so a small fast memory can serve it.</li>
+    </ul>
+    <ul>
+      <li>Two kinds of dependence between threads: <b>read-after-write</b> (true: the reader needs the data) and <b>write-after-read</b> (false: only the reuse of the same location creates it).</li>
+      <li><b>Tiling is not only shared memory</b>: Pvalue in a register is register tiling.</li>
+      <li><b>CPUs tile too</b> (blocking), but rely on the cache implicitly. A GPU SM runs so many threads that they compete for cache, so GPUs keep reused data on chip <b>explicitly</b> in shared memory.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why GPUs keep reused data in shared memory, not in the cache</h2>
+  <div class="diagram" data-anim="cache">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="cpu" class="on">CPU core</button><button data-mode="gpu">GPU SM, cache only</button><button data-mode="shm">GPU SM, shared memory</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">§5.4: CPUs tile with caches implicitly, GPUs explicitly</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: locality on the CPU</h2>
+  <div class="cols wl">
+<pre><code>// naive: B is read down a column
+for (int i = 0; i &lt; n; ++i)
+  for (int j = 0; j &lt; n; ++j)
+    for (int k = 0; k &lt; n; ++k)
+      C[i*n + j] += A[i*n + k] * B[k*n + j];
+
+// rows: same arithmetic, B and C read along rows
+for (int i = 0; i &lt; n; ++i)
+  for (int k = 0; k &lt; n; ++k) {
+    float a = A[i*n + k];              // register
+    for (int j = 0; j &lt; n; ++j)
+      C[i*n + j] += a * B[k*n + j];
+  }
+
+// tiled: the same loops over T x T tiles, so a tile
+// of B stays in the cache while it is reused;
+// strips of tiles then run on several threads</code></pre>
+    <div>
+      <table>
+        <tr><th>13_memory_locality/example_63.cpp, n = 1536</th><th>Time</th><th>Speedup</th></tr>
+        <tr><td>naive (i, j, k)</td><td>4.85 s</td><td>1×</td></tr>
+        <tr><td>rows (i, k, j)</td><td>0.32 s</td><td>15×</td></tr>
+        <tr><td>tiled 64 × 64</td><td>0.39 s</td><td>12×</td></tr>
+        <tr><td>tiled, 10 threads</td><td>0.08 s</td><td>60×</td></tr>
+      </table>
+      <p class="small" style="margin-top:.6em">Measured on a 10-core laptop. Almost all the gain is <b>locality</b>: reading along rows. Explicit tiles did not beat the hardware cache here, which is the book's point: a CPU's cache does the tiling for a few threads; a GPU needs it done by hand in shared memory.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Boundary checks: when Width is not a multiple of the tile</h2>
+  <div class="diagram" data-anim="boundary">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-w="3" class="on">Width 3</button><button data-w="5">Width 5</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">TILE_WIDTH = 2 · walks every block and phase · after Figs. 5.11 and 5.12</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The kernel with boundary checks (Fig. 5.13)</h2>
+  <div class="cols wl">
+<pre><code>float Pvalue = 0;
+int phases = (Width + TILE_WIDTH - 1) / TILE_WIDTH;
+for (int ph = 0; ph &lt; phases; ++ph) {
+  int mCol = ph * TILE_WIDTH + tx;     // column of M
+  int nRow = ph * TILE_WIDTH + ty;     // row of N
+  // load M only if the element exists, else 0
+  if (Row &lt; Width &amp;&amp; mCol &lt; Width)
+    Mds[ty][tx] = M[Row * Width + mCol];
+  else
+    Mds[ty][tx] = 0.0f;
+  // load N only if the element exists, else 0
+  if (nRow &lt; Width &amp;&amp; Col &lt; Width)
+    Nds[ty][tx] = N[nRow * Width + Col];
+  else
+    Nds[ty][tx] = 0.0f;
+  __syncthreads();
+
+  for (int k = 0; k &lt; TILE_WIDTH; ++k)
+    Pvalue += Mds[ty][k] * Nds[k][tx];
+  __syncthreads();
+}
+if (Row &lt; Width &amp;&amp; Col &lt; Width)     // a real P element?
+  P[Row * Width + Col] = Pvalue;</code></pre>
+    <ul class="small">
+      <li>Three different tests: loading M, loading N, storing P. Rule: <b>every memory access needs a check of its own indices</b>.</li>
+      <li>A missing element is loaded as <b>0.0f</b>: it adds nothing to the dot product.</li>
+      <li>Threads that compute no P element must <b>still load</b> their tile elements and reach both barriers: other threads of the block need those values.</li>
+      <li>The number of phases becomes <code>ceil(Width / TILE_WIDTH)</code>.</li>
+      <li><b>Rectangular matrices</b>: an <i>j × k</i> M times a <i>k × l</i> N gives a <i>j × l</i> P. Replace Width by <i>j</i>, <i>k</i> or <i>l</i> depending on which dimension it measures (exercise).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: launching the tiled kernel from the host</h2>
+  <div class="cols wl">
+<pre><code>void matMul(const float* M_h, const float* N_h,
+            float* P_h, int Width) {
+  size_t bytes = (size_t)Width * Width * sizeof(float);
+  float *M_d, *N_d, *P_d;
+  cudaMalloc(&amp;M_d, bytes);
+  cudaMalloc(&amp;N_d, bytes);
+  cudaMalloc(&amp;P_d, bytes);
+  cudaMemcpy(M_d, M_h, bytes, cudaMemcpyHostToDevice);
+  cudaMemcpy(N_d, N_h, bytes, cudaMemcpyHostToDevice);
+
+  int g = (Width + TILE_WIDTH - 1) / TILE_WIDTH;
+  dim3 block(TILE_WIDTH, TILE_WIDTH);  // 1 thread per P
+  dim3 grid(g, g);                     // cover all of P
+  matrixMulKernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(M_d, N_d,
+                                     P_d, Width);
+
+  cudaError_t err = cudaGetLastError();  // launch errors
+  if (err != cudaSuccess)
+    printf("launch failed: %s\n",
+           cudaGetErrorString(err));
+
+  // this copy waits for the kernel to finish
+  cudaMemcpy(P_h, P_d, bytes, cudaMemcpyDeviceToHost);
+  cudaFree(M_d); cudaFree(N_d); cudaFree(P_d);
+}</code></pre>
+    <ul class="small">
+      <li>The block <b>must</b> be TILE_WIDTH × TILE_WIDTH: each thread loads exactly one element of each tile.</li>
+      <li>The grid is rounded up, so with the boundary-checked kernel any Width works.</li>
+      <li>TILE_WIDTH = 16 → 256 threads and 2 KB of shared memory per block; 32 → 1024 threads and 8 KB.</li>
+      <li>We checked this kernel by emulating its launch on the CPU (every block, phase and barrier) for Width 3 to 1000 and tiles 2 to 32: the results match a plain triple loop, and the global loads drop by exactly TILE_WIDTH when Width is a multiple of it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Memory usage limits occupancy too</h2>
+  <div class="cfg" data-anim="smem">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input id="sm-t" type="number" min="1" max="1024" value="256" data-in="t"></div>
+      <div class="cfg-row"><span class="cfg-lbl">shared KB per block</span><input id="sm-s" type="number" min="0" step="0.5" value="38" data-in="s"></div>
+      <div class="cfg-row"><span class="cfg-lbl">shared KB per SM</span><input id="sm-sm" type="number" min="1" value="228" data-in="sm"></div>
+      <div class="presets"><button data-p="256,2">tiled 16 × 16</button><button data-p="1024,8">tiled 32 × 32</button><button data-p="256,38">38 KB, 256 threads</button><button data-p="512,48">48 KB, 512 threads</button><button data-p="128,100">100 KB, 128 threads</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <p class="small muted">H100: up to 228 KB of shared memory, 2048 threads and 32 blocks per SM. Full occupancy allows at most 228 KB / 2048 = 114 B of shared memory per thread. The SM can also trade cache for more shared memory.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: shared memory sized at launch time</h2>
+  <div class="cols wl">
+<pre><code>// one dynamic array, split by hand into Mds and Nds
+__global__ void matrixMulKernel(float* M, float* N,
+                                float* P, int Width,
+                                int tw) {
+  extern __shared__ float Mds_Nds[];
+  float* Mds = Mds_Nds;            // first tw*tw floats
+  float* Nds = Mds_Nds + tw * tw;  // next tw*tw floats
+  ...
+  Mds[ty * tw + tx] = ...;         // 1D index
+}
+
+// host: pick the tile from what the device offers
+cudaDeviceProp p;
+cudaGetDeviceProperties(&amp;p, 0);
+size_t need32 = 2 * 32 * 32 * sizeof(float);  // 8 KB
+int tw = (p.sharedMemPerBlock &gt;= need32) ? 32 : 16;
+size_t size = 2 * tw * tw * sizeof(float);
+int g = (Width + tw - 1) / tw;
+dim3 block(tw, tw), grid(g, g);
+matrixMulKernel&lt;&lt;&lt;grid, block, size&gt;&gt;&gt;(
+    M_d, N_d, P_d, Width, tw);</code></pre>
+    <ul class="small">
+      <li>A fixed <code>__shared__ float Mds[TILE_WIDTH][TILE_WIDTH]</code> is set at compile time; changing it means recompiling.</li>
+      <li><code>extern __shared__</code> without a size: the size comes from the <b>third launch parameter</b>, in bytes.</li>
+      <li>There is only one such array per kernel, so Mds and Nds are sections of it, indexed in 1D.</li>
+      <li><code>sharedMemPerBlock</code> tells the host how much a block may use, so the program can adapt to each GPU.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>Speed depends on the <b>compute-to-global-memory-access ratio</b>. Below the device threshold (H100: 20 FLOP/B) a kernel is memory-bound; the roofline shows how far it is from the limit.</li>
+    <li>CUDA offers registers (per thread), shared memory (per block), constant memory (read-only, cached) and global memory. The on-chip ones are small but serve data without using DRAM bandwidth.</li>
+    <li><b>Tiling</b>: threads of a block load a tile into shared memory together, wait at a barrier, and reuse it. Global traffic drops by TILE_WIDTH.</li>
+    <li>Two barriers per phase: read-after-write before using the tile, write-after-read before overwriting it.</li>
+    <li>Boundary checks make the kernel work for any size: every access tests its own indices, missing elements count as 0.</li>
+    <li>Shared memory and registers are limited per SM: using more can lower occupancy. Locality matters on CPUs as well.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 13.1–13.5</h2>
+  <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.45em">
+    <li>Can shared memory reduce global memory traffic in a <b>matrix addition</b>? Look at which elements each thread reads and whether threads share any.</li>
+    <li>For an 8 × 8 matrix product, how many global loads of M and N are made in total without tiling, with 2 × 2 tiles and with 4 × 4 tiles? Check that the reduction equals the tile width.</li>
+    <li>What goes wrong in the kernel of Fig. 5.9 if line 18 (the first <code>__syncthreads()</code>) is removed? And if line 22 is removed?</li>
+    <li>Ignoring capacity, why would you put values loaded from global memory in shared memory rather than in registers?</li>
+    <li>With 16 × 16 tiles, by what factor does the global memory traffic for M and N drop?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Exercises 13.6–13.10</h2>
+  <ol class="small" start="6" style="margin:0;padding-left:1.4em;display:grid;gap:.45em">
+    <li>A kernel is launched with 800 blocks of 256 threads. How many copies of an automatic scalar variable are created? Of a <code>__shared__</code> variable? Of a <code>__constant__</code> one?</li>
+    <li>In an N × N matrix product, how many times is each input element read from global memory without tiling, and with T × T tiles?</li>
+    <li>A kernel does 24 floating-point operations and 5 accesses of 4 bytes to global memory per thread. Is it compute-bound or memory-bound on (a) a device with 400 GFLOPS and 200 GB/s, (b) one with 250 GFLOPS and 250 GB/s?</li>
+    <li>An SM has 164 KB of shared memory and 2048 thread slots. A kernel uses 512 threads and 48 KB of shared memory per block. What is its occupancy? What if it used 40 KB?</li>
+    <li>With Width = 5 and TILE_WIDTH = 2: how many phases does the boundary-checked kernel run, and how many threads of block (2, 2) store a P element?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 13.1–13.5</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>13.1</td><td><b>No.</b> Each thread reads A[i][j] and B[i][j] once and no other thread needs them: there is no reuse to share. Matrix addition is memory-bound whatever we do.</td></tr>
+    <tr><td>13.2</td><td>Each of 64 threads loads 8 M + 8 N = 16 → <b>1024</b> loads. 2 × 2 tiles: 8 / 2 = 4 phases × 2 = 8 per thread → <b>512</b> (÷2). 4 × 4 tiles: 2 phases × 2 = 4 → <b>256</b> (÷4).</td></tr>
+    <tr><td>13.3</td><td>Without line 18 a thread may use Mds/Nds elements that other threads have not loaded yet (stale values from the previous phase or garbage). Without line 22 a fast thread may overwrite the tile with the next phase while slower threads still read the current one. Both give wrong results that change from run to run.</td></tr>
+    <tr><td>13.4</td><td>Registers are private: a value in a register serves only its own thread. Shared memory lets one load serve <b>all</b> threads of the block, which is the whole point of tiling.</td></tr>
+    <tr><td>13.5</td><td>By a factor of <b>16</b>: each loaded element is used by 16 threads.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Solutions 13.6–13.10</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>13.6</td><td>Automatic scalar: one per thread, 800 × 256 = <b>204,800</b>. Shared: one per block, <b>800</b>. Constant: <b>1</b>.</td></tr>
+    <tr><td>13.7</td><td>Without tiling: <b>N</b> times (once per thread that needs it). With T × T tiles: <b>N / T</b> times.</td></tr>
+    <tr><td>13.8</td><td>24 FLOP / 20 B = 1.2 FLOP/B. (a) threshold 400 / 200 = 2: 1.2 &lt; 2, <b>memory-bound</b>. (b) threshold 250 / 250 = 1: 1.2 &gt; 1, <b>compute-bound</b>.</td></tr>
+    <tr><td>13.9</td><td>48 KB: ⌊164 / 48⌋ = 3 blocks = 1536 threads → <b>75 %</b>, limited by shared memory. 40 KB: 4 blocks = 2048 threads → <b>100 %</b>.</td></tr>
+    <tr><td>13.10</td><td>⌈5 / 2⌉ = <b>3</b> phases. Block (2, 2) covers rows and columns 4–5; only row 4 and column 4 exist, so <b>1</b> thread stores P[4][4]. All 4 threads still load and reach the barriers.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study: where this continues</h2>
+  <ul>
+    <li><b>Chapter 6</b>: memory coalescing (how a warp's accesses combine into DRAM transactions), thread coarsening, and a checklist of optimizations.</li>
+    <li><b>Chapter 7</b>: constant memory in practice, with convolution.</li>
+    <li><b>Try it</b>: run <code>13_memory_locality/example_63.cpp</code> with n = 2048, or with tiles of 32 and 256. When does tiling start to beat plain row order on your machine?</li>
+    <li><b>Try it</b>: put your own kernel's FLOP and bytes per thread into the roofline (slide <span data-ref="s-roof"></span>). How far is it from the roof?</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>13 · Memory architecture and data locality</span><span id="counter"></span></div>
+
+<script>
+(function () {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  const R = (p, x, y, w, h, a = {}) => p.appendChild(el('rect', { x, y, width: w, height: h, ...a }));
+  const T = (p, x, y, s, a = {}) => p.appendChild(el('text', { x, y, ...a }, s));
+  const L = (p, x1, y1, x2, y2, a = {}) => p.appendChild(el('line', { x1, y1, x2, y2, ...a }));
+  const mid = { 'text-anchor': 'middle' };
+  const newSvg = (root, vb, label) => { const host = root.querySelector('[data-svg]'); host.innerHTML = ''; const s = el('svg', { viewBox: vb, role: 'img', 'aria-label': label }); host.appendChild(s); return s; };
+  const fmt = (n) => n.toLocaleString('en-US');
+  const pct = (x) => (Math.round(x * 1000) / 10) + ' %';
+
+  function stepper(root, steps, render, ms) {
+    let k = 0, timer = null;
+    const play = root.querySelector('[data-act=play]');
+    const draw = () => render(k);
+    const tick = () => { k = (k + 1) % steps(); draw(); };
+    const start = () => { if (timer || reduce) return; timer = setInterval(tick, ms); if (play) play.textContent = 'Pause'; };
+    const stop = () => { clearInterval(timer); timer = null; if (play) play.textContent = 'Play'; };
+    if (play) play.addEventListener('click', () => timer ? stop() : start());
+    root.querySelector('[data-act=step]')?.addEventListener('click', () => { stop(); tick(); });
+    root.querySelector('[data-act=reset]')?.addEventListener('click', () => { stop(); k = 0; draw(); });
+    return { enter() { draw(); start(); }, leave: stop, reset() { stop(); k = 0; draw(); start(); }, get k() { return k; } };
+  }
+  const modeButtons = (root, attr, onPick) => root.querySelectorAll(`[data-${attr}]`).forEach(b => b.addEventListener('click', () => {
+    root.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset[attr]);
+  }));
+
+  const ANIM = {};
+
+  // ------------------------------------------------------------ roofline
+  ANIM.roofline = (root) => {
+    let peak = 66.9, bw = 3.35;            // TFLOPS, TB/s
+    const qf = root.querySelector('[data-in=flop]'), qb = root.querySelector('[data-in=bytes]'), cap = root.querySelector('[data-cap]'), legend = root.querySelector('[data-legend]');
+    const pts = [
+      { n: 'vector addition', I: 1 / 12, c: '#B03A3A' },
+      { n: 'matmul, no tiling', I: 0.25, c: '#C98A1B' },
+      { n: 'matmul, 16 × 16 tiles', I: 4, c: '#2F6FD0' },
+      { n: 'matmul, 32 × 32 tiles', I: 8, c: '#2F6FD0' },
+      { n: 'matmul ideal, N = 1024', I: 1024 / 6, c: '#2E7D4F' }
+    ];
+    const W = 700, H = 440, x0 = 70, x1 = 680, y0 = 16, y1 = 380, lx0 = -2, lx1 = 3, ly0 = -3, ly1 = 2;
+    const X = (v) => x0 + (Math.log10(v) - lx0) / (lx1 - lx0) * (x1 - x0);
+    const Y = (v) => y1 - (Math.log10(Math.max(v, 10 ** ly0)) - ly0) / (ly1 - ly0) * (y1 - y0);
+    const fmtT = (t) => t >= 1 ? t.toFixed(1) + ' TFLOPS' : (t * 1000).toFixed(t * 1000 >= 10 ? 0 : 1) + ' GFLOPS';
+    const fmtI = (I) => I < 1 ? I.toFixed(3) : I.toFixed(I >= 20 ? 0 : 1);
+    let k = 0;
+    function draw() {
+      const svg = newSvg(root, `0 0 ${W} ${H}`, 'Roofline: attainable throughput against arithmetic intensity, with the memory-bandwidth slope and the compute roof');
+      for (let e = lx0; e <= lx1; e++) { L(svg, X(10 ** e), y0, X(10 ** e), y1, { stroke: '#EEEEEE' }); T(svg, X(10 ** e), y1 + 20, String(10 ** e), { ...mid, 'font-size': 14, class: 'lbl' }); }
+      for (let e = ly0; e <= ly1; e++) { L(svg, x0, Y(10 ** e), x1, Y(10 ** e), { stroke: '#EEEEEE' }); T(svg, x0 - 8, Y(10 ** e) + 5, String(10 ** e), { 'text-anchor': 'end', 'font-size': 14, class: 'lbl' }); }
+      T(svg, (x0 + x1) / 2, H - 6, 'arithmetic intensity (FLOP per byte, log scale)', { ...mid, 'font-size': 14, class: 'lbl' });
+      T(svg, 16, (y0 + y1) / 2, 'TFLOPS (log scale)', { ...mid, 'font-size': 14, class: 'lbl', transform: `rotate(-90 16 ${(y0 + y1) / 2})` });
+      L(svg, x0, y0, x0, y1, { stroke: '#1A1A1A' }); L(svg, x0, y1, x1, y1, { stroke: '#1A1A1A' });
+      const ridge = peak / bw, xs = Math.max(10 ** lx0, 10 ** ly0 / bw);
+      svg.appendChild(el('polygon', { points: `${X(xs)},${y1} ${X(xs)},${Y(bw * xs)} ${X(ridge)},${Y(peak)} ${X(ridge)},${y1}`, fill: '#FBEDED' }));
+      svg.appendChild(el('polygon', { points: `${X(ridge)},${y1} ${X(ridge)},${Y(peak)} ${X(10 ** lx1)},${Y(peak)} ${X(10 ** lx1)},${y1}`, fill: '#EAF4EC' }));
+      svg.appendChild(el('polyline', { points: `${X(xs)},${Y(bw * xs)} ${X(ridge)},${Y(peak)} ${X(10 ** lx1)},${Y(peak)}`, fill: 'none', stroke: '#1A1A1A', 'stroke-width': 3.5 }));
+      L(svg, X(ridge), Y(peak), X(ridge), y1, { stroke: '#6f6f6f', 'stroke-dasharray': '5 4' });
+      T(svg, X(ridge) - 8, (Y(peak) + y1) / 2, `ridge ${ridge.toFixed(1)} FLOP/B`, { 'text-anchor': 'end', 'font-size': 14 });
+      T(svg, X(10 ** lx1) - 6, Y(peak) - 10, `roof: ${fmtT(peak)}`, { 'text-anchor': 'end', 'font-size': 14 });
+      T(svg, x0 + 10, y0 + 22, `slope = ${bw >= 1 ? bw + ' TB/s' : bw * 1000 + ' GB/s'} × intensity`, { 'font-size': 14 });
+      T(svg, x0 + 10, y1 - 10, 'memory-bound', { 'font-size': 14, fill: '#B03A3A' });
+      T(svg, X(10 ** lx1) - 6, y1 - 10, 'compute-bound', { 'text-anchor': 'end', 'font-size': 14, fill: '#2E7D4F' });
+      const flop = Math.max(0, +qf.value || 0), bytes = Math.max(1, +qb.value || 1), uI = flop / bytes;
+      const list = pts.slice(0, Math.min(k, pts.length)).concat(k > pts.length && uI > 0 ? [{ n: 'your kernel', I: uI, c: '#1A1A1A' }] : []);
+      list.forEach((p, j) => {
+        if (p.I < 10 ** lx0 || p.I > 10 ** lx1) return;
+        const att = Math.min(peak, bw * p.I), cx = X(p.I), cy = Y(att), last = j === list.length - 1;
+        svg.appendChild(el('circle', { cx, cy, r: last ? 13 : 11, fill: p.c, stroke: last ? '#1A1A1A' : '#fff', 'stroke-width': last ? 2.5 : 2 }));
+        T(svg, cx, cy + 5, p.n === 'your kernel' ? 'Y' : String(j + 1), { ...mid, 'font-size': 13, fill: '#fff', 'font-weight': 700 });
+      });
+      legend.innerHTML = '<table><tr><th>#</th><th>kernel</th><th>FLOP/B</th><th>at most</th></tr>' +
+        list.map((p, j) => { const a = Math.min(peak, bw * p.I); return `<tr${j === list.length - 1 ? ' style="font-weight:600"' : ''}><td style="color:${p.c}">${p.n === 'your kernel' ? 'Y' : j + 1}</td><td>${p.n}</td><td>${fmtI(p.I)}</td><td>${fmtT(a)} · ${p.I < ridge ? 'memory' : 'compute'}</td></tr>`; }).join('') + '</table>';
+      const cur = list[list.length - 1];
+      cap.innerHTML = k === 0 ? `Every kernel lies under two lines: the <b>slope</b> (bandwidth × intensity) and the <b>roof</b> (peak compute). They meet at the <b>ridge</b>: ${fmtT(peak)} / ${bw} TB/s = <b>${ridge.toFixed(1)} FLOP/B</b>.` :
+        `<b>${cur.n}</b>: ${fmtI(cur.I)} FLOP/B, at most ${pct(Math.min(peak, bw * cur.I) / peak)} of the peak. ` + (cur.I < ridge ? 'Memory-bound: more intensity moves it up the slope.' : 'Compute-bound: only faster arithmetic helps.') +
+        (cur.n === 'your kernel' ? ' A measured kernel sits <i>below</i> its point; the gap is what optimization can still win.' : '');
+    }
+    const st = stepper(root, () => pts.length + 2, (kk) => { k = kk; draw(); }, 2600);
+    root.querySelectorAll('[data-dev]').forEach(b => b.addEventListener('click', () => {
+      root.querySelectorAll('[data-dev]').forEach(x => x.classList.toggle('on', x === b));
+      [peak, bw] = b.dataset.dev.split(',').map(Number); draw();
+    }));
+    [qf, qb].forEach(q => q.addEventListener('input', () => { st.leave(); k = pts.length + 1; draw(); }));
+    return st;
+  };
+
+  // ------------------------------------------------------------ speed of light
+  ANIM.sol = (root) => {
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    function update() {
+      const n = Math.max(1, +q('n').value || 1), t = Math.max(0.001, +q('t').value || 1), bw = Math.max(0.001, +q('bw').value || 1);
+      const bytes = 12 * n, rate = bytes / (t / 1000) / 1e12, frac = rate / bw, tmin = bytes / (bw * 1e12) * 1000;
+      out.innerHTML = `data moved = 12 × ${fmt(n)} = <b>${(bytes / 1e9).toFixed(bytes >= 1e10 ? 0 : 2)} GB</b><br>` +
+        `achieved bandwidth = ${(bytes / 1e9).toFixed(2)} GB / ${t} ms = <b>${rate.toFixed(2)} TB/s</b><br>` +
+        `fraction of the peak = <b>${pct(frac)}</b>${frac > 1 ? ' (impossible: check the numbers)' : ''}<br>` +
+        `fastest possible time = ${(bytes / 1e9).toFixed(2)} GB / ${bw} TB/s = <b>${tmin.toFixed(2)} ms</b>`;
+      const svg = newSvg(root, '0 0 600 170', 'Achieved bandwidth compared with the peak');
+      const w = 520, x = 60;
+      T(svg, 0, 42, 'peak', { 'font-size': 14 }); R(svg, x, 22, w, 32, { fill: '#E6E6E6', rx: 3 }); T(svg, x + w - 6, 44, `${bw} TB/s`, { 'text-anchor': 'end', 'font-size': 13 });
+      T(svg, 0, 102, 'kernel', { 'font-size': 14 }); R(svg, x, 82, Math.min(w, w * frac), 32, { fill: frac > 1 ? '#B03A3A' : '#2F6FD0', rx: 3 });
+      T(svg, x + 8, 104, `${rate.toFixed(2)} TB/s · ${pct(frac)}`, { 'font-size': 13, fill: '#fff' });
+      T(svg, x, 150, `room left for optimization: ${pct(Math.max(0, 1 - frac))}`, { 'font-size': 13, class: 'lbl' });
+    }
+    ['n', 't', 'bw'].forEach(n => q(n).addEventListener('input', update));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ CUDA memory types
+  ANIM.memtypes = (root) => {
+    const svg = newSvg(root, '0 0 1000 420', 'CUDA memory model: registers per thread, shared memory per block, global and constant memory per grid, host access to global and constant memory');
+    const groups = { reg: [], sh: [], gl: [], co: [], lo: [], host: [] };
+    const add = (g, e) => { groups[g].push(e); return e; };
+    R(svg, 6, 6, 150, 408, { class: 'frame', rx: 4 }); const hostBox = add('host', R(svg, 24, 160, 114, 90, { class: 'mem', rx: 3 }));
+    T(svg, 81, 200, 'Host', { ...mid, 'font-size': 16, 'font-weight': 600 }); T(svg, 81, 222, '(CPU)', { ...mid, 'font-size': 13, class: 'lbl' });
+    R(svg, 170, 6, 824, 408, { class: 'frame', rx: 4 }); T(svg, 186, 28, 'Device: the grid', { 'font-size': 15, 'font-weight': 600 });
+    const threadPos = [];
+    for (let b = 0; b < 2; b++) {
+      const bx = 196 + b * 396;
+      R(svg, bx, 40, 380, 200, { fill: 'none', stroke: '#6f6f6f', 'stroke-width': 1.5, rx: 4 });
+      T(svg, bx + 12, 60, `Block (${b}, 0)`, { 'font-size': 14 });
+      add('sh', R(svg, bx + 20, 70, 340, 36, { class: 'mem', rx: 3 })); T(svg, bx + 190, 93, 'Shared memory', { ...mid, 'font-size': 14 });
+      for (let t = 0; t < 2; t++) {
+        const tx = bx + 30 + t * 180;
+        add('reg', R(svg, tx, 120, 140, 34, { class: 'mem', rx: 3 })); T(svg, tx + 70, 142, 'Registers', { ...mid, 'font-size': 13 });
+        R(svg, tx, 178, 140, 40, { fill: '#C9DBF4', rx: 3 }); T(svg, tx + 70, 203, `Thread (${t}, 0)`, { ...mid, 'font-size': 13 });
+        add('reg', L(svg, tx + 70, 154, tx + 70, 178, { class: 'wire' }));
+        add('sh', L(svg, tx + 20, 106, tx + 20, 178, { class: 'wire' }));
+        add('lo', R(svg, tx + 100, 222, 40, 12, { fill: 'none', stroke: 'none' }));
+        threadPos.push(tx);
+      }
+    }
+    const gl = add('gl', R(svg, 196, 280, 776, 50, { class: 'mem', rx: 3 })); T(svg, 584, 310, 'Global memory (DRAM)', { ...mid, 'font-size': 15 });
+    const loc = add('lo', R(svg, 830, 286, 132, 38, { fill: '#fff', stroke: '#bdbdbd', 'stroke-dasharray': '4 3', rx: 3 })); T(svg, 896, 310, 'local memory', { ...mid, 'font-size': 12 });
+    add('co', R(svg, 196, 350, 776, 50, { class: 'mem', rx: 3 })); T(svg, 584, 380, 'Constant memory (cached, 64 KB)', { ...mid, 'font-size': 15 });
+    threadPos.forEach(tx => { add('gl', L(svg, tx + 110, 218, tx + 110, 280, { class: 'wire' })); add('co', L(svg, tx + 130, 218, tx + 130, 350, { class: 'wire', 'stroke-dasharray': '5 3' })); });
+    add('host', L(svg, 138, 230, 196, 305, { class: 'wire' })); add('host', L(svg, 138, 240, 196, 375, { class: 'wire' }));
+    const caps = [
+      'Every memory has a <b>scope</b> (who can see it) and a <b>speed</b>. Step through them from fastest to slowest.',
+      '<b>Registers</b>: private to one thread, read and written by it (R/W). The fastest storage; automatic scalar variables live here.',
+      '<b>Shared memory</b>: one per block, on chip, R/W by all threads of that block. Block (0,0) cannot see block (1,0)\'s shared memory.',
+      '<b>Global memory</b>: off-chip DRAM, R/W by every thread of every block, and by the host (cudaMemcpy). Large, slow, survives between kernels.',
+      '<b>Constant memory</b>: written by the host, <b>read-only</b> for the device, cached so all threads can read it quickly. 64 KB in total.',
+      '<b>Local memory</b>: per-thread, but stored in global memory (automatic arrays, spilled registers). Private like registers, slow like DRAM.'
+    ];
+    const key = [null, 'reg', 'sh', 'gl', 'co', 'lo'], cap = root.querySelector('[data-cap]');
+    return stepper(root, () => caps.length, (k) => {
+      Object.entries(groups).forEach(([g, list]) => list.forEach(e => e.classList.toggle('on', g === key[k] || (k === 3 && g === 'host') || (k === 4 && g === 'host'))));
+      loc.setAttribute('stroke', k === 5 ? '#C98A1B' : '#bdbdbd'); loc.setAttribute('stroke-width', k === 5 ? 2.5 : 1);
+      cap.innerHTML = caps[k];
+    }, 2800);
+  };
+
+  // ------------------------------------------------------------ register vs memory operand
+  ANIM.regs = (root) => {
+    let mode = 'reg';
+    const svg = newSvg(root, '0 0 1000 360', 'A processor executing fadd with operands in registers, or a load followed by fadd when an operand is in memory');
+    const mem = R(svg, 220, 8, 560, 64, { class: 'mem', rx: 3 }); T(svg, 500, 34, 'Global memory (off chip)', { ...mid, 'font-size': 15 });
+    const memVal = T(svg, 500, 58, 'address r4 + offset: 2.5', { ...mid, 'font-size': 13 });
+    R(svg, 20, 92, 960, 260, { class: 'frame', rx: 5 }); T(svg, 500, 344, 'Processor', { ...mid, 'font-size': 14, 'font-weight': 600 });
+    R(svg, 60, 112, 300, 120, { fill: '#F2F2F2', stroke: '#6f6f6f', rx: 3 }); T(svg, 210, 132, 'ALU', { ...mid, 'font-size': 15 });
+    const aluT = T(svg, 210, 180, '', { ...mid, 'font-size': 16, 'font-weight': 600 });
+    const rf = R(svg, 400, 112, 240, 120, { class: 'sp', rx: 3 }); T(svg, 520, 132, 'Register file', { ...mid, 'font-size': 14 });
+    const regT = [0, 1, 2, 3].map(i => T(svg, 520, 156 + i * 20, '', { ...mid, 'font-size': 13 }));
+    R(svg, 680, 112, 280, 120, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, 820, 132, 'Control unit', { ...mid, 'font-size': 14 });
+    const irT = T(svg, 820, 176, '', { ...mid, 'font-size': 15, 'font-weight': 600 });
+    const cnt = T(svg, 820, 214, '', { ...mid, 'font-size': 13, class: 'lbl' });
+    const wMem = L(svg, 520, 72, 520, 112, { class: 'wire' }), wAlu = L(svg, 400, 172, 360, 172, { class: 'wire blue' });
+    const prog = {
+      reg: [['fadd r1, r2, r3', 'decode: both operands are registers', 0], ['fadd r1, r2, r3', 'read r2 and r3, add', 0], ['fadd r1, r2, r3', 'write r1', 0]],
+      mem: [['load r2, r4, offset', 'address = r4 + offset', 1], ['load r2, r4, offset', 'wait hundreds of cycles for DRAM', 1], ['fadd r1, r2, r3', 'now r2 holds the operand', 2], ['fadd r1, r2, r3', 'read r2 and r3, add, write r1', 2]]
+    };
+    const caps = {
+      reg: ['<b>fadd r1, r2, r3</b>: the operands are named by register number, so the instruction itself carries them.',
+        'The ALU reads r2 and r3 straight from the register file. No memory access at all.',
+        '<b>One instruction</b>, no trip to memory. Register accesses also cost at least ten times less energy than global memory accesses.'],
+      mem: ['If an operand is in global memory, it must first be brought into a register: <b>load r2, r4, offset</b> forms the address r4 + offset.',
+        'The load waits for DRAM: hundreds of cycles, and it uses memory bandwidth that all threads compete for.',
+        'Only then can <b>fadd r1, r2, r3</b> run. The processor fetches a limited number of instructions per cycle, so the extra load also costs issue slots.',
+        '<b>Two instructions</b> and a slow, energy-hungry memory access. That is why data that is reused should be kept in registers or shared memory.']
+    };
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => prog[mode].length, (k) => {
+      const [ins, what, nIns] = prog[mode][k];
+      irT.textContent = `IR: ${ins}`; aluT.textContent = what.startsWith('read') ? 'r2 + r3' : '';
+      const loaded = mode === 'reg' || k >= 2;
+      regT[0].textContent = `r1 = ${(mode === 'reg' ? k >= 2 : k >= 3) ? '3.5' : '?'}`;
+      regT[1].textContent = `r2 = ${loaded ? '2.5' : '?'}`; regT[2].textContent = 'r3 = 1.0'; regT[3].textContent = mode === 'mem' ? 'r4 = base address' : '';
+      wMem.classList.toggle('on', mode === 'mem' && (k === 0 || k === 1)); mem.classList.toggle('on', mode === 'mem' && k === 1);
+      memVal.setAttribute('opacity', mode === 'mem' ? 1 : .3);
+      wAlu.classList.toggle('on', what.startsWith('read')); rf.classList.toggle('on', what.startsWith('read') || what.startsWith('write'));
+      cnt.textContent = mode === 'reg' ? 'instructions: 1 · memory accesses: 0' : `instructions: ${nIns} · memory accesses: 1`;
+      cap.innerHTML = caps[mode][k];
+    }, 2400);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ shared vs registers
+  ANIM.shared = (root) => {
+    const svg = newSvg(root, '0 0 1000 342', 'Four processing units with private register files and one shared memory used by all threads of the block');
+    R(svg, 6, 6, 988, 330, { class: 'frame', rx: 5 }); T(svg, 20, 30, 'One processing block of an SM', { 'font-size': 14, class: 'lbl' });
+    const shm = R(svg, 30, 60, 180, 220, { class: 'mem', rx: 3 }); T(svg, 120, 88, 'Shared memory', { ...mid, 'font-size': 14 }); T(svg, 120, 108, '(per block)', { ...mid, 'font-size': 12, class: 'lbl' });
+    const sv = T(svg, 120, 170, '', { ...mid, 'font-size': 18, 'font-weight': 600 });
+    const units = [0, 1, 2, 3].map(i => {
+      const x = 260 + i * 180;
+      R(svg, x, 60, 160, 220, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, x + 80, 84, `thread ${i}`, { ...mid, 'font-size': 14 });
+      R(svg, x + 16, 100, 128, 40, { fill: '#F2F2F2', stroke: '#9a9a9a', rx: 2 }); T(svg, x + 80, 125, 'ALU', { ...mid, 'font-size': 13 });
+      const rf = R(svg, x + 16, 156, 128, 104, { class: 'sp', rx: 3 }); T(svg, x + 80, 176, 'registers', { ...mid, 'font-size': 12 });
+      const v = T(svg, x + 80, 218, 'r1 = ?', { ...mid, 'font-size': 15 });
+      const w = svg.appendChild(el('polyline', { points: `120,280 120,${300 + i * 6} ${x + 80},${300 + i * 6} ${x + 80},280`, class: 'wire' }));
+      return { rf, v, w };
+    });
+    const caps = [
+      'Each thread has its own registers: thread 0 computes <b>r1 = 7</b>. The other threads cannot see that register.',
+      'To share it, thread 0 <b>stores</b> r1 into shared memory: <code>tile[0] = r1;</code> (a store instruction, unlike a register operand).',
+      'After a barrier, threads 1–3 <b>load</b> <code>tile[0]</code>: one value, written once, read by every thread of the block.',
+      'Shared memory is on chip: far faster than global memory, but it needs load/store instructions, so it is slower than registers. It is a <b>scratchpad</b> the program manages itself. Since Hopper, blocks of a cluster can also reach each other\'s shared memory (<b>distributed shared memory</b>).'
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 4, (k) => {
+      units.forEach((u, i) => {
+        u.v.textContent = i === 0 ? 'r1 = 7' : (k >= 2 ? 'r1 = 7' : 'r1 = ?');
+        u.rf.classList.toggle('on', (i === 0 && k === 0) || (i > 0 && k === 2));
+        u.v.setAttribute('fill', ((i === 0 && k === 0) || (i > 0 && k === 2)) ? '#fff' : '#1A1A1A');
+        u.w.classList.toggle('on', (i === 0 && k === 1) || (i > 0 && k === 2));
+      });
+      sv.textContent = k >= 1 ? 'tile[0] = 7' : 'tile[0] = ?'; shm.classList.toggle('on', k >= 1 && k <= 2);
+      cap.innerHTML = caps[k];
+    }, 2600);
+  };
+
+  // ------------------------------------------------------------ copies calculator
+  ANIM.copies = (root) => {
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    function update() {
+      const b = Math.max(1, +q('b').value | 0), t = Math.max(1, Math.min(1024, +q('t').value | 0));
+      out.innerHTML = `<table><tr><th>Variable</th><th>Copies</th></tr>` +
+        `<tr><td>automatic scalar (register)</td><td><b>${fmt(b * t)}</b> = ${fmt(b)} × ${fmt(t)}</td></tr>` +
+        `<tr><td>automatic array (local)</td><td><b>${fmt(b * t)}</b></td></tr>` +
+        `<tr><td><code>__shared__</code></td><td><b>${fmt(b)}</b>, one per block</td></tr>` +
+        `<tr><td><code>__device__</code>, <code>__constant__</code></td><td><b>1</b>, shared by all</td></tr></table>`;
+    }
+    ['b', 't'].forEach(n => q(n).addEventListener('input', update));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ Figs 5.5 / 5.6: repeated accesses
+  ANIM.access = (root) => {
+    const svg = newSvg(root, '0 0 1000 420', 'Four threads of block (0,0) read rows of M and columns of N; every element is read twice');
+    const S = 42, nX = 210, nY = 10, mX = 20, mY = 200, pX = 210, pY = 200;
+    const grid = (x0, y0, nm) => { const c = []; for (let r = 0; r < 4; r++) for (let q = 0; q < 4; q++) {
+      const rect = R(svg, x0 + q * S, y0 + r * S, S - 2, S - 2, { class: 'cell', rx: 2 });
+      T(svg, x0 + q * S + S / 2 - 1, y0 + r * S + S / 2 + 4, `${nm}${r},${q}`, { ...mid, 'font-size': 12 });
+      const badge = T(svg, x0 + q * S + S - 6, y0 + r * S + 12, '', { 'text-anchor': 'end', 'font-size': 10, fill: '#C98A1B', 'font-weight': 700 });
+      c.push({ rect, badge, n: 0 }); } return c; };
+    const N = grid(nX, nY, 'N'), M = grid(mX, mY, 'M'), P = grid(pX, pY, 'P');
+    R(svg, pX - 2, pY - 2, 2 * S + 2, 2 * S + 2, { fill: 'none', stroke: '#1A1A1A', 'stroke-width': 3 });
+    const tx0 = 410, colW = 120, rowH = 52;
+    T(svg, tx0, 30, 'Access order of block (0, 0) →', { 'font-size': 14 });
+    const thr = [[0, 0], [0, 1], [1, 0], [1, 1]];
+    const cells = thr.map(([ty, tx], i) => {
+      T(svg, tx0, 78 + i * rowH, `thread ${ty},${tx}`, { 'font-size': 13 });
+      return [0, 1, 2, 3].map(k => { const r = R(svg, tx0 + 90 + k * colW, 56 + i * rowH, colW - 6, rowH - 8, { class: 'cell', rx: 2 }); const t = T(svg, tx0 + 90 + k * colW + (colW - 6) / 2, 82 + i * rowH, '', { ...mid, 'font-size': 13 }); return { r, t }; });
+    });
+    [0, 1, 2, 3].map(k => T(svg, tx0 + 90 + k * colW + (colW - 6) / 2, 50, `k = ${k}`, { ...mid, 'font-size': 12, class: 'lbl' }));
+    const tot = T(svg, tx0, 290, '', { 'font-size': 14 });
+    const tot2 = T(svg, tx0, 316, '', { 'font-size': 14 });
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 6, (k) => {
+      [...M, ...N].forEach(c => { c.n = 0; c.rect.setAttribute('class', 'cell'); c.badge.textContent = ''; });
+      P.forEach((c, i) => c.rect.setAttribute('class', (Math.floor(i / 4) < 2 && i % 4 < 2) ? (k > 0 ? 'soft' : 'cell') : 'cell'));
+      const upto = Math.min(k, 4);
+      thr.forEach(([ty, tx], i) => cells[i].forEach((c, kk) => {
+        const on = kk < upto; c.r.setAttribute('class', on ? (kk === upto - 1 && k <= 4 ? 'soft' : 'cell') : 'cell');
+        c.t.textContent = on ? `M${ty},${kk} × N${kk},${tx}` : '';
+        if (on) { M[ty * 4 + kk].n++; N[kk * 4 + tx].n++; }
+      }));
+      [...M, ...N].forEach(c => { if (c.n) { c.badge.textContent = '×' + c.n; c.rect.setAttribute('class', c.n > 1 ? 'soft2' : 'soft'); } });
+      if (k >= 1 && k <= 4) thr.forEach(([ty, tx]) => { M[ty * 4 + k - 1].rect.setAttribute('class', 'hl'); N[(k - 1) * 4 + tx].rect.setAttribute('class', 'hl'); });
+      const reads = 8 * upto, distinct = [...M, ...N].filter(c => c.n).length;
+      tot.textContent = k ? `global reads so far: ${reads}` : ''; tot2.textContent = k ? `distinct elements: ${distinct}` : '';
+      const msgs = ['Block (0, 0) has four threads; each computes one element of the outlined P tile with a dot product over k = 0…3.',
+        'k = 0: thread (0,0) and thread (0,1) <b>both</b> read M0,0; threads (0,0) and (1,0) both read N0,0.',
+        'k = 1: again every M and N element read here is read by two threads.',
+        'k = 2: the four threads read 8 values, only 4 of them different.',
+        'k = 3: done. Each thread made 4 M reads and 4 N reads.',
+        '<b>32 global reads for 16 distinct values</b>: every element was read <b>twice</b> (orange ×2). If the threads loaded each value once and shared it, traffic would halve. With T × T tiles the saving is a factor of T.'];
+      cap.innerHTML = msgs[k];
+    }, 2000);
+  };
+
+  // ------------------------------------------------------------ traffic reduction calculator
+  ANIM.reduce = (root) => {
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    function update() {
+      const w = Math.max(1, +q('w').value | 0), t = Math.max(1, Math.min(64, +q('t').value | 0));
+      const naive = 2 * w * w * w, phases = Math.ceil(w / t), tiled = 2 * phases * t * t * Math.ceil(w / t) ** 2;
+      const exact = w % t === 0, I = 0.25 * t, att = Math.min(66.9, 3.35 * I);
+      out.innerHTML = `global loads per thread: no tiling ${fmt(2 * w)}, tiled <b>${fmt(2 * phases)}</b> (${phases} phases × 2)<br>` +
+        `all threads: ${fmt(naive)} → <b>${fmt(exact ? naive / t : tiled)}</b>${exact ? ` (÷ ${t})` : ' (Width not a multiple of the tile: padded tiles)'}<br>` +
+        `intensity = 0.25 × ${t} = <b>${I} FLOP/B</b><br>` +
+        `H100 limit = min(66.9, 3.35 × ${I}) = <b>${att.toFixed(1)} TFLOPS</b> (${pct(att / 66.9)})` +
+        `<div class="cfg-msg ${I >= 20 ? 'ok' : 'bad'}">${I >= 20 ? 'Compute-bound on an H100.' : 'Still memory-bound on an H100 (threshold 20 FLOP/B).'}</div>`;
+      const svg = newSvg(root, '0 0 600 260', 'Global loads with and without tiling');
+      const x = 130, wmax = 440, ratio = exact ? 1 / t : tiled / naive;
+      T(svg, 0, 50, 'no tiling', { 'font-size': 14 }); R(svg, x, 28, wmax, 36, { fill: '#C98A1B', rx: 3 });
+      T(svg, x + 8, 52, fmt(naive) + ' loads', { 'font-size': 13, fill: '#fff' });
+      T(svg, 0, 120, `tiles ${t} × ${t}`, { 'font-size': 14 }); R(svg, x, 98, Math.max(2, wmax * ratio), 36, { fill: '#2F6FD0', rx: 3 });
+      T(svg, x + Math.max(2, wmax * ratio) + 8, 122, fmt(exact ? naive / t : tiled) + ' loads', { 'font-size': 13 });
+      T(svg, 0, 190, 'shared memory per block', { 'font-size': 13, class: 'lbl' }); T(svg, x + 120, 190, `2 × ${t}² × 4 B = ${fmt(2 * t * t * 4)} B`, { 'font-size': 13 });
+      T(svg, 0, 220, 'threads per block', { 'font-size': 13, class: 'lbl' }); T(svg, x + 120, 220, `${t}² = ${fmt(t * t)}${t * t > 1024 ? '  (over the 1024 limit!)' : ''}`, { 'font-size': 13, fill: t * t > 1024 ? '#B03A3A' : '#1A1A1A' });
+    }
+    ['w', 't'].forEach(n => q(n).addEventListener('input', update));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [w, t] = b.dataset.p.split(','); q('w').value = w; q('t').value = t; update(); }));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ Figs 5.7 / 5.8: phases
+  ANIM.phases = (root) => {
+    const Mv = [1, 2, 0, 1, 3, 1, 2, 0, 0, 1, 1, 2, 2, 0, 1, 3], Nv = [2, 1, 0, 1, 1, 0, 2, 1, 0, 3, 1, 2, 1, 2, 1, 0];
+    let by = 0, bx = 0;
+    const svg = newSvg(root, '0 0 1000 400', 'Block threads load a tile of M and of N into shared memory in each phase and accumulate Pvalue');
+    const S = 36, nX = 200, nY = 6, mX = 20, mY = 160, pX = 200, pY = 160;
+    const mk = (x0, y0, vals, nm) => { const out = []; for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
+      const rect = R(svg, x0 + c * S, y0 + r * S, S - 2, S - 2, { class: 'cell', rx: 2 });
+      const t = T(svg, x0 + c * S + S / 2 - 1, y0 + r * S + S / 2 + 5, vals ? String(vals[r * 4 + c]) : '', { ...mid, 'font-size': 14 });
+      out.push({ rect, t }); }
+      [2].forEach(g => { L(svg, x0 + g * S - 1, y0 - 2, x0 + g * S - 1, y0 + 4 * S, { stroke: '#1A1A1A', 'stroke-width': 2.5 }); L(svg, x0 - 2, y0 + g * S - 1, x0 + 4 * S, y0 + g * S - 1, { stroke: '#1A1A1A', 'stroke-width': 2.5 }); });
+      T(svg, x0 - 6, y0 + 4 * S / 2, nm, { 'text-anchor': 'end', 'font-size': 15, 'font-weight': 700 });
+      return out; };
+    const N = mk(nX, nY, Nv, 'N'), M = mk(mX + 18, mY, Mv, 'M'), P = mk(pX, pY, null, 'P');
+    const sx = 390;
+    R(svg, sx - 8, 6, 170, 310, { fill: 'none', stroke: '#9a9a9a', 'stroke-dasharray': '5 4', rx: 4 });
+    T(svg, sx + 77, 300, 'shared memory', { ...mid, 'font-size': 12, class: 'lbl' });
+    const sh = (y0, nm) => { T(svg, sx, y0 - 6, nm, { 'font-size': 13, 'font-weight': 600 }); const o = []; for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) { const rect = R(svg, sx + c * 52, y0 + r * 46, 48, 42, { class: 'cell', rx: 2 }); const t = T(svg, sx + c * 52 + 24, y0 + r * 46 + 27, '', { ...mid, 'font-size': 15 }); o.push({ rect, t }); } return o; };
+    const Nds = sh(40, 'Nds'), Mds = sh(176, 'Mds');
+    const barT = T(svg, sx + 77, 150, '', { ...mid, 'font-size': 13, fill: '#B03A3A', 'font-weight': 700 });
+    const tX = 572, cw = [64, 124, 110, 124], hdr = ['thread', 'phase 0 loads', 'Pvalue', 'phase 1 loads'];
+    let cx = tX; const colX = cw.map(w => { const x = cx; cx += w; return x; });
+    hdr.forEach((h, i) => T(svg, colX[i] + 4, 24, h, { 'font-size': 12, class: 'lbl' }));
+    const thr = [[0, 0], [0, 1], [1, 0], [1, 1]];
+    const rows = thr.map(([ty, tx], i) => { const y = 34 + i * 70; T(svg, colX[0] + 4, y + 30, `(${ty}, ${tx})`, { 'font-size': 13 });
+      const c = [1, 2, 3].map(j => { R(svg, colX[j], y, cw[j] - 4, 62, { class: 'cell', rx: 2 }); return [T(svg, colX[j] + 6, y + 20, '', { 'font-size': 11 }), T(svg, colX[j] + 6, y + 37, '', { 'font-size': 11 }), T(svg, colX[j] + 6, y + 54, '', { 'font-size': 11 })]; });
+      return c; });
+    const glob = T(svg, tX, 330, '', { 'font-size': 13 });
+    const steps = ['start', 'load0', 'sync', 'comp0', 'sync2', 'load1', 'sync', 'comp1', 'store'];
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => steps.length, (k) => {
+      const s = steps[k], ph = k >= 5 ? 1 : 0;
+      const tileOnM = (r, c) => Math.floor(r / 2) === by && Math.floor(c / 2) === ph, tileOnN = (r, c) => Math.floor(r / 2) === ph && Math.floor(c / 2) === bx;
+      const loading = s === 'load0' || s === 'load1';
+      M.forEach((e, i) => e.rect.setAttribute('class', k > 0 && k < 8 && tileOnM(Math.floor(i / 4), i % 4) ? (loading ? 'hl' : 'soft') : 'cell'));
+      N.forEach((e, i) => e.rect.setAttribute('class', k > 0 && k < 8 && tileOnN(Math.floor(i / 4), i % 4) ? (loading ? 'hl' : 'soft') : 'cell'));
+      M.forEach((e, i) => e.t.setAttribute('fill', k > 0 && k < 8 && loading && tileOnM(Math.floor(i / 4), i % 4) ? '#fff' : '#1A1A1A'));
+      N.forEach((e, i) => e.t.setAttribute('fill', k > 0 && k < 8 && loading && tileOnN(Math.floor(i / 4), i % 4) ? '#fff' : '#1A1A1A'));
+      const pv = thr.map(([ty, tx]) => { const row = by * 2 + ty, col = bx * 2 + tx; let s0 = 0, s1 = 0;
+        for (let kk = 0; kk < 2; kk++) s0 += Mv[row * 4 + kk] * Nv[kk * 4 + col];
+        for (let kk = 2; kk < 4; kk++) s1 += Mv[row * 4 + kk] * Nv[kk * 4 + col]; return [s0, s0 + s1]; });
+      const loadedPh = k >= 5 ? 1 : (k >= 1 ? 0 : -1);
+      thr.forEach(([ty, tx], i) => {
+        const row = by * 2 + ty, col = bx * 2 + tx, j = ty * 2 + tx;
+        Mds[j].t.textContent = loadedPh >= 0 ? String(Mv[row * 4 + loadedPh * 2 + tx]) : '';
+        Nds[j].t.textContent = loadedPh >= 0 ? String(Nv[(loadedPh * 2 + ty) * 4 + col]) : '';
+        const p = P[row * 4 + col]; p.rect.setAttribute('class', k === 0 ? 'soft' : (k === 8 ? 'hl' : 'soft'));
+        p.t.textContent = k >= 7 ? String(pv[i][1]) : k >= 3 ? String(pv[i][0]) : '0'; p.t.setAttribute('fill', k === 8 ? '#fff' : '#1A1A1A');
+        const r = rows[i];
+        r[0][0].textContent = k >= 1 ? `M${row},${tx} → Mds${ty},${tx}` : ''; r[0][1].textContent = k >= 1 ? `N${ty},${col} → Nds${ty},${tx}` : ''; r[0][2].textContent = '';
+        r[1][0].textContent = k >= 3 ? `after ph 0: ${pv[i][0]}` : ''; r[1][1].textContent = k >= 7 ? `after ph 1: ${pv[i][1]}` : ''; r[1][2].textContent = k >= 8 ? `→ P${row},${col}` : '';
+        r[2][0].textContent = k >= 5 ? `M${row},${2 + tx} → Mds${ty},${tx}` : ''; r[2][1].textContent = k >= 5 ? `N${2 + ty},${col} → Nds${ty},${tx}` : ''; r[2][2].textContent = '';
+      });
+      for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) if (!(Math.floor(r / 2) === by && Math.floor(c / 2) === bx)) { P[r * 4 + c].t.textContent = ''; P[r * 4 + c].rect.setAttribute('class', 'cell'); }
+      [...Mds, ...Nds].forEach(e => e.rect.setAttribute('class', loading ? 'soft2' : (k >= 1 ? 'soft' : 'cell')));
+      barT.textContent = s === 'sync' || s === 'sync2' ? '__syncthreads()' : '';
+      const loads = k >= 5 ? 16 : k >= 1 ? 8 : 0;
+      glob.textContent = `global loads by this block: ${loads}${k === 8 ? ' (no tiling: 32)' : ''}`;
+      const t0 = thr[0], r0 = by * 2, c0 = bx * 2;
+      const msgs = {
+        start: `Block (${by}, ${bx}) computes the P tile at rows ${r0}–${r0 + 1}, columns ${c0}–${c0 + 1}. Every thread starts with Pvalue = 0 in a register.`,
+        load0: `<b>Phase 0, load</b>: each of the 4 threads copies <b>one</b> M element and <b>one</b> N element into shared memory (Mds, Nds). 8 global loads in total.`,
+        sync: `<b>__syncthreads()</b>: nobody may read Mds/Nds until all four threads have written their element.`,
+        comp0: `<b>Phase 0, compute</b>: Pvalue += Mds[ty][0]·Nds[0][tx] + Mds[ty][1]·Nds[1][tx]. Each shared value is used by <b>two</b> threads.\nThread (0,0): ${Mv[r0 * 4]}·${Nv[c0]} + ${Mv[r0 * 4 + 1]}·${Nv[4 + c0]} = ${pv[0][0]}.`,
+        sync2: `<b>__syncthreads()</b> again: everyone must finish reading the tiles before they are overwritten by phase 1.`,
+        load1: `<b>Phase 1, load</b>: the same Mds and Nds are reused for the next tiles (columns 2–3 of M, rows 2–3 of N).`,
+        comp1: `<b>Phase 1, compute</b>: Pvalue now holds the full dot product. Thread (0,0): ${pv[0][0]} + ${Mv[r0 * 4 + 2]}·${Nv[8 + c0]} + ${Mv[r0 * 4 + 3]}·${Nv[12 + c0]} = ${pv[0][1]}.`,
+        store: `<b>Store</b>: each thread writes its Pvalue to P. The block made <b>16</b> global loads instead of 32: each element was loaded once and used twice.`
+      };
+      cap.innerHTML = msgs[s];
+    }, 2400);
+    root.querySelectorAll('[data-blk]').forEach(b => b.addEventListener('click', () => {
+      root.querySelectorAll('[data-blk]').forEach(x => x.classList.toggle('on', x === b)); [by, bx] = b.dataset.blk.split(',').map(Number); st.reset();
+    }));
+    return st;
+  };
+
+  // ------------------------------------------------------------ Fig 5.10: index arithmetic
+  ANIM.index = (root) => {
+    const Wd = 8; let Tw = 2;
+    const q = (n) => root.querySelector(`[data-in=${n}]`), cap = root.querySelector('[data-cap]');
+    const clamp = () => { const g = Wd / Tw; ['bx', 'by'].forEach(n => { q(n).max = g - 1; if (+q(n).value > g - 1) q(n).value = g - 1; if (+q(n).value < 0) q(n).value = 0; }); ['tx', 'ty'].forEach(n => { q(n).max = Tw - 1; if (+q(n).value > Tw - 1) q(n).value = Tw - 1; if (+q(n).value < 0) q(n).value = 0; }); };
+    function draw(ph) {
+      clamp();
+      const bx = +q('bx').value | 0, by = +q('by').value | 0, tx = +q('tx').value | 0, ty = +q('ty').value | 0;
+      const Row = by * Tw + ty, Col = bx * Tw + tx, mc = ph * Tw + tx, nr = ph * Tw + ty;
+      const svg = newSvg(root, '0 0 600 430', 'M, N and P with the tiles of the current phase and the elements loaded by one thread');
+      const S = 22, nX = 300, nY = 8, mX = 60, mY = 220, pX = 300, pY = 220;
+      const g = (x0, y0, nm, cls) => { for (let r = 0; r < Wd; r++) for (let c = 0; c < Wd; c++) R(svg, x0 + c * S, y0 + r * S, S - 1, S - 1, { class: cls(r, c), rx: 1 }); T(svg, x0 - 6, y0 + 14, nm, { 'text-anchor': 'end', 'font-size': 14, 'font-weight': 700 }); };
+      const inTile = (r, c, tr, tc) => Math.floor(r / Tw) === tr && Math.floor(c / Tw) === tc;
+      g(mX, mY, 'M', (r, c) => r === Row && c === mc ? 'hl' : inTile(r, c, by, ph) ? 'soft2' : r === Row ? 'soft' : 'cell');
+      g(nX, nY, 'N', (r, c) => r === nr && c === Col ? 'hl' : inTile(r, c, ph, bx) ? 'soft2' : c === Col ? 'soft' : 'cell');
+      g(pX, pY, 'P', (r, c) => r === Row && c === Col ? 'hl' : inTile(r, c, by, bx) ? 'soft' : 'cell');
+      L(svg, mX, mY - 14, mX + (ph * Tw) * S, mY - 14, { stroke: '#1A1A1A', 'stroke-width': 2 });
+      T(svg, mX, mY - 20, `ph·TILE_WIDTH = ${ph * Tw}`, { 'font-size': 12 });
+      L(svg, nX + Wd * S + 10, nY, nX + Wd * S + 10, nY + ph * Tw * S, { stroke: '#1A1A1A', 'stroke-width': 2 });
+      T(svg, nX + Wd * S + 16, nY + 12, `${ph * Tw}`, { 'font-size': 12 });
+      T(svg, pX, pY + Wd * S + 22, `P[${Row}][${Col}]`, { 'font-size': 13, fill: '#2F6FD0', 'font-weight': 700 });
+      cap.innerHTML = `Row = by·T + ty = ${by}·${Tw} + ${ty} = <b>${Row}</b>    Col = bx·T + tx = ${bx}·${Tw} + ${tx} = <b>${Col}</b>\n` +
+        `phase ph = <b>${ph}</b> of ${Wd / Tw}:\n` +
+        `  M[Row·Width + ph·T + tx] = M[${Row}·8 + ${ph * Tw} + ${tx}] = M[${Row * Wd + mc}] → <i>M[${Row}][${mc}]</i>\n` +
+        `  N[(ph·T + ty)·Width + Col] = N[(${ph * Tw} + ${ty})·8 + ${Col}] = N[${nr * Wd + Col}] → <i>N[${nr}][${Col}]</i>\n` +
+        `light orange: the tiles this block loads in this phase · blue: what this thread loads and computes`;
+    }
+    const st = stepper(root, () => Wd / Tw, (k) => draw(k), 1800);
+    ['bx', 'by', 'tx', 'ty'].forEach(n => q(n).addEventListener('input', () => draw(st.k)));
+    root.querySelectorAll('[data-tw]').forEach(b => b.addEventListener('click', () => {
+      root.querySelectorAll('[data-tw]').forEach(x => x.classList.toggle('on', x === b)); Tw = +b.dataset.tw; st.reset();
+    }));
+    return st;
+  };
+
+  // ------------------------------------------------------------ why both barriers
+  ANIM.hazards = (root) => {
+    let mode = 'both';
+    // shared tile of two slots; thread 0 fills slot 0, thread 1 (slower) fills slot 1; both need both slots
+    const ev = {
+      both: [
+        ['phase 0: load Mds[0] = 3', 'phase 0: load Mds[1] … (slow)', [3, '?']],
+        ['waits at line 18', 'load done: Mds[1] = 5', [3, 5]],
+        ['compute: 3·a + 5·b ✓', 'compute: 3·c + 5·d (slow)', [3, 5]],
+        ['waits at line 22', 'still computing, reads Mds[0] = 3 ✓', [3, 5]],
+        ['phase 1: load Mds[0] = 8', 'phase 1: load Mds[1] = 2', [8, 2]]
+      ],
+      no18: [
+        ['phase 0: load Mds[0] = 3', 'phase 0: load Mds[1] … (slow)', [3, '?']],
+        ['compute at once: reads Mds[1] = ? ✗', 'load done: Mds[1] = 5', [3, 5]],
+        ['result uses a stale or garbage value', 'compute: 3·c + 5·d', [3, 5]]
+      ],
+      no22: [
+        ['phase 0: load Mds[0] = 3', 'phase 0: load Mds[1] … (slow)', [3, '?']],
+        ['waits at line 18', 'load done: Mds[1] = 5', [3, 5]],
+        ['compute: 3·a + 5·b ✓ (fast)', 'compute starts (slow)', [3, 5]],
+        ['phase 1: overwrites Mds[0] = 8', 'still computing phase 0', [8, 5]],
+        ['…', 'reads Mds[0] = 8 instead of 3 ✗', [8, 5]]
+      ]
+    };
+    const caps = {
+      both: 'With both barriers each phase is safe: line 18 makes the fast thread wait for the slow load (<b>read-after-write</b>); line 22 makes it wait before overwriting the tile (<b>write-after-read</b>).',
+      no18: 'Without line 18 the fast thread reads Mds[1] before thread 1 has written it: a broken <b>read-after-write</b> (true) dependence.',
+      no22: 'Without line 22 the fast thread starts phase 1 and overwrites Mds[0] while thread 1 still needs the phase 0 value: a broken <b>write-after-read</b> (false) dependence.'
+    };
+    const host = root.querySelector('[data-svg]'), cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => ev[mode].length + 1, (k) => {
+      const rows = ev[mode].slice(0, k);
+      host.innerHTML = '<table style="font-size:.62em"><tr><th>time</th><th>thread 0 (fast)</th><th>thread 1 (slow)</th><th>Mds[0]</th><th>Mds[1]</th></tr>' +
+        rows.map((r, i) => `<tr><td>${i + 1}</td>${[r[0], r[1]].map(x => `<td class="${x.includes('✗') ? 'bad' : x.includes('✓') ? 'ok' : ''}">${x}</td>`).join('')}<td>${r[2][0]}</td><td>${r[2][1]}</td></tr>`).join('') +
+        '</table>';
+      cap.innerHTML = k === 0 ? 'Two threads share a tile of two slots. Each loads one slot and needs both. Thread 1 is slower.' : (k === ev[mode].length ? caps[mode] : 'Step through the timeline.');
+    }, 1800);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ Figs 5.11 / 5.12: boundary checks
+  ANIM.boundary = (root) => {
+    let Wd = 3; const Tw = 2;
+    const cap = root.querySelector('[data-cap]');
+    const combos = () => { const g = Math.ceil(Wd / Tw), out = []; for (let by = 0; by < g; by++) for (let bx = 0; bx < g; bx++) for (let ph = 0; ph < g; ph++) out.push([by, bx, ph]); return out; };
+    function draw(k) {
+      const g = Math.ceil(Wd / Tw), n = g * Tw, [by, bx, ph] = combos()[k];
+      const S = 30, svg = newSvg(root, '0 0 1000 400', 'Matrices padded to whole tiles; threads whose element does not exist load zero');
+      const mX = 40, mY = 200, nX = 300, nY = 8, pX = 300, pY = 200;
+      const draws = (x0, y0, nm, kind) => {
+        for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+          const real = r < Wd && c < Wd;
+          let cls = real ? 'cell' : 'faint';
+          if (kind === 'M' && Math.floor(r / Tw) === by && Math.floor(c / Tw) === ph) cls = real ? 'soft' : 'idle';
+          if (kind === 'N' && Math.floor(r / Tw) === ph && Math.floor(c / Tw) === bx) cls = real ? 'soft' : 'idle';
+          if (kind === 'P' && Math.floor(r / Tw) === by && Math.floor(c / Tw) === bx) cls = real ? 'soft' : 'idle';
+          R(svg, x0 + c * S, y0 + r * S, S - 2, S - 2, { class: cls, rx: 2 });
+          if (real) T(svg, x0 + c * S + S / 2 - 1, y0 + r * S + S / 2 + 4, `${r},${c}`, { ...mid, 'font-size': 10 });
+        }
+        R(svg, x0 - 1, y0 - 1, Wd * S, Wd * S, { fill: 'none', stroke: '#1A1A1A', 'stroke-width': 2 });
+        T(svg, x0 - 6, y0 + 14, nm, { 'text-anchor': 'end', 'font-size': 15, 'font-weight': 700 });
+      };
+      draws(mX, mY, 'M', 'M'); draws(nX, nY, 'N', 'N'); draws(pX, pY, 'P', 'P');
+      const sx = 560;
+      T(svg, sx, 30, `block (${by}, ${bx}), phase ${ph}`, { 'font-size': 16, 'font-weight': 600 });
+      const lines = [], thr = [[0, 0], [0, 1], [1, 0], [1, 1]];
+      thr.forEach(([ty, tx], i) => {
+        const Row = by * Tw + ty, Col = bx * Tw + tx, mc = ph * Tw + tx, nr = ph * Tw + ty;
+        const mOk = Row < Wd && mc < Wd, nOk = nr < Wd && Col < Wd, pOk = Row < Wd && Col < Wd;
+        const y = 64 + i * 78;
+        T(svg, sx, y, `thread (${ty}, ${tx})`, { 'font-size': 14, 'font-weight': 600 });
+        T(svg, sx, y + 20, mOk ? `Mds ← M[${Row}][${mc}]` : `Mds ← 0.0f  (M[${Row}][${mc}] does not exist)`, { 'font-size': 13, fill: mOk ? '#1A1A1A' : '#B03A3A' });
+        T(svg, sx, y + 38, nOk ? `Nds ← N[${nr}][${Col}]` : `Nds ← 0.0f  (N[${nr}][${Col}] does not exist)`, { 'font-size': 13, fill: nOk ? '#1A1A1A' : '#B03A3A' });
+        T(svg, sx, y + 56, pOk ? `computes P[${Row}][${Col}]` : 'computes no P element (still loads, still syncs)', { 'font-size': 12, class: pOk ? '' : 'lbl' });
+        if (!mOk) { R(svg, mX + mc * S + 4, mY + Row * S + 4, S - 10, S - 10, { fill: 'none', stroke: '#B03A3A', 'stroke-width': 2.5 }); lines.push(`M by thread (${ty},${tx})`); }
+        else R(svg, mX + mc * S + 2, mY + Row * S + 2, S - 6, S - 6, { fill: 'none', stroke: '#2E7D4F', 'stroke-width': 2.5 });
+        if (!nOk) { R(svg, nX + Col * S + 4, nY + nr * S + 4, S - 10, S - 10, { fill: 'none', stroke: '#B03A3A', 'stroke-width': 2.5 }); lines.push(`N by thread (${ty},${tx})`); }
+        else R(svg, nX + Col * S + 2, nY + nr * S + 2, S - 6, S - 6, { fill: 'none', stroke: '#2E7D4F', 'stroke-width': 2.5 });
+      });
+      const wrongM = thr.map(([ty, tx]) => { const Row = by * Tw + ty, mc = ph * Tw + tx; return Row < Wd && mc >= Wd ? `M[${Row}][${mc}] would read M[${Row + 1}][${mc - Wd}] (next row)` : null; }).filter(Boolean);
+      cap.innerHTML = `Width = ${Wd}, tiles 2 × 2: ${g} × ${g} blocks, ${g} phases each. Green: a real element is loaded. Red: the element does not exist, so the thread loads <b>0.0f</b>.\n` +
+        (lines.length ? `Special treatment needed: ${lines.join(', ')}.` : 'In this block and phase every load is valid.') +
+        (wrongM.length ? `\nWithout the check, ${wrongM[0]}: a wrong value. Past the last row the access would leave the array altogether.` : '');
+    }
+    const st = stepper(root, () => combos().length, (k) => draw(k), 2200);
+    modeButtons(root, 'w', (v) => { Wd = +v; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ shared memory and occupancy
+  ANIM.smem = (root) => {
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    function update() {
+      const t = Math.max(1, Math.min(1024, +q('t').value | 0)), s = Math.max(0, +q('s').value || 0), smKB = Math.max(1, +q('sm').value || 1);
+      const byThreads = Math.floor(2048 / t), bySmem = s > 0 ? Math.floor(smKB / s) : Infinity, byBlocks = 32;
+      const blocks = Math.min(byThreads, bySmem, byBlocks), threads = blocks * t, occ = threads / 2048;
+      const lim = [['threads', byThreads], ['shared memory', bySmem], ['block slots', byBlocks]].filter(([, v]) => v === blocks).map(([n]) => n);
+      out.innerHTML = `shared memory per thread: ${s} KB / ${t} = <b>${(s * 1024 / t).toFixed(0)} B</b> (full occupancy needs ≤ ${(smKB * 1024 / 2048).toFixed(0)} B)<br>` +
+        `blocks allowed: by threads ${byThreads}, by shared memory ${bySmem === Infinity ? '∞' : bySmem}, by block slots ${byBlocks}<br>` +
+        `resident: <b>${blocks}</b> blocks = <b>${fmt(threads)}</b> threads, ${(blocks * s).toFixed(1)} of ${smKB} KB shared memory` +
+        `<div class="cfg-big" style="margin-top:.3em">${pct(occ)} <small>occupancy</small></div>` +
+        `<div class="cfg-msg ${occ >= 1 ? 'ok' : 'bad'}">${occ >= 1 ? 'Full occupancy.' : 'Limited by ' + lim.join(' and ') + '.'}</div>`;
+      const svg = newSvg(root, '0 0 600 150', 'Shared memory of one SM filled by resident blocks');
+      R(svg, 0, 20, 600, 50, { fill: '#EDEDED', rx: 3 });
+      for (let b = 0; b < blocks && s > 0; b++) R(svg, 600 * b * s / smKB, 20, Math.max(1, 600 * s / smKB - 2), 50, { fill: b % 2 ? '#2F6FD0' : '#8FB3E8', rx: 2 });
+      T(svg, 0, 14, `shared memory of one SM: ${smKB} KB`, { 'font-size': 13, class: 'lbl' });
+      R(svg, 0, 96, 600, 30, { fill: '#EDEDED', rx: 3 }); R(svg, 0, 96, 600 * occ, 30, { fill: '#2E7D4F', rx: 3 });
+      T(svg, 0, 90, `thread slots: ${fmt(threads)} of 2,048 used`, { 'font-size': 13, class: 'lbl' });
+    }
+    ['t', 's', 'sm'].forEach(n => q(n).addEventListener('input', update));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [t, s] = b.dataset.p.split(','); q('t').value = t; q('s').value = s; q('sm').value = 228; update(); }));
+    return { enter: update, leave() {} };
+  };
+
+
+  // ============================================================ memory architecture (Chapter 5, 5.1–5.2)
+  const arrowHead = (svg, id, color) => {
+    const d = svg.querySelector('defs') || svg.insertBefore(el('defs'), svg.firstChild);
+    const m = el('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto-start-reverse' });
+    m.appendChild(el('path', { d: 'M0,0 L10,5 L0,10 z', fill: color })); d.appendChild(m);
+    return `url(#${id})`;
+  };
+  const GRAY = '#9a9a9a', BLUE = '#2F6FD0', GOLD = '#C98A1B', RED = '#B03A3A', GREEN = '#2E7D4F';
+  const place = (e, x, y) => e.setAttribute('transform', `translate(${x},${y})`);
+  const vis = (e, on) => e.setAttribute('opacity', on ? 1 : 0);
+
+  // ------------------------------------------------------------ the memory wall: latency and congestion
+  ANIM.wall = (root) => {
+    const svg = newSvg(root, '0 0 1000 380', 'An SM whose warps send load requests over a narrow path to off-chip DRAM; when requests exceed the bandwidth a queue forms and the cores sit idle');
+    const head = arrowHead(svg, 'wl-a', GRAY);
+    R(svg, 10, 10, 380, 300, { class: 'frame', rx: 5 }); T(svg, 24, 34, 'SM (on chip)', { 'font-size': 15, 'font-weight': 600 });
+    const warps = [];
+    for (let i = 0; i < 8; i++) {
+      const y = 50 + i * 30;
+      warps.push(R(svg, 30, y, 150, 22, { class: 'chip', rx: 2 })); T(svg, 105, y + 16, `warp ${i}`, { ...mid, 'font-size': 12 });
+    }
+    const onchip = R(svg, 200, 50, 170, 232, { class: 'mem', rx: 3 });
+    T(svg, 285, 150, 'registers +', { ...mid, 'font-size': 13 }); T(svg, 285, 170, 'shared memory', { ...mid, 'font-size': 13 });
+    T(svg, 285, 194, '(on chip)', { ...mid, 'font-size': 12, class: 'lbl' });
+    R(svg, 440, 150, 300, 30, { fill: '#F4F4F4', stroke: '#c9c9c9', rx: 3 });
+    T(svg, 590, 140, 'path to global memory: limited bandwidth', { ...mid, 'font-size': 12, class: 'lbl' });
+    L(svg, 390, 165, 440, 165, { class: 'wire', 'marker-end': head }); L(svg, 740, 165, 790, 165, { class: 'wire', 'marker-end': head });
+    const dram = R(svg, 790, 60, 200, 210, { class: 'mem', rx: 4 });
+    T(svg, 890, 150, 'Global memory', { ...mid, 'font-size': 15 }); T(svg, 890, 172, 'off-chip DRAM', { ...mid, 'font-size': 13, class: 'lbl' });
+    T(svg, 890, 194, '3.35 TB/s on H100', { ...mid, 'font-size': 12, class: 'lbl' });
+    const lat = T(svg, 590, 222, '', { ...mid, 'font-size': 13, fill: GOLD });
+    const toks = [];
+    for (let i = 0; i < 12; i++) { const g = svg.appendChild(el('g', { class: 'tok' })); g.appendChild(el('circle', { cx: 0, cy: 0, r: 8, fill: GOLD })); toks.push(g); }
+    R(svg, 30, 330, 340, 18, { fill: '#EDEDED', rx: 2 }); const gauge = R(svg, 30, 330, 0, 18, { class: 'bar', rx: 2 });
+    const gtxt = T(svg, 380, 344, '', { 'font-size': 13 }); T(svg, 30, 322, 'compute units busy', { 'font-size': 12, class: 'lbl' });
+    const qtxt = T(svg, 590, 300, '', { ...mid, 'font-size': 13 });
+    // per step: busy warps, tokens [x, y] (null = hidden), utilisation, queue text
+    const lane = (i) => [460 + i * 37, 165];
+    const qpos = [[415, 118], [415, 138], [415, 192], [415, 212]];
+    const full = [...Array.from({ length: 8 }, (_, i) => lane(i)), ...qpos];
+    const S = [
+      { busy: [], wait: [0], tok: [lane(3)], util: .05, lat: '≈ hundreds of clock cycles each way', q: '' },
+      { busy: [1, 2, 3, 4, 5], wait: [0, 6, 7], tok: [lane(1), lane(4), lane(7)], util: .62, lat: 'latency hidden by switching warps', q: 'requests in flight: 3, within bandwidth' },
+      { busy: [3], wait: [0, 1, 2, 4, 5, 6, 7], tok: full, util: .12, lat: '', q: 'requests exceed the bandwidth: a queue forms' },
+      { busy: [3], wait: [0, 1, 2, 4, 5, 6, 7], tok: full, util: .12, lat: 'cores idle, waiting for data', q: 'congestion: the kernel is memory-bound' },
+      { busy: [0, 1, 2, 3, 4, 5, 6], wait: [7], tok: [lane(2), lane(6)], util: .85, lat: '', q: 'reused data served on chip: few DRAM requests' }
+    ];
+    const caps = [
+      'One warp loads an operand from <b>global memory</b>. It is off-chip DRAM: the request and the data travel for <b>hundreds of cycles</b>.',
+      'Many resident warps hide that latency (session 12): while warp 0 waits, the SM runs warps that already have their operands.',
+      'But each thread of our kernels so far loads data for almost every operation. All warps send requests at once and the path to DRAM <b>saturates</b>.',
+      '<b>Traffic congestion</b>: most warps wait for memory, the cores sit idle, and the kernel reaches only a tiny fraction of the hardware peak.',
+      'The fix of this chapter: keep data that is <b>reused</b> in on-chip memories (registers, shared memory). Redundant DRAM traffic disappears and the cores work again.'
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length, (k) => {
+      const s = S[k];
+      warps.forEach((w, i) => { w.classList.toggle('run', s.busy.includes(i)); if (s.wait.includes(i)) w.setAttribute('style', 'fill:#F6DADA;stroke:#B03A3A'); else w.removeAttribute('style'); });
+      toks.forEach((t, i) => { const p = s.tok[i]; vis(t, !!p); if (p) place(t, p[0], p[1]); });
+      gauge.setAttribute('width', 340 * s.util); gtxt.textContent = Math.round(s.util * 100) + ' %';
+      lat.textContent = s.lat; qtxt.textContent = s.q; qtxt.setAttribute('fill', k === 2 || k === 3 ? RED : '#1A1A1A');
+      dram.classList.toggle('on', k === 2 || k === 3); onchip.classList.toggle('on', k === 4);
+      cap.innerHTML = caps[k];
+    }, 3000);
+  };
+
+  // ------------------------------------------------------------ compute-bound or memory-bound: who waits?
+  ANIM.bound = (root) => {
+    const PEAK = 66.9, BW = 3.35, RIDGE = PEAK / BW;
+    const kernels = {
+      va: { name: 'vector addition', I: 1 / 12, note: '1 FLOP per 12 B' },
+      mm: { name: 'naive matrix product', I: 0.25, note: '2 FLOP per 8 B' },
+      tile: { name: 'tiled product, 32 × 32', I: 8, note: '0.25 × 32' },
+      hi: { name: 'kernel with 40 FLOP/B', I: 40, note: 'above the ridge' }
+    };
+    let mode = 'va';
+    const svg = newSvg(root, '0 0 1000 300', 'Timelines of the memory channel and the compute cores for kernels of different compute-to-global-memory-access ratio');
+    T(svg, 20, 30, '', { 'font-size': 15, 'font-weight': 600 });
+    const title = svg.lastChild;
+    T(svg, 20, 92, 'memory channel', { 'font-size': 13, class: 'lbl' }); T(svg, 20, 172, 'compute cores', { 'font-size': 13, class: 'lbl' });
+    const N = 20, X0 = 170, W = 780;
+    const mCells = [], cCells = [];
+    for (let i = 0; i < N; i++) {
+      mCells.push(R(svg, X0 + i * W / N, 70, W / N - 3, 34, { fill: '#EDEDED', rx: 2 }));
+      cCells.push(R(svg, X0 + i * W / N, 150, W / N - 3, 34, { fill: '#EDEDED', rx: 2 }));
+    }
+    const cursor = L(svg, X0, 56, X0, 198, { stroke: '#1A1A1A', 'stroke-width': 1.5, 'stroke-dasharray': '4 3' });
+    T(svg, X0, 216, 'time →', { 'font-size': 12, class: 'lbl' });
+    const res = T(svg, 20, 252, '', { 'font-size': 14 }), res2 = T(svg, 20, 278, '', { 'font-size': 14 });
+    const cap = root.querySelector('[data-cap]');
+    const draw = (k) => {
+      const kn = kernels[mode], I = kn.I;
+      const mU = Math.min(1, RIDGE / I), cU = Math.min(1, I / RIDGE);
+      const on = (u, i) => Math.floor((i + 1) * u + 1e-9) > Math.floor(i * u + 1e-9);
+      for (let i = 0; i < N; i++) {
+        const vis = i <= k;
+        mCells[i].setAttribute('fill', !vis ? '#F7F7F7' : on(mU, i) ? GOLD : '#F6DADA');
+        cCells[i].setAttribute('fill', !vis ? '#F7F7F7' : on(cU, i) ? BLUE : '#F6DADA');
+      }
+      const x = X0 + (k + 1) * W / N; cursor.setAttribute('x1', x); cursor.setAttribute('x2', x);
+      title.textContent = `${kn.name}: ${I < 1 ? I.toFixed(3) : I} FLOP/B (${kn.note})`;
+      const perf = Math.min(PEAK, BW * I);
+      const pc = (u) => u < .095 ? (u * 100).toFixed(1) : Math.round(u * 100);
+      res.textContent = `memory busy ${pc(mU)} % · compute busy ${pc(cU)} % · idle = pink`;
+      res2.textContent = `${I < RIDGE ? 'memory-bound' : 'compute-bound'}: at most ${perf < 1 ? perf.toFixed(2) : perf.toFixed(1)} TFLOPS = ${(perf / PEAK * 100).toFixed(perf / PEAK < .01 ? 2 : 0)} % of the 66.9 TFLOPS peak`;
+      res2.setAttribute('fill', I < RIDGE ? RED : GREEN);
+      cap.innerHTML = I < RIDGE
+        ? `Ratio ${I < 1 ? I.toFixed(3) : I} &lt; ${RIDGE.toFixed(1)} FLOP/B (the H100 ridge, 66.9 / 3.35): the <b>memory channel is always busy</b> and the cores wait. Speed = bandwidth × ratio.`
+        : `Ratio ${I} &gt; ${RIDGE.toFixed(1)} FLOP/B: the <b>cores are always busy</b> and memory has spare time. Only the compute peak limits the kernel.`;
+    };
+    const st = stepper(root, () => N, draw, 260);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ Fig. 5.1: who can read and write each memory
+  ANIM.reach = (root) => {
+    const svg = newSvg(root, '0 0 1000 420', 'CUDA device memory model with the memories each role can read or write: host, a thread of block 0, another thread of block 0, a thread of block 1');
+    const hB = arrowHead(svg, 'rc-b', BLUE);
+    R(svg, 6, 6, 150, 408, { class: 'frame', rx: 4 });
+    const host = R(svg, 20, 318, 122, 76, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, 81, 352, 'Host', { ...mid, 'font-size': 15, 'font-weight': 600 }); T(svg, 81, 372, '(CPU code)', { ...mid, 'font-size': 12, class: 'lbl' });
+    const list = [0, 1, 2, 3, 4, 5, 6].map(i => T(svg, 18, 34 + i * 22, '', { 'font-size': 12 }));
+    R(svg, 166, 6, 828, 408, { class: 'frame', rx: 4 }); T(svg, 180, 26, 'Device (grid)', { 'font-size': 13, 'font-weight': 600 });
+    const M = {}, who = {}, TX = {};
+    [0, 1].forEach(b => {
+      const bx = 182 + b * 404;
+      R(svg, bx, 36, 392, 196, { fill: 'none', stroke: '#6f6f6f', 'stroke-width': 1.5, rx: 4 }); T(svg, bx + 12, 54, `Block (${b}, 0)`, { 'font-size': 12 });
+      M[`sh${b}`] = R(svg, bx + 14, 62, 364, 34, { class: 'mem', rx: 3 }); T(svg, bx + 196, 84, 'Shared memory', { ...mid, 'font-size': 13 });
+      [0, 1].forEach(t => {
+        const tx = bx + 16 + t * 188; TX[`${b}${t}`] = tx;
+        M[`rg${b}${t}`] = R(svg, tx, 116, 112, 30, { class: 'mem', rx: 3 }); T(svg, tx + 56, 136, 'Registers', { ...mid, 'font-size': 12 });
+        who[`t${b}${t}`] = R(svg, tx, 176, 168, 40, { fill: '#C9DBF4', stroke: 'none', rx: 3 }); T(svg, tx + 84, 201, `Thread (${t}, 0)`, { ...mid, 'font-size': 12 });
+      });
+    });
+    M.gl = R(svg, 182, 262, 796, 58, { class: 'mem', rx: 3 }); T(svg, 580, 288, 'Global memory', { ...mid, 'font-size': 15 }); T(svg, 580, 308, 'large, off chip, slow', { ...mid, 'font-size': 12, class: 'lbl' });
+    M.co = R(svg, 182, 346, 796, 58, { class: 'mem', rx: 3 }); T(svg, 580, 372, 'Constant memory', { ...mid, 'font-size': 15 }); T(svg, 580, 392, '64 KB, cached, read-only for the device', { ...mid, 'font-size': 12, class: 'lbl' });
+    const arrows = svg.appendChild(el('g'));
+    const arrow = (x1, y1, x2, y2, label, lx, ly, dash) => {
+      const l = arrows.appendChild(el('line', { x1, y1, x2, y2, stroke: BLUE, 'stroke-width': 2.5, 'marker-end': hB }));
+      if (label === 'R/W') l.setAttribute('marker-start', hB);
+      if (dash) l.setAttribute('stroke-dasharray', '6 4');
+      arrows.appendChild(el('rect', { x: lx - 3, y: ly - 12, width: label.length * 8.5 + 6, height: 16, fill: '#fff', rx: 2 }));
+      arrows.appendChild(el('text', { x: lx, y: ly, 'font-size': 12, 'font-weight': 600, fill: BLUE }, label));
+    };
+    const threadArrows = (b, t) => {
+      const tx = TX[`${b}${t}`];
+      arrow(tx + 56, 174, tx + 56, 148, 'R/W', tx + 62, 166);
+      arrow(tx + 140, 174, tx + 140, 98, 'R/W', tx + 146, 140);
+      arrow(tx + 30, 218, tx + 30, 260, 'R/W', tx + 36, 246);
+      arrow(tx + 100, 218, tx + 100, 344, 'R', tx + 106, 338, true);
+    };
+    const roles = [
+      { id: 'host', label: ['Host'], rw: { gl: 'R/W', co: 'R/W' }, no: ['sh0', 'sh1', 'rg00', 'rg01', 'rg10', 'rg11'],
+        draw: () => { arrow(142, 336, 180, 296, 'R/W', 146, 306); arrow(142, 380, 180, 376, 'R/W', 146, 366); },
+        cap: 'The <b>host</b> reads and writes global memory (<code>cudaMemcpy</code>) and writes constant memory (<code>cudaMemcpyToSymbol</code>). It cannot touch registers or shared memory: they exist only while a kernel runs.' },
+      { id: 't00', label: ['Thread (0,0)', 'of block 0'], rw: { rg00: 'R/W', sh0: 'R/W', gl: 'R/W', co: 'R' }, no: ['rg01', 'sh1', 'rg10', 'rg11'], draw: () => threadArrows(0, 0),
+        cap: 'A <b>thread</b> reads and writes its own registers, the shared memory of <b>its</b> block and global memory, and only <b>reads</b> constant memory.' },
+      { id: 't01', label: ['Thread (1,0)', 'of block 0'], rw: { rg01: 'R/W', sh0: 'R/W', gl: 'R/W', co: 'R' }, no: ['rg00', 'sh1', 'rg10', 'rg11'], draw: () => threadArrows(0, 1),
+        cap: 'Its neighbour in the same block sees the <b>same shared memory</b>, which is how the two cooperate, but never the other thread\'s registers.' },
+      { id: 't10', label: ['Thread (0,0)', 'of block 1'], rw: { rg10: 'R/W', sh1: 'R/W', gl: 'R/W', co: 'R' }, no: ['sh0', 'rg00', 'rg01', 'rg11'], draw: () => threadArrows(1, 0),
+        cap: 'A thread of <b>another block</b> has its own copy of the shared variables. To exchange data with block 0 it must go through <b>global memory</b>.' }
+    ];
+    const cap = root.querySelector('[data-cap]');
+    const draw = (k) => {
+      const r = roles[k]; arrows.innerHTML = '';
+      root.querySelectorAll('[data-role]').forEach(b => b.classList.toggle('on', b.dataset.role === r.id));
+      Object.entries(M).forEach(([key, rect]) => { rect.classList.toggle('on', key in r.rw); rect.setAttribute('opacity', r.no.includes(key) ? .35 : 1); });
+      Object.entries(who).forEach(([key, rect]) => rect.setAttribute('fill', key === r.id ? BLUE : '#C9DBF4'));
+      host.setAttribute('stroke', r.id === 'host' ? BLUE : '#6f6f6f'); host.setAttribute('stroke-width', r.id === 'host' ? 3 : 1);
+      r.draw();
+      const acc = (p) => { const v = Object.entries(r.rw).find(([key]) => key.startsWith(p)); return v ? v[1] : 'none'; };
+      const lines = [...r.label, '', `registers: ${acc('rg')}`, `shared: ${acc('sh')}`, `global: ${acc('gl')}`, `constant: ${acc('co')}`];
+      list.forEach((t, i) => { const s2 = lines[i] || ''; t.textContent = s2; t.setAttribute('font-weight', i < r.label.length ? 600 : 400); t.setAttribute('fill', s2.endsWith('none') ? RED : '#1A1A1A'); });
+      cap.innerHTML = r.cap;
+    };
+    const st = stepper(root, () => roles.length, draw, 3600);
+    modeButtons(root, 'role', (m) => { st.leave(); draw(roles.findIndex(r => r.id === m)); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ memory hierarchy of an H100
+  ANIM.pyramid = (root) => {
+    const svg = newSvg(root, '0 0 1000 400', 'Memory hierarchy of an H100 from registers at the top to global memory at the bottom, with capacity, scope and approximate latency');
+    const levels = [
+      { name: 'Registers', size: '256 KB per SM (65,536 × 4 B)', scope: 'one thread', lat: '≈ 1 cycle', w: 220 },
+      { name: 'Shared memory / L1', size: 'up to 228 KB shared per SM', scope: 'one block', lat: '≈ tens of cycles', w: 380 },
+      { name: 'L2 cache', size: '50 MB for the whole GPU', scope: 'all SMs (hardware-managed)', lat: '≈ a few hundred cycles', w: 560 },
+      { name: 'Global memory (HBM3)', size: '80 GB · 3.35 TB/s', scope: 'every thread + the host', lat: '≈ hundreds of cycles', w: 740 }
+    ];
+    const H = 70, cx = 400, rects = [], txt = [];
+    levels.forEach((lv, i) => {
+      const y = 16 + i * (H + 10), wTop = i === 0 ? 120 : levels[i - 1].w, wB = lv.w;
+      const p = svg.appendChild(el('polygon', { points: `${cx - wTop / 2},${y} ${cx + wTop / 2},${y} ${cx + wB / 2},${y + H} ${cx - wB / 2},${y + H}`, class: 'mem' }));
+      rects.push(p); txt.push(T(svg, cx, y + 30, lv.name, { ...mid, 'font-size': 15, 'font-weight': 600 }));
+      T(svg, cx, y + 52, lv.size, { ...mid, 'font-size': 12, class: 'lbl' });
+    });
+    const side = [
+      { name: 'Constant memory', note: '64 KB, in DRAM, cached; read-only for kernels', y: 186 },
+      { name: 'Local memory', note: 'per thread, lives in DRAM (arrays, spills)', y: 266 }
+    ].map(s => { const r = R(svg, 790, s.y, 200, 62, { class: 'mem', rx: 3, 'stroke-dasharray': '4 3' }); T(svg, 890, s.y + 26, s.name, { ...mid, 'font-size': 13, 'font-weight': 600 }); T(svg, 890, s.y + 46, s.note.split(';')[0], { ...mid, 'font-size': 10, class: 'lbl' }); return r; });
+    const up = arrowHead(svg, 'py-u', GRAY);
+    L(svg, 40, 340, 40, 30, { stroke: GRAY, 'stroke-width': 2, 'marker-end': up }); T(svg, 52, 40, 'faster, smaller', { 'font-size': 12, class: 'lbl' });
+    T(svg, 52, 336, 'larger, slower', { 'font-size': 12, class: 'lbl' });
+    const info = T(svg, cx, 386, '', { ...mid, 'font-size': 13 });
+    const caps = [
+      'The memories form a <b>hierarchy</b>: the closer to the cores, the faster and the smaller. H100 (SXM) figures; latencies are rough orders of magnitude.',
+      '<b>Registers</b>: private to a thread, used directly as instruction operands. 65,536 per SM: at 2048 threads that is only 32 registers per thread.',
+      '<b>Shared memory</b>: on chip, shared by the threads of a block, managed by the program (a scratchpad). It shares the SM\'s 256 KB with the L1 cache.',
+      '<b>L2 cache</b>: on chip, shared by all SMs and managed by the hardware. It absorbs part of the global traffic, but the program does not control it.',
+      '<b>Global memory</b>: off-chip DRAM, visible to all threads and to the host. Everything starts and ends here, so its bandwidth bounds memory-bound kernels.',
+      '<b>Constant</b> and <b>local</b> memory are regions of the same DRAM: constant is cached and read-only; local is private per thread but as slow as global.'
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => caps.length, (k) => {
+      rects.forEach((r, i) => r.classList.toggle('on', k === i + 1));
+      side.forEach(r => r.classList.toggle('on', k === 5));
+      info.textContent = k >= 1 && k <= 4 ? `scope: ${levels[k - 1].scope} · latency: ${levels[k - 1].lat}` : '';
+      cap.innerHTML = caps[k];
+    }, 3200);
+  };
+
+  // ------------------------------------------------------------ Fig. 5.2: von Neumann processor, fetch and operands
+  ANIM.fetch = (root) => {
+    const svg = newSvg(root, '0 0 1000 420', 'Von Neumann model: memory and I/O outside the processor; inside, a processing unit with ALU and register file and a control unit with PC and IR');
+    const hG = arrowHead(svg, 'fe-g', '#bdbdbd'), hO = arrowHead(svg, 'fe-o', GOLD);
+    const mem = R(svg, 250, 10, 420, 64, { class: 'mem', rx: 3 }); T(svg, 460, 36, 'Memory', { ...mid, 'font-size': 16, 'font-weight': 600 });
+    const memT = T(svg, 460, 60, '', { ...mid, 'font-size': 12 });
+    R(svg, 740, 10, 140, 64, { class: 'mem', rx: 3 }); T(svg, 810, 48, 'I/O', { ...mid, 'font-size': 16 });
+    L(svg, 670, 32, 740, 32, { class: 'wire', 'marker-end': hG }); L(svg, 740, 52, 670, 52, { class: 'wire', 'marker-end': hG });
+    R(svg, 140, 104, 760, 306, { class: 'frame', rx: 5 }); T(svg, 520, 400, 'Processor', { ...mid, 'font-size': 15, 'font-weight': 600 });
+    const pu = R(svg, 320, 124, 360, 120, { fill: 'none', stroke: '#6f6f6f', rx: 3 }); T(svg, 500, 144, 'Processing unit', { ...mid, 'font-size': 14 });
+    const alu = svg.appendChild(el('polygon', { points: '340,160 470,160 450,232 360,232', class: 'mem' }));
+    T(svg, 405, 196, 'ALU', { ...mid, 'font-size': 15 }); const aluT = T(svg, 405, 218, '', { ...mid, 'font-size': 12, 'font-weight': 600 });
+    const rf = R(svg, 500, 156, 164, 80, { class: 'sp', rx: 3 }); T(svg, 582, 174, 'Register file', { ...mid, 'font-size': 13 });
+    const regT = [0, 1, 2].map(i => T(svg, 582, 194 + i * 15, '', { ...mid, 'font-size': 12 }));
+    const cu = R(svg, 200, 280, 640, 92, { fill: 'none', stroke: '#6f6f6f', rx: 3 }); T(svg, 520, 300, 'Control unit', { ...mid, 'font-size': 14 });
+    const pc = R(svg, 230, 316, 200, 40, { class: 'mem', rx: 3 }); const pcT = T(svg, 330, 341, '', { ...mid, 'font-size': 13 });
+    const ir = R(svg, 590, 316, 220, 40, { class: 'mem', rx: 3 }); const irT = T(svg, 700, 341, '', { ...mid, 'font-size': 12 });
+    const wPC = L(svg, 290, 316, 290, 74, { class: 'wire', 'marker-end': hG });
+    const wIR = L(svg, 720, 74, 720, 316, { class: 'wire', 'marker-end': hG });
+    const wData = L(svg, 600, 74, 600, 156, { class: 'wire', 'marker-end': hG });
+    const wCtl = L(svg, 500, 280, 500, 244, { class: 'wire', 'stroke-dasharray': '5 4', 'marker-end': hG });
+    const wOp = L(svg, 500, 196, 470, 196, { class: 'wire blue', 'marker-end': hG });
+    const S = [
+      { pc: 'PC = 100', mem: '100: fadd r1, r2, r3   104: load r2, r4, 8', ir: '', on: [wPC, pc], r: ['r1 = ?', 'r2 = 2.5', 'r3 = 1.0'] },
+      { pc: 'PC = 100', mem: 'returns the instruction at 100', ir: 'IR: fadd r1, r2, r3', on: [wIR, ir, mem], r: ['r1 = ?', 'r2 = 2.5', 'r3 = 1.0'] },
+      { pc: 'PC = 104', mem: '', ir: 'IR: fadd r1, r2, r3', on: [wCtl], r: ['r1 = ?', 'r2 = 2.5', 'r3 = 1.0'] },
+      { pc: 'PC = 104', mem: '', ir: 'IR: fadd r1, r2, r3', on: [wOp, rf, alu], alu: '2.5 + 1.0', r: ['r1 = 3.5', 'r2 = 2.5', 'r3 = 1.0'] },
+      { pc: 'PC = 104', mem: 'returns the instruction at 104', ir: 'IR: load r2, r4, 8', on: [wPC, wIR, mem, ir], r: ['r1 = 3.5', 'r2 = 2.5', 'r4 = 2000'] },
+      { pc: 'PC = 108', mem: 'reads address 2000 + 8 → 7.0', ir: 'IR: load r2, r4, 8', on: [wData, mem, rf], r: ['r1 = 3.5', 'r2 = 7.0', 'r4 = 2000'] },
+      { pc: 'PC = 108', mem: '', ir: '', on: [rf, pu], r: ['r1 = 3.5', 'r2 = 7.0', 'r4 = 2000'] }
+    ];
+    const caps = [
+      'Fig. 5.2. Every instruction starts in <b>memory</b>: the control unit sends the address in the <b>program counter (PC)</b>.',
+      'Memory returns the instruction, and it is stored in the <b>instruction register (IR)</b>.',
+      'The control unit decodes it and drives the processing unit (dashed line). The PC moves on to the next instruction.',
+      '<b>fadd r1, r2, r3</b>: both operands are already in the <b>register file</b>, inside the processor. The ALU adds them with no further memory access.',
+      'The next instruction is fetched the same way: <b>load r2, r4, 8</b>.',
+      'A load is a second trip to memory, this time for <b>data</b>: address r4 + 8, and the value lands in r2. Only now can an ALU instruction use it.',
+      'Registers are <b>inside</b> the processor; memory is <b>outside</b>. An operand in memory costs an extra instruction and a slow trip. In a GPU, global memory plays the role of this memory.'
+    ];
+    const all = [wPC, wIR, wData, wCtl, wOp, pc, ir, mem, rf, alu];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length, (k) => {
+      const s = S[k];
+      all.forEach(e => e.classList.toggle('on', s.on.includes(e)));
+      [wPC, wIR, wData].forEach(w => w.setAttribute('marker-end', s.on.includes(w) ? hO : hG));
+      pu.setAttribute('stroke', s.on.includes(pu) ? BLUE : '#6f6f6f'); pu.setAttribute('stroke-width', s.on.includes(pu) ? 3 : 1);
+      pcT.textContent = s.pc; memT.textContent = s.mem; irT.textContent = s.ir || 'IR'; aluT.textContent = s.alu || '';
+      regT.forEach((t, i) => { t.textContent = s.r[i]; t.setAttribute('fill', s.on.includes(rf) ? '#fff' : '#1A1A1A'); });
+      cap.innerHTML = caps[k];
+    }, 2900);
+  };
+
+  // ------------------------------------------------------------ three reasons for registers, and their cost
+  ANIM.regwin = (root) => {
+    const svg = newSvg(root, '0 0 1000 300', 'Bars comparing registers and global memory in latency, instructions and energy');
+    const panels = [
+      { t: 'latency (log scale)', a: ['register', 1, '≈ 1 cycle'], b: ['global', 500, '≈ hundreds'], log: true },
+      { t: 'instructions for one fadd', a: ['register', 1, '1: fadd'], b: ['global', 2, '2: load + fadd'], log: false, max: 2 },
+      { t: 'energy per access', a: ['register', 1, '1 ×'], b: ['global', 10, '≥ 10 ×'], log: false, max: 10 }
+    ];
+    const bars = [];
+    panels.forEach((p, i) => {
+      const x = 30 + i * 330;
+      T(svg, x, 30, p.t, { 'font-size': 14, 'font-weight': 600 });
+      const sc = (v) => p.log ? Math.log10(v) / Math.log10(p.b[1]) : v / p.max;
+      [p.a, p.b].forEach((d, j) => {
+        const y = 56 + j * 60;
+        T(svg, x, y + 24, d[0], { 'font-size': 13, class: 'lbl' });
+        R(svg, x + 70, y, 220, 34, { fill: '#F4F4F4', rx: 2 });
+        const b = R(svg, x + 70, y, 0, 34, { class: j ? 'bar2' : 'bar', rx: 2 });
+        const lbl = T(svg, x + 76, y + 23, '', { 'font-size': 13, fill: '#fff', 'font-weight': 600 });
+        bars.push({ b, lbl, w: Math.max(14, 220 * sc(d[1])), text: d[2], panel: i });
+      });
+    });
+    const note = T(svg, 30, 222, '', { 'font-size': 14 }), note2 = T(svg, 30, 250, '', { 'font-size': 14 });
+    T(svg, 30, 290, 'Latency values are typical orders of magnitude, not exact figures; energy ratio from the book (“at least an order of magnitude”).', { 'font-size': 11, class: 'lbl' });
+    const out = root.querySelector('[data-out]'), inp = root.querySelector('[data-in=r]');
+    const occ = () => {
+      const r = Math.max(1, Math.min(255, +inp.value | 0));
+      const threads = Math.min(2048, Math.floor(65536 / (r * 32)) * 32);
+      out.innerHTML = `→ <b>${fmt(threads)}</b> threads per SM, occupancy <b>${Math.round(threads / 2048 * 100)} %</b>`;
+    };
+    inp.addEventListener('input', occ);
+    const caps = [
+      '<b>1. Speed</b>: registers are on chip, inside the processing unit. Global memory is off-chip DRAM, with long latency and a bandwidth all threads share.',
+      '<b>2. Fewer instructions</b>: arithmetic instructions name registers directly. An operand in global memory needs a load first, and the SM can issue only a few instructions per cycle.',
+      '<b>3. Energy</b>: reading a register costs at least an order of magnitude less energy than reading global memory.',
+      '<b>The catch</b>: registers are scarce. 65,536 per SM shared by up to 2048 threads. Try the calculator: above 32 per thread, occupancy drops (session 12).'
+    ];
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => 4, (k) => {
+      bars.forEach(o => { const vis = o.panel < k + 1 && k < 3 || k === 3; o.b.setAttribute('width', vis ? o.w : 0); o.lbl.textContent = vis ? o.text : ''; o.lbl.setAttribute('fill', o.w < 120 ? '#1A1A1A' : '#fff'); if (o.w < 120) o.lbl.setAttribute('x', +o.b.getAttribute('x') + o.w + 6); });
+      note.textContent = k === 3 ? '65,536 registers / 2048 threads = 32 registers per thread at full occupancy' : '';
+      note2.textContent = k === 3 ? 'Every extra register a kernel needs can cost resident threads, and with them latency hiding.' : '';
+      cap.innerHTML = caps[k];
+    }, 3000);
+    return { enter() { occ(); st.enter(); }, leave: st.leave };
+  };
+
+  // ------------------------------------------------------------ distributed shared memory (Hopper clusters)
+  ANIM.dsmem = (root) => {
+    const svg = newSvg(root, '0 0 1000 380', 'Four blocks of a thread block cluster on four SMs; block 0 reads data from the shared memory of block 2 either through global memory or directly');
+    const hG = arrowHead(svg, 'ds-g', GOLD), hB = arrowHead(svg, 'ds-b', BLUE);
+    const cl = R(svg, 10, 10, 980, 230, { class: 'frame', rx: 5 }); T(svg, 26, 234, 'Thread block cluster: 4 blocks, one per SM, in the same GPC', { 'font-size': 13, class: 'lbl' });
+    const sms = [0, 1, 2, 3].map(i => {
+      const x = 30 + i * 240;
+      R(svg, x, 50, 220, 170, { fill: '#fff', stroke: '#6f6f6f', rx: 4 }); T(svg, x + 110, 72, `SM ${i} · block ${i}`, { ...mid, 'font-size': 13 });
+      const sh = R(svg, x + 20, 90, 180, 60, { class: 'mem', rx: 3 }); T(svg, x + 110, 116, 'shared memory', { ...mid, 'font-size': 13 });
+      const v = T(svg, x + 110, 138, '', { ...mid, 'font-size': 12, 'font-weight': 600 });
+      R(svg, x + 20, 166, 180, 38, { fill: '#C9DBF4', rx: 3 }); T(svg, x + 110, 190, 'threads', { ...mid, 'font-size': 12 });
+      return { x, sh, v };
+    });
+    const gm = R(svg, 30, 300, 940, 60, { class: 'mem', rx: 3 }); T(svg, 500, 336, 'Global memory (off chip)', { ...mid, 'font-size': 15 });
+    const gv = T(svg, 860, 336, '', { ...mid, 'font-size': 12, 'font-weight': 600 });
+    const down = L(svg, 590, 150, 590, 300, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
+    const up = L(svg, 140, 300, 140, 150, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
+    const direct = svg.appendChild(el('path', { d: 'M 530 96 C 430 40, 240 40, 200 96', fill: 'none', stroke: BLUE, 'stroke-width': 3.5, 'marker-end': hB }));
+    const dlab = T(svg, 365, 36, 'SM-to-SM network', { ...mid, 'font-size': 12, fill: BLUE });
+    const caps = [
+      'Block 2 has produced partial results in <b>its</b> shared memory. Block 0 needs them. Shared memory normally has block scope, so block 0 cannot see it.',
+      'Classic route: block 2 writes the data to <b>global memory</b>, a trip off chip …',
+      '… and block 0 reads it back, a second off-chip trip (and usually a second kernel launch, so that the write is finished).',
+      'Hopper: blocks can be grouped in a <b>thread block cluster</b> placed on SMs of the same GPC. Block 0 reads block 2\'s shared memory <b>directly</b>: <b>distributed shared memory</b>.',
+      'The scope of fast on-chip memory grows from a block to a cluster: threads cooperate across blocks without going through global memory, with a larger pool (4 × up to 228 KB here).'
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => caps.length, (k) => {
+      sms[2].v.textContent = 'partial = 42'; sms[0].v.textContent = k >= 2 ? 'got 42' : '';
+      sms[2].sh.classList.toggle('on', k === 0 || k === 1 || k === 3); sms[0].sh.classList.toggle('on', k >= 2);
+      vis(down, k === 1 || k === 2); down.setAttribute('opacity', k === 1 ? 1 : k === 2 ? .3 : 0);
+      vis(up, k === 2); gm.classList.toggle('on', k === 1 || k === 2); gv.textContent = k === 1 || k === 2 ? '42' : '';
+      vis(direct, k >= 3); vis(dlab, k >= 3); cl.classList.toggle('on', k >= 3);
+      cap.innerHTML = caps[k];
+    }, 3000);
+  };
+
+  // ------------------------------------------------------------ lifetime: grid versus application
+  ANIM.lifetime = (root) => {
+    const svg = newSvg(root, '0 0 1000 330', 'Timeline of an application with two kernel launches, showing when register, shared, global and constant variables exist');
+    const X0 = 250, X1 = 980, tx = (f) => X0 + f * (X1 - X0);
+    const rows = [
+      { name: '__constant__ coeff[64]', y: 40 }, { name: '__device__ int count', y: 90 },
+      { name: '__shared__ float tile[256]', y: 140 }, { name: 'float acc (register)', y: 190 }, { name: 'kernel launches', y: 240 }
+    ];
+    rows.forEach(r => { T(svg, 10, r.y + 22, r.name, { 'font-size': 13 }); R(svg, X0, r.y, X1 - X0, 32, { fill: '#F7F7F7', rx: 2 }); });
+    const k1 = [0.22, 0.44], k2 = [0.62, 0.84];
+    const kb = [k1, k2].map((k, i) => { const b = R(svg, tx(k[0]), 240, tx(k[1]) - tx(k[0]), 32, { class: 'chip', rx: 2 }); T(svg, (tx(k[0]) + tx(k[1])) / 2, 261, `kernel ${i + 1}`, { ...mid, 'font-size': 12 }); return b; });
+    const cBar = R(svg, X0, 40, 0, 32, { class: 'bar', rx: 2 }), cT = T(svg, X0 + 8, 61, '', { 'font-size': 12, fill: '#fff' });
+    const gBar = R(svg, X0, 90, 0, 32, { class: 'bar', rx: 2 }), gT = T(svg, X0 + 8, 111, '', { 'font-size': 12, fill: '#fff' });
+    const sB = [k1, k2].map(k => R(svg, tx(k[0]), 140, 0, 32, { class: 'bar2', rx: 2 }));
+    const sT = [k1, k2].map(k => T(svg, tx(k[0]) + 6, 161, '', { 'font-size': 12, fill: '#fff' }));
+    const rB = [k1, k2].map(k => R(svg, tx(k[0]), 190, 0, 32, { class: 'bar2', rx: 2 }));
+    const rT = [k1, k2].map(k => T(svg, tx(k[0]) + 6, 211, '', { 'font-size': 12, fill: '#fff' }));
+    const cur = L(svg, X0, 28, X0, 284, { stroke: '#1A1A1A', 'stroke-width': 1.5, 'stroke-dasharray': '4 3' });
+    const ct = T(svg, X0, 304, '', { ...mid, 'font-size': 12 });
+    const tl = [0.06, 0.14, 0.38, 0.5, 0.8, 0.92, 1];
+    const S = [
+      { t: 'program starts', c: '', g: 'count = 0' },
+      { t: 'host: cudaMemcpyToSymbol(coeff, …)', c: 'coeff written by the host', g: 'count = 0' },
+      { t: 'kernel 1 running: 3 blocks × 256 threads', c: 'read by all threads', g: 'count = 5', s1: '3 copies', r1: '768 copies' },
+      { t: 'kernel 1 ends', c: 'still there', g: 'count = 5 (kept)', s1: 'gone', r1: 'gone', end1: true },
+      { t: 'kernel 2 running', c: 'read by all threads', g: 'count = 5 → 8', s1: 'gone', r1: 'gone', end1: true, s2: 'new copies', r2: 'new copies' },
+      { t: 'kernel 2 ends', c: 'still there', g: 'count = 8', end1: true, end2: true, s1: 'gone', r1: 'gone', s2: 'gone', r2: 'gone' },
+      { t: 'application ends', c: 'freed', g: 'freed', end1: true, end2: true, s1: 'gone', r1: 'gone', s2: 'gone', r2: 'gone' }
+    ];
+    const caps = [
+      'Lifetime is how long a variable exists. <code>__constant__</code> and <code>__device__</code> variables are declared outside any function and exist for the <b>whole application</b>.',
+      'The host fills constant memory before launching: kernels can only read it.',
+      'Kernel 1 runs. Each <b>block</b> gets its own <code>tile</code> (3 copies) and each <b>thread</b> its own <code>acc</code> (768 copies). Lifetime: one grid.',
+      'When kernel 1 ends, its shared and register copies disappear. <code>count</code> keeps its value: global variables pass information between kernel launches.',
+      'Kernel 2 gets <b>new</b> shared and register copies. They do not remember kernel 1: every launch must initialise them again.',
+      'Kernel 2 ends; global and constant variables are still there for the host or the next kernel.',
+      'Only when the application ends are they released. Global variables are handy but hurt modularity: use them sparingly.'
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length, (k) => {
+      const s = S[k], t = tl[k];
+      cur.setAttribute('x1', tx(t)); cur.setAttribute('x2', tx(t)); ct.setAttribute('x', Math.min(800, Math.max(330, tx(t)))); ct.textContent = s.t;
+      cBar.setAttribute('width', tx(t) - X0); cT.textContent = s.c; gBar.setAttribute('width', tx(t) - X0); gT.textContent = s.g;
+      [k1, k2].forEach((kk, i) => {
+        const end = i === 0 ? s.end1 : s.end2, running = t > kk[0];
+        const w = !running ? 0 : end ? tx(kk[1]) - tx(kk[0]) : Math.min(tx(t), tx(kk[1])) - tx(kk[0]);
+        [sB[i], rB[i]].forEach(b => { b.setAttribute('width', w); b.setAttribute('opacity', end ? .35 : 1); });
+        sT[i].textContent = running ? (i === 0 ? s.s1 : s.s2) || '' : ''; rT[i].textContent = running ? (i === 0 ? s.r1 : s.r2) || '' : '';
+        [sT[i], rT[i]].forEach(t => t.setAttribute('fill', end ? '#1A1A1A' : '#fff'));
+        kb[i].classList.toggle('run', running && !end); kb[i].classList.toggle('done', !!end);
+      });
+      cap.innerHTML = caps[k];
+    }, 3000);
+  };
+
+  // ------------------------------------------------------------ local memory: arrays and spills
+  ANIM.local = (root) => {
+    let mode = 'const';
+    const svg = newSvg(root, '0 0 1000 340', 'Where the compiler puts a per-thread array: in registers when every index is a constant, in local memory in DRAM when the index is computed at run time');
+    const hG = arrowHead(svg, 'lo-g', GOLD);
+    R(svg, 10, 10, 420, 250, { fill: '#F5F5F5', rx: 4 });
+    const code = [0, 1, 2, 3, 4, 5].map(i => T(svg, 26, 40 + i * 30, '', { 'font-size': 14 }));
+    R(svg, 470, 10, 520, 170, { class: 'frame', rx: 5 }); T(svg, 486, 32, 'one thread, inside the SM', { 'font-size': 13, class: 'lbl' });
+    const regs = [0, 1, 2, 3].map(i => { const r = R(svg, 490 + i * 122, 50, 110, 46, { class: 'sp', rx: 3 }); return { r, t: T(svg, 545 + i * 122, 79, '', { ...mid, 'font-size': 13 }) }; });
+    T(svg, 730, 122, 'registers', { ...mid, 'font-size': 13, class: 'lbl' });
+    const l1 = R(svg, 490, 132, 480, 34, { class: 'mem', rx: 3 }); T(svg, 730, 154, 'L1 cache', { ...mid, 'font-size': 12 });
+    const dram = R(svg, 470, 230, 520, 90, { class: 'mem', rx: 4 }); T(svg, 730, 252, 'DRAM (global memory)', { ...mid, 'font-size': 14 });
+    const loc = R(svg, 500, 264, 460, 40, { fill: '#fff', stroke: '#bdbdbd', 'stroke-dasharray': '4 3', rx: 3 });
+    const locT = T(svg, 730, 290, 'local memory of this thread', { ...mid, 'font-size': 12 });
+    const path = L(svg, 730, 230, 730, 168, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
+    const verdict = T(svg, 26, 300, '', { 'font-size': 15, 'font-weight': 600 });
+    const P = {
+      const: { code: ['float w[4];', 'w[0] = a; w[1] = b;', 'w[2] = c; w[3] = d;', 'sum = w[0] + w[1]', '    + w[2] + w[3];', '// every index is a constant'],
+        regs: ['w[0]', 'w[1]', 'w[2]', 'w[3]'], local: false, v: ['the compiler can map w[0..3] to registers', 'no memory traffic at all', 'automatic array, but fast'],
+        caps: ['An <b>automatic array</b> is private to the thread, like a scalar. Here every index is known at compile time.',
+          'So the compiler can give each element its own register: w[0] → one register, w[1] → another, and so on.',
+          'Result: the array behaves like four scalars, with register speed. (Chapter 6 returns to this.)'] },
+      dyn: { code: ['float w[4];', 'for (int i = 0; i < 4; ++i)', '  w[i] = in[base + i];', 'sum += w[idx];', '// idx known only at run time', ''],
+        regs: ['sum', 'idx', 'base', 'i'], local: true, v: ['registers cannot be indexed by a run-time value', 'so w goes to local memory, in DRAM', 'each w[idx] is a load from memory'],
+        caps: ['Now the index <code>idx</code> is computed at run time. Instructions name registers by fixed numbers, so <b>w[idx]</b> cannot be a register.',
+          'The compiler places <code>w</code> in <b>local memory</b>: a private area per thread, but physically in <b>global memory</b> (DRAM), cached in L1/L2.',
+          'Every <code>w[idx]</code> becomes a load with global-memory latency. Local means private, not fast. Register <b>spills</b> (too many live values) end up here too.'] }
+    };
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => 3, (k) => {
+      const p = P[mode];
+      code.forEach((t, i) => { t.textContent = p.code[i]; t.setAttribute('fill', (mode === 'dyn' && i === 3 && k >= 1) ? RED : '#1A1A1A'); });
+      regs.forEach((r, i) => { r.t.textContent = k >= 1 || mode === 'dyn' ? p.regs[i] : ''; r.r.classList.toggle('on', mode === 'const' && k >= 1); r.t.setAttribute('fill', mode === 'const' && k >= 1 ? '#fff' : '#1A1A1A'); });
+      loc.setAttribute('stroke', p.local && k >= 1 ? GOLD : '#bdbdbd'); loc.setAttribute('stroke-width', p.local && k >= 1 ? 2.5 : 1);
+      locT.textContent = p.local && k >= 1 ? 'local memory: w[0] w[1] w[2] w[3]' : 'local memory of this thread';
+      vis(path, p.local && k === 2); dram.classList.toggle('on', p.local && k === 2); l1.classList.toggle('on', p.local && k === 2);
+      verdict.textContent = p.v[k]; verdict.setAttribute('fill', p.local ? RED : GREEN);
+      cap.innerHTML = p.caps[k];
+    }, 3000);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ constant memory: one value for every thread
+  ANIM.cmem = (root) => {
+    let mode = 'same';
+    const svg = newSvg(root, '0 0 1000 360', 'Host writes constant memory; a warp reads it through the constant cache, in one broadcast when all threads read the same address');
+    const hG = arrowHead(svg, 'cm-g', GOLD), hB = arrowHead(svg, 'cm-b', BLUE);
+    const host = R(svg, 10, 270, 150, 70, { fill: '#fff', stroke: '#6f6f6f', rx: 3 }); T(svg, 85, 300, 'Host', { ...mid, 'font-size': 14, 'font-weight': 600 }); T(svg, 85, 320, 'cudaMemcpyToSymbol', { ...mid, 'font-size': 10 });
+    const cm = R(svg, 200, 270, 400, 70, { class: 'mem', rx: 3 }); T(svg, 400, 298, 'constant memory (DRAM)', { ...mid, 'font-size': 14 }); T(svg, 400, 320, 'coeff[0..63] · at most 64 KB in total', { ...mid, 'font-size': 12, class: 'lbl' });
+    const wH = L(svg, 160, 305, 200, 305, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
+    R(svg, 200, 20, 790, 210, { class: 'frame', rx: 5 }); T(svg, 216, 42, 'SM', { 'font-size': 13, class: 'lbl' });
+    const cc = R(svg, 220, 140, 260, 60, { class: 'mem', rx: 3 }); T(svg, 350, 166, 'constant cache', { ...mid, 'font-size': 13 });
+    const ccT = T(svg, 350, 188, '', { ...mid, 'font-size': 12 });
+    const wD = L(svg, 350, 270, 350, 200, { stroke: GOLD, 'stroke-width': 3, 'marker-end': hG });
+    const lanes = [];
+    for (let i = 0; i < 16; i++) {
+      const x = 540 + (i % 8) * 54, y = 60 + Math.floor(i / 8) * 80;
+      const r = R(svg, x, y, 46, 40, { fill: '#C9DBF4', rx: 3 }); const t = T(svg, x + 23, y + 25, `t${i * 2}`, { ...mid, 'font-size': 11 });
+      lanes.push({ r, t, x: x + 23, y: y + 40 });
+    }
+    T(svg, 756, 216, 'one warp (16 of its 32 threads drawn)', { ...mid, 'font-size': 11, class: 'lbl' });
+    const fan = svg.appendChild(el('g'));
+    const cnt = T(svg, 640, 300, '', { 'font-size': 14 }), cnt2 = T(svg, 640, 326, '', { 'font-size': 14 });
+    const caps = {
+      same: ['Before the launch, the <b>host</b> writes the coefficients into constant memory. Kernels can only read it; its scope is every thread of every grid.',
+        'The warp executes <code>x * coeff[0]</code>. The first access misses, and the value is brought from DRAM into the SM\'s <b>constant cache</b>.',
+        'All 32 threads read the <b>same address</b>: the cache serves them with <b>one broadcast</b>.',
+        'Later warps and later iterations hit the cache. That is the access pattern constant memory is built for (Chapter 7 uses it for convolution filters).'],
+      diff: ['Same data, but now thread t reads <code>coeff[t]</code>: different addresses inside one warp.',
+        'The constant cache serves one address at a time, so the warp\'s request is <b>split</b> into one access per distinct address.',
+        'With 32 distinct addresses the read is serialised 32 times: the “appropriate access pattern” is missing.',
+        'Rule: use constant memory for small, read-only data that all threads of a warp read <b>at the same time</b>.']
+    };
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => 4, (k) => {
+      vis(wH, k === 0); cm.classList.toggle('on', k <= 1); vis(wD, k === 1); cc.classList.toggle('on', k >= 1);
+      ccT.textContent = k >= 1 ? (mode === 'same' ? 'coeff[0] = 0.25' : 'coeff[0..31]') : 'empty';
+      fan.innerHTML = '';
+      const nLit = mode === 'same' ? (k >= 2 ? 16 : 0) : (k >= 2 ? 1 : 0);
+      if (k >= 2) {
+        fan.appendChild(el('line', { x1: 480, y1: 170, x2: 528, y2: 120, stroke: BLUE, 'stroke-width': 3 }));
+        fan.appendChild(el('rect', { x: 528, y: 114, width: mode === 'same' ? 440 : 60, height: 12, fill: BLUE, rx: 3 }));
+        fan.appendChild(el('text', { x: 748, y: 111, 'text-anchor': 'middle', 'font-size': 11, fill: BLUE }, mode === 'same' ? 'one value, broadcast to every lane' : 'one address per access: t0 now, t2 next, …'));
+      }
+      lanes.forEach((l, i) => {
+        const lit = i < nLit; l.r.setAttribute('fill', lit ? BLUE : '#C9DBF4'); l.t.setAttribute('fill', lit ? '#fff' : '#1A1A1A');
+        if (lit) fan.appendChild(el('line', { x1: l.x, y1: i < 8 ? 114 : 126, x2: l.x, y2: i < 8 ? 100 : 140, stroke: BLUE, 'stroke-width': 2 }));
+      });
+      cnt.textContent = k >= 2 ? (mode === 'same' ? 'cache accesses for the warp: 1' : 'cache accesses for the warp: 32 (one after another)') : '';
+      cnt.setAttribute('fill', mode === 'same' ? GREEN : RED);
+      cnt2.textContent = k === 3 ? (mode === 'same' ? 'next warps: cache hits' : 'same address for all → 1 access') : '';
+      cap.innerHTML = caps[mode][k];
+    }, 3000);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ choosing where a variable lives
+  ANIM.choose = (root) => {
+    const svg = newSvg(root, '0 0 1000 380', 'Decision tree for choosing registers, local, shared, constant or global memory for a variable');
+    const hG = arrowHead(svg, 'ch-g', '#bdbdbd'), hB = arrowHead(svg, 'ch-b', BLUE);
+    const box = (x, y, w, h, s, cls) => { const r = R(svg, x, y, w, h, { class: cls, rx: 4 }); const lines = s.split('\n'); lines.forEach((ln, i) => T(svg, x + w / 2, y + h / 2 + 5 + (i - (lines.length - 1) / 2) * 17, ln, { ...mid, 'font-size': 13 })); return r; };
+    const N = {
+      q1: box(330, 10, 340, 52, 'Used by one thread only?', 'mem'),
+      q2: box(40, 110, 330, 52, 'Scalar, or array with\nconstant indices?', 'mem'),
+      q3: box(600, 110, 360, 52, 'Shared and reused by the\nthreads of one block?', 'mem'),
+      q4: box(600, 210, 360, 60, 'Read-only, ≤ 64 KB, same value\nread by all threads?', 'mem'),
+      reg: box(20, 220, 170, 50, 'Registers', 'chip'), loc: box(210, 220, 170, 50, 'Local memory\n(slow, avoid)', 'chip'),
+      sh: box(420, 220, 150, 50, 'Shared memory', 'chip'),
+      co: box(560, 310, 190, 50, 'Constant memory', 'chip'), gl: box(790, 310, 190, 50, 'Global memory', 'chip')
+    };
+    const E = {}, mk = (id, x1, y1, x2, y2, lab, lx, ly) => { E[id] = L(svg, x1, y1, x2, y2, { class: 'wire', 'marker-end': hG }); T(svg, lx, ly, lab, { 'font-size': 12, class: 'lbl' }); };
+    mk('1y', 420, 62, 260, 110, 'yes', 318, 80); mk('1n', 580, 62, 740, 110, 'no', 668, 80);
+    mk('2y', 160, 162, 105, 220, 'yes', 108, 196); mk('2n', 260, 162, 295, 220, 'no', 288, 196);
+    mk('3y', 650, 162, 520, 220, 'yes', 570, 196); mk('3n', 800, 162, 800, 210, 'no', 808, 192);
+    mk('4y', 700, 270, 655, 310, 'yes', 652, 296); mk('4n', 880, 270, 885, 310, 'no', 892, 296);
+    const ex = [
+      { id: 'i', name: 'loop counter i, Row, Col', path: ['q1', '1y', 'q2', '2y', 'reg'], why: 'Private and scalar: an automatic variable, kept in a register.' },
+      { id: 'w', name: 'float w[8] indexed with w[k], k from data', path: ['q1', '1y', 'q2', '2n', 'loc'], why: 'Private, but indexed at run time: local memory, which lives in DRAM. Restructure if it is hot.' },
+      { id: 'tile', name: 'tile of M used by the whole block', path: ['q1', '1n', 'q3', '3y', 'sh'], why: 'Every thread of the block reads it several times: load it once into <code>__shared__</code>.' },
+      { id: 'coef', name: 'filter coefficients (small, read-only)', path: ['q1', '1n', 'q3', '3n', 'q4', '4y', 'co'], why: 'Small, never written by the kernel, read by all threads alike: <code>__constant__</code>.' },
+      { id: 'mat', name: 'input and output matrices', path: ['q1', '1n', 'q3', '3n', 'q4', '4n', 'gl'], why: 'Large and shared by the whole grid and the host: global memory (then tile the parts that are reused).' }
+    ];
+    const lbl = T(svg, 20, 30, '', { 'font-size': 14, 'font-weight': 600 });
+    const cap = root.querySelector('[data-cap]');
+    const draw = (k) => {
+      const e = ex[k];
+      root.querySelectorAll('[data-ex]').forEach(b => b.classList.toggle('on', b.dataset.ex === e.id));
+      Object.entries(N).forEach(([id, r]) => { const on = e.path.includes(id); r.classList.toggle(r.classList.contains('chip') ? 'run' : 'on', on); if (!on) { r.classList.remove('run'); r.classList.remove('on'); } });
+      Object.entries(E).forEach(([id, l]) => { const on = e.path.includes(id); l.classList.toggle('on', on); l.classList.toggle('blue', on); l.setAttribute('marker-end', on ? hB : hG); });
+      lbl.textContent = ''; cap.innerHTML = `<b>${e.name}</b>: ${e.why}`;
+    };
+    const st = stepper(root, () => ex.length, draw, 3400);
+    modeButtons(root, 'ex', (m) => { st.leave(); draw(ex.findIndex(e => e.id === m)); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ CPU cache versus GPU shared memory
+  ANIM.cache = (root) => {
+    let mode = 'cpu';
+    const svg = newSvg(root, '0 0 1000 330', 'A CPU thread reusing its data from a cache, many GPU warps evicting each other from a shared cache, and GPU blocks keeping their tiles in shared memory');
+    const title = T(svg, 20, 30, '', { 'font-size': 15, 'font-weight': 600 });
+    const thr = [], lines = [];
+    for (let i = 0; i < 8; i++) { const r = R(svg, 20, 50 + i * 32, 140, 26, { class: 'chip', rx: 2 }); const t = T(svg, 90, 68 + i * 32, '', { ...mid, 'font-size': 12 }); thr.push({ r, t }); }
+    const cbox = R(svg, 260, 46, 420, 266, { class: 'frame', rx: 4 }); const ctitle = T(svg, 470, 70, '', { ...mid, 'font-size': 13 });
+    for (let i = 0; i < 8; i++) { const r = R(svg, 280 + (i % 4) * 98, 90 + Math.floor(i / 4) * 100, 88, 80, { class: 'mem', rx: 3 }); const t = T(svg, 324 + (i % 4) * 98, 136 + Math.floor(i / 4) * 100, '', { ...mid, 'font-size': 13 }); lines.push({ r, t }); }
+    const stat = T(svg, 720, 120, '', { 'font-size': 14 }), stat2 = T(svg, 720, 150, '', { 'font-size': 14 }), stat3 = T(svg, 720, 180, '', { 'font-size': 13 });
+    const colors = ['#86C495', '#E7B467', '#2F6FD0', '#F2C230', '#B03A3A', '#7A5FB0', '#2E9AA8', '#6f6f6f'];
+    const P = {
+      cpu: { title: 'CPU core: one or two threads', ct: 'cache: 8 lines', n: 1, steps: [
+        { slots: ['A0', 'A1', 'A2', 'A3', '', '', '', ''], hits: 0, miss: 4 }, { slots: ['A0', 'A1', 'A2', 'A3', '', '', '', ''], hits: 4, miss: 4 },
+        { slots: ['A0', 'A1', 'A2', 'A3', '', '', '', ''], hits: 12, miss: 4 }],
+        caps: ['A CPU thread reads its block of data A0–A3: four misses, and the lines stay in the cache.',
+          'When it reuses the block, the data is still there: <b>hits</b>. Blocking (tiling) on a CPU relies on this.',
+          'Few threads per core means the cache keeps each thread\'s data long enough. The reuse is <b>implicit</b>.'] },
+      gpu: { title: 'GPU SM: many warps share one cache', ct: 'L1 cache: 8 lines', n: 8, steps: [
+        { slots: ['A0', 'A1', 'B0', 'B1', 'C0', 'C1', 'D0', 'D1'], hits: 0, miss: 8 }, { slots: ['E0', 'E1', 'F0', 'F1', 'G0', 'G1', 'H0', 'H1'], hits: 0, miss: 16 },
+        { slots: ['A0', 'A1', 'B0', 'B1', 'E0', 'E1', 'F0', 'F1'], hits: 0, miss: 24 }],
+        caps: ['Eight warps, each with its own data, start together: the cache fills at once.',
+          'Warps E–H arrive and <b>evict</b> the lines of A–D before A–D could reuse them.',
+          'When A comes back, its data is gone: <b>misses</b> again. With thousands of threads per SM, the cache cannot be trusted to keep reused data.'] },
+      shm: { title: 'GPU SM: each block keeps its tile in shared memory', ct: 'shared memory: tiles owned by blocks', n: 8, steps: [
+        { slots: ['A0', 'A1', 'B0', 'B1', 'C0', 'C1', 'D0', 'D1'], hits: 0, miss: 8 }, { slots: ['A0', 'A1', 'B0', 'B1', 'C0', 'C1', 'D0', 'D1'], hits: 8, miss: 8 },
+        { slots: ['A0', 'A1', 'B0', 'B1', 'C0', 'C1', 'D0', 'D1'], hits: 24, miss: 8 }],
+        caps: ['With tiling, each block loads its tile into <code>__shared__</code> arrays: one global load per element.',
+          'Nothing evicts it: the data stays until the program itself overwrites it (after the barrier).',
+          'Every reuse is served on chip. GPUs make the reuse <b>explicit</b>: shared memory and registers instead of trusting a cache.'] }
+    };
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => 3, (k) => {
+      const p = P[mode], s = p.steps[k];
+      title.textContent = p.title; ctitle.textContent = p.ct;
+      thr.forEach((t, i) => { const here = i < p.n; vis(t.r, here); t.t.textContent = here ? (mode === 'cpu' ? 'thread 0' : `warp ${'ABCDEFGH'[i]}`) : ''; t.r.classList.toggle("run", here && (mode === 'cpu' || (k === 1 ? i >= 4 : i < 4) || mode === 'shm')); });
+      lines.forEach((l, i) => { l.t.textContent = s.slots[i]; const c = s.slots[i] ? colors['ABCDEFGH'.indexOf(s.slots[i][0])] : null; l.r.style.fill = c || ''; l.r.style.fillOpacity = c ? .45 : 1; });
+      cbox.classList.toggle('on', mode === 'shm');
+      stat.textContent = `hits: ${s.hits}`; stat.setAttribute('fill', GREEN); stat2.textContent = `misses: ${s.miss}`; stat2.setAttribute('fill', RED);
+      stat3.textContent = s.hits + s.miss ? `hit rate ${Math.round(s.hits / (s.hits + s.miss) * 100)} %` : '';
+      cap.innerHTML = p.caps[k];
+    }, 2900);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ strip-mining
+  ANIM.strip = (root) => {
+    const W = 8, TW = 4;
+    const svg = newSvg(root, '0 0 1000 340', 'The k loop of the dot product, first as one long loop, then strip-mined into phases of TILE_WIDTH iterations separated by barriers');
+    T(svg, 20, 34, 'original loop: for k in 0 … Width − 1', { 'font-size': 14 });
+    const orig = [], strip = [];
+    for (let k = 0; k < W; k++) {
+      orig.push({ r: R(svg, 20 + k * 118, 50, 108, 46, { class: 'chip', rx: 2 }), t: T(svg, 74 + k * 118, 79, `k = ${k}`, { ...mid, 'font-size': 13 }) });
+    }
+    T(svg, 20, 140, 'strip-mined: for ph … { load tile; barrier; for k in 0 … TILE_WIDTH − 1; barrier }', { 'font-size': 14 });
+    const phaseBox = [0, 1].map(ph => { const r = R(svg, 14 + ph * (TW * 118 + 10), 152, TW * 118 + 2, 120, { class: 'frame', rx: 4 }); T(svg, 22 + ph * (TW * 118 + 10), 172, `phase ${ph}`, { 'font-size': 13, class: 'lbl' }); return r; });
+    for (let k = 0; k < W; k++) {
+      const ph = Math.floor(k / TW), x = 20 + k * 118 + ph * 10;
+      strip.push({ r: R(svg, x, 210, 108, 46, { class: 'chip', rx: 2 }), t: T(svg, x + 54, 239, `k = ${k % TW}`, { ...mid, 'font-size': 13 }) });
+    }
+    const loads = [0, 1].map(ph => { const x = 20 + ph * (TW * 118 + 10); return { r: R(svg, x, 180, TW * 118 - 10, 22, { class: 'mem', rx: 2 }), t: T(svg, x + (TW * 118 - 10) / 2, 196, 'load tile of M and N into shared · __syncthreads()', { ...mid, 'font-size': 11 }) }; });
+    const counter = T(svg, 20, 300, '', { 'font-size': 14 }), counter2 = T(svg, 20, 326, '', { 'font-size': 14 });
+    // steps: 0..7 original, 8 strip intro, 9..: phase 0 load, k0..3, phase1 load, k0..3
+    const seq = [];
+    for (let k = 0; k < W; k++) seq.push({ o: k });
+    seq.push({ intro: true });
+    for (let ph = 0; ph < 2; ph++) { seq.push({ load: ph }); for (let k = 0; k < TW; k++) seq.push({ s: ph * TW + k }); }
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => seq.length, (i) => {
+      const s = seq[i];
+      orig.forEach((o, k) => { o.r.classList.toggle('run', s.o === k); o.r.classList.toggle('done', s.o != null ? k < s.o : true); });
+      const sIdx = s.s != null ? s.s : s.load != null ? s.load * TW - 1 : -1;
+      strip.forEach((o, k) => { o.r.classList.toggle('run', s.s === k); o.r.classList.toggle('done', k <= sIdx && s.s !== k); });
+      loads.forEach((l, ph) => l.r.classList.toggle('on', s.load === ph));
+      phaseBox.forEach((b, ph) => b.classList.toggle('on', (s.load === ph) || (s.s != null && Math.floor(s.s / TW) === ph)));
+      if (s.o != null) {
+        counter.textContent = `global loads by this thread so far: ${2 * (s.o + 1)} (one M and one N per iteration)`; counter2.textContent = '';
+        cap.innerHTML = `The dot product of one thread is a single loop of <b>Width</b> iterations; each one reads M and N from global memory.`;
+      } else if (s.intro) {
+        counter.textContent = `without tiling: ${2 * W} global loads per thread`; counter2.textContent = '';
+        cap.innerHTML = '<b>Strip-mining</b> cuts the long loop into strips of TILE_WIDTH iterations. The outer loop walks over the strips (phases); the inner loop runs the iterations of one strip, in the original order.';
+      } else if (s.load != null) {
+        counter.textContent = `global loads by this thread so far: ${2 * (s.load + 1)}`; counter2.textContent = 'each thread loads 1 M and 1 N element of the tile, then waits at the barrier';
+        cap.innerHTML = `Phase ${s.load}: the block loads one tile of M and one of N <b>together</b>, then a barrier makes sure the whole tile is in shared memory.`;
+      } else {
+        const ph = Math.floor(s.s / TW);
+        counter.textContent = `global loads by this thread so far: ${2 * (ph + 1)} · iteration k = ${s.s} of the original loop`; counter2.textContent = 'operands read from shared memory';
+        cap.innerHTML = s.s % TW === TW - 1 ? `End of phase ${ph}: a second barrier, so nobody overwrites the tile while others still read it. ${ph === 1 ? `Total: <b>${2 * W / TW}</b> global loads instead of ${2 * W}, the same ${W} iterations, the same result.` : ''}`
+          : `Inner loop, iteration ${s.s % TW} of the strip = iteration ${s.s} of the original loop, now served from <b>shared memory</b>.`;
+      }
+    }, 1500);
+  };
+
+  // ------------------------------------------------------------ deck navigation
+  const slides = [...document.querySelectorAll('.slide')];
+  const counter = document.getElementById('counter');
+  document.querySelectorAll('[data-ref]').forEach(e => { const t = document.getElementById(e.dataset.ref); e.textContent = t ? slides.indexOf(t) + 1 : '?'; });
+  const inst = new Map();
+  slides.forEach(s => s.querySelectorAll('[data-anim]').forEach(d => { if (ANIM[d.dataset.anim]) inst.set(s, ANIM[d.dataset.anim](d)); }));
+  let i = Math.max(0, Math.min(slides.length - 1, (parseInt(location.hash.slice(1), 10) || 1) - 1)), current = null;
+  function show(n) {
+    if (current) current.leave();
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    history.replaceState(null, '', '#' + (i + 1));
+    current = inst.get(slides[i]) || null;
+    if (current) current.enter();
+  }
+  const typing = (t) => t && t.closest && t.closest('input, select, textarea');
+  document.addEventListener('keydown', e => {
+    if (typing(e.target)) return;
+    if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { if (e.target.closest && e.target.closest('button')) return; e.preventDefault(); show(i + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'p') { if (current) current.leave(); slides.forEach(s => s.classList.add('active')); inst.forEach(a => a.enter && a.enter()); inst.forEach(a => a.leave && a.leave()); window.print(); }
+  });
+  document.addEventListener('click', e => {
+    if (e.target.closest('a, pre, code, button, input, label, select, canvas, svg, .diagram, .cfg, table, .flat')) return;
+    show(e.clientX > innerWidth / 2 ? i + 1 : i - 1);
+  });
+  show(i);
+})();
+</script>
+</body>
+</html>
+</body>
+</html>

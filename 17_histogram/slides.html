@@ -1,0 +1,1281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parallel histogram: atomics and privatization</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+--acc:#2F6FD0;--acc-soft:#DCE7F8;--acc2:#C98A1B;--acc2-soft:#F6EAD2;--line-strong:#BDBDBD;--bad-soft:#F6DADA;--ok-soft:#D6EBDC}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:5vh 7vw 7vh;display:none;flex-direction:column;justify-content:center;gap:1rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.45em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:62ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.4em}
+.small{font-size:.78em}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2.5vw;align-items:start}
+.cols.wl{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
+.cols.wr{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr)}
+@media (max-width:820px){.cols,.cols.wl,.cols.wr{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.54em;line-height:1.45;background:var(--code);padding:.8em 1em;border-radius:3px;margin:0;overflow:auto;max-height:70vh;white-space:pre-wrap;overflow-wrap:break-word}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.66em;width:100%}th{text-align:left;font-size:.78em;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.35em .8em .35em 0}td{border-bottom:1px solid var(--line);padding:.4em .8em .4em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 7vw;font-size:.55em;color:var(--muted);font-family:var(--mono);background:var(--bg)}
+.note{border-left:3px solid var(--ink);padding-left:1em;max-width:62ch}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+
+.diagram{width:100%;max-width:1150px}
+.svgwrap svg{width:100%;height:auto;max-height:54vh;display:block}
+.dctl{display:flex;gap:.5em;align-items:center;flex-wrap:wrap;font-size:.56em;margin-top:.4em}
+.dctl button{font:inherit;border:1px solid var(--line-strong);background:#fff;color:var(--ink);border-radius:3px;padding:.2em .75em;cursor:pointer}
+.dctl button:hover{border-color:var(--ink)}
+.dctl button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dctl button:focus-visible,.cfg input:focus-visible,.cfg button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.cap{font-family:var(--mono);font-size:.54em;line-height:1.55;min-height:3.2em;margin-top:.3em;white-space:pre-wrap}
+.cap b{color:var(--acc)}
+.cap i{font-style:normal;color:var(--acc2);font-weight:600}
+
+svg text{font-family:var(--mono)}
+svg text:not([fill]){fill:var(--ink)}
+svg .lbl{font-family:var(--body);fill:var(--muted)}
+svg .frame{fill:none;stroke:#9a9a9a;stroke-width:1.5;transition:stroke .3s,stroke-width .3s}
+svg .frame.on{stroke:var(--acc);stroke-width:4}
+svg .dash{fill:none;stroke:#c9c9c9;stroke-width:1.2;stroke-dasharray:5 4}
+svg .sp{fill:#C9DBF4;transition:fill .3s}
+svg .sp.on{fill:var(--acc)}
+svg .ctl{fill:#E6E6E6}
+svg .mem{fill:#EDEDED;stroke:#bdbdbd;stroke-width:1;transition:fill .3s,stroke .3s}
+svg .mem.on{fill:var(--acc2-soft);stroke:var(--acc2);stroke-width:2.5}
+svg .wire{stroke:#bdbdbd;stroke-width:1.5;fill:none;transition:stroke .3s}
+svg .wire.on{stroke:var(--acc2);stroke-width:3}
+svg .wire.blue.on{stroke:var(--acc)}
+svg .chip{fill:#EDEDED;stroke:#9a9a9a;transition:fill .3s,stroke .3s,opacity .3s}
+svg .chip.run{fill:var(--acc-soft);stroke:var(--acc);stroke-width:2}
+svg .chip.done{fill:var(--ok-soft);stroke:var(--ok)}
+svg .chip.gone{opacity:.18}
+svg .bar{fill:var(--acc)}
+svg .bar2{fill:var(--acc2)}
+svg .barok{fill:var(--ok)}
+svg .hatch{fill:url(#hatch)}
+svg .cell{fill:#fff;stroke:#d0d0d0}
+svg .on-a{fill:#86C495}
+svg .on-b{fill:#E7B467}
+svg .on-c{fill:var(--acc)}
+svg .on-y{fill:#F2C230}
+svg .faint{fill:#F4F4F4;stroke:#e2e2e2}
+svg .busy{fill:#5f5f5f}
+svg .idle{fill:var(--bad-soft)}
+svg .ready{fill:#EEF3FB}
+svg .tok{transition:transform .7s ease}
+svg .red{stroke:var(--bad)!important}
+svg .hidden{display:none}
+@media (prefers-reduced-motion:reduce){svg .tok,svg .frame,svg .sp,svg .mem,svg .chip{transition:none}}
+
+/* calculators */
+.cfg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:2.5vw;align-items:start;font-size:.66em}
+@media (max-width:820px){.cfg{grid-template-columns:1fr}}
+.cfg-row{display:flex;gap:.7em;align-items:center;flex-wrap:wrap;margin-bottom:.6em}
+.cfg-lbl{font-family:var(--mono);min-width:9.5em;color:var(--muted)}
+.cfg input{font:inherit;font-family:var(--mono);width:6em;padding:.15em .4em;border:1px solid var(--line-strong);border-radius:3px}
+.cfg .presets{display:flex;flex-wrap:wrap;gap:.4em;margin:.3em 0 .8em}
+.cfg .presets button{font:inherit;font-size:.82em;border:1px solid var(--line-strong);background:#fff;border-radius:3px;padding:.15em .55em;cursor:pointer}
+.cfg .presets button:hover{border-color:var(--ink)}
+.cfg-out{font-family:var(--mono);font-size:.92em;line-height:1.6}
+.cfg-out b{color:var(--acc)}
+.cfg pre{font-size:.82em}
+.cfg-big{font-size:2em;font-weight:600;font-family:var(--mono);line-height:1.1}
+.cfg-big small{font-size:.38em;font-weight:400;color:var(--muted);font-family:var(--body)}
+.cfg-msg{margin-top:.5em}
+.cfg-msg.ok{color:var(--ok)}.cfg-msg.bad{color:var(--bad)}
+.gauge{position:relative;height:.9em;background:var(--code);border-radius:3px;margin:.5em 0;overflow:hidden}
+.gauge i{position:absolute;left:0;top:0;bottom:0;background:var(--acc);transition:width .4s ease}
+canvas[data-canvas]{display:block;max-width:100%}
+.legend{list-style:none;padding:0;margin:.3em 0 0;font-size:.85em;display:flex;flex-wrap:wrap;gap:.3em 1.2em}
+.legend li{display:flex;gap:.45em;align-items:center}
+.legend i{display:inline-block;width:.9em;height:.9em;border:1px solid #aaa;flex:none}
+
+/* 2D -> linear */
+.flat{position:relative;width:100%}
+.flat .fc{position:absolute;display:flex;align-items:center;justify-content:center;font-family:var(--mono);box-sizing:border-box;border:1px solid #fff;transition:left .6s ease,top .6s ease}
+.flat .pad{position:absolute;box-sizing:border-box;border:1px dashed #c9c9c9;background:#fff}
+.flat .wl{position:absolute;font-family:var(--mono);color:var(--acc);font-size:.5em;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.flat .fc{transition:none}}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.5vw}
+
+svg .hl{fill:var(--acc)}
+svg .soft{fill:var(--acc-soft);stroke:#9db7e3}
+svg .soft2{fill:var(--acc2-soft);stroke:#d9b06a}
+.cfg .presets button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.cfg-out table{font-size:.95em}
+[data-anim=hazards] table td{padding:.35em .9em .35em 0}
+.cfg .cap{font-size:.86em}
+.cfg [data-legend] table{font-size:.9em;margin:.3em 0}
+.cols.wc{grid-template-columns:minmax(0,1.75fr) minmax(0,1fr)}
+@media (max-width:820px){.cols.wc{grid-template-columns:1fr}}
+.cfg-out table td,.cfg-out table th{padding:.25em .7em .25em 0}
+.cfg-out tr.hot td{background:var(--acc-soft)}
+.hl-line{background:var(--acc2-soft);font-weight:600}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 17</div>
+  <h1>Parallel histogram: atomics and privatization</h1>
+  <p class="muted">The first GPU pattern where any thread may write any output element. This session is about making those updates <b>correct</b> with <code>cuda::atomic_ref</code>, understanding why atomics are <b>slow</b> under contention, and making them fast with <b>privatization</b> at the block and thread level and with <b>thread coarsening</b>.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 9 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/histogram</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>What you already know</h2>
+  <div class="cols">
+    <div style="display:grid;gap:.8em">
+<pre style="font-size:.5em"><code>void histogram_sequential(unsigned char* image,
+    unsigned int* bins, unsigned int width,
+    unsigned int height) {
+  for (unsigned int i = 0; i &lt; width*height; ++i) {
+    unsigned char b = image[i];
+    ++bins[b];             // one bin per intensity
+  }
+}</code></pre>
+      <table>
+        <tr><th>session 10, CPU, 10 tasks</th><th>30 M increments</th></tr>
+        <tr><td>shared vector + mutex</td><td>~750 ms</td></tr>
+        <tr><td>shared vector of atomics</td><td>~1200 ms</td></tr>
+        <tr><td>private histogram per task, merged once</td><td>~3 ms</td></tr>
+      </table>
+    </div>
+    <ul class="small">
+      <li>A histogram counts how many inputs fall in each bin. The sequential loop is O(N), streams the input and keeps the bins in L1: memory-bound.</li>
+      <li>Session 08: <code>++x</code> on shared data is a <b>read-modify-write</b> race; <code>std::atomic</code>, <code>fetch_add</code>, memory orders and CAS fix it.</li>
+      <li>Session 10: atomics are correct but slow when everybody hammers the same counters. <b>Accumulate privately, merge rarely</b> was 250 to 400 times faster.</li>
+      <li>Today: the same story with <b>hundreds of thousands</b> of threads. What changes is the hardware: where atomics execute, how many copies we can afford, and where they live (global, shared, registers).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>One thread per pixel: output interference</h2>
+  <div class="diagram" data-anim="tree">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="seq" class="on">sequential scan</button><button data-mode="par">one thread per pixel</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">8 × 8 grayscale tree, 4 intervals of 64 intensities</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Read-modify-write: the lost update</h2>
+  <div class="diagram" data-anim="race">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="a" class="on">no overlap</button><button data-mode="b">overlap</button><button data-mode="atomic">atomic</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">two threads increment bins[x], initially 0</span></div>
+  </div>
+  <p class="small muted">The same race outside computers: two customers see seat 9C free on the seat map, both pick it, both mark it taken; two kiosks hand out the same ticket number. Read, modify, write must be one <b>indivisible</b> unit.</p>
+</section>
+
+<section class="slide">
+  <h2>Atomic operations in CUDA C++</h2>
+  <div class="cols wc">
+<pre><code>#include &lt;cuda/atomic&gt;
+
+template &lt;typename T, cuda::thread_scope Scope&gt;
+class cuda::atomic_ref;          // like C++20 std::atomic_ref
+
+// wrap an existing object, then operate on it
+cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+    bins_ref(bins[b]);
+unsigned int old =
+    bins_ref.fetch_add(1, cuda::memory_order_relaxed);
+
+// T fetch_add(T arg, cuda::std::memory_order order);
+// returns the value *before* the addition. Also:
+// fetch_sub, fetch_min, fetch_max, fetch_and, fetch_or,
+// fetch_xor, exchange, compare_exchange_*, load, store
+
+// the older C-style API, still common:
+atomicAdd(&amp;bins[b], 1u);        // device scope, relaxed
+atomicAdd_block(&amp;bins_s[b], 1u); // block scope</code></pre>
+    <ul class="small">
+      <li>An atomic operation performs read, modify and write so that no other atomic on the same location can overlap it. The hardware <b>serializes</b> them, in no particular order.</li>
+      <li><code>atomic_ref</code> does not own the data: it gives atomic access to an ordinary <code>unsigned int</code> in a plain array. Constructing it costs nothing at run time.</li>
+      <li>Two template parameters: the type <code>T</code> (<code>int</code>, <code>unsigned int</code>, <code>float</code> …) and the <b>scope</b> of threads that must see the operation as atomic.</li>
+      <li>The argument of <code>fetch_add</code> has type <code>T</code>: <code>1</code> becomes an <code>unsigned int</code>.</li>
+      <li>Why not <code>cuda::atomic&lt;T&gt;</code>? It makes <i>every</i> access atomic from creation; the bins are also zeroed and read non-atomically, so the chapter uses <code>atomic_ref</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the basic histogram kernel</h2>
+  <div class="cols wc">
+<pre><code>#include &lt;cuda/atomic&gt;
+#define NUM_BINS 256
+
+__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  unsigned int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i &lt; width*height) {
+    unsigned char b = image[i];
+    cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+        bins_ref(bins[b]);
+    bins_ref.fetch_add(1, cuda::memory_order_relaxed);
+  }
+}
+
+// host: bins must start at zero
+cudaMemset(bins_d, 0, NUM_BINS*sizeof(unsigned int));
+histogram_kernel&lt;&lt;&lt;cdiv(width*height, 256), 256&gt;&gt;&gt;(
+    image_d, bins_d, width, height);</code></pre>
+    <ul class="small">
+      <li>The sequential loop becomes the usual thread index plus a boundary check: one thread per pixel.</li>
+      <li><code>++bins[b]</code> becomes an atomic reference to <code>bins[b]</code> and a <code>fetch_add</code>.</li>
+      <li><b>Device scope</b>: threads of <i>different blocks</i> update the same bins, so the increments must be atomic across the whole GPU.</li>
+      <li>The returned old value is ignored: the thread only needs the increment to happen.</li>
+      <li>Correct, simple, and slow on real images. The rest of the session explains why and fixes it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread scopes: who must see the operation as atomic?</h2>
+  <div class="diagram" data-anim="scopes">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="thread">thread_scope_thread</button><button data-mode="block">thread_scope_block</button><button data-mode="device" class="on">thread_scope_device</button><button data-mode="system">thread_scope_system</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why <code>memory_order_relaxed</code> is enough</h2>
+  <div class="cols wl">
+    <div style="display:grid;gap:.8em">
+<pre style="font-size:.5em"><code>unsigned char b = image[i];                     // (1) load
+cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+    bins_ref(bins[b]);                 // the address needs b
+bins_ref.fetch_add(1, cuda::memory_order_relaxed);  // (2)</code></pre>
+      <table>
+        <tr><th>order</th><th>guarantees</th><th>histogram?</th></tr>
+        <tr><td><code>relaxed</code></td><td>the RMW is atomic; nothing about other accesses</td><td class="ok">enough</td></tr>
+        <tr><td><code>acquire</code> / <code>release</code></td><td>also orders the thread's earlier or later accesses around it</td><td>when the atomic publishes other data (a flag)</td></tr>
+        <tr><td><code>seq_cst</code></td><td>plus one total order of all seq_cst operations</td><td>default of <code>std::atomic</code>; extra cost, no benefit here</td></tr>
+      </table>
+    </div>
+    <ul class="small">
+      <li>The order parameter tells the compiler and the hardware which <b>reorderings</b> of this thread's other memory accesses are allowed around the atomic.</li>
+      <li>The only other access is the load of <code>image[i]</code>, and the atomic's <b>address depends on its value</b>: the data dependence already forces (1) before (2).</li>
+      <li>Nobody reads the bins while the kernel runs. Results become visible at the kernel boundary (or after <code>__syncthreads()</code> in the privatized kernels).</li>
+      <li>Stronger orders matter when an atomic signals that <i>other</i> data is ready, as in the single-pass scan of a later chapter. Later chapters also use the <b>returned value</b>, e.g. to claim a slot in an output queue.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Contention: many threads, few bins</h2>
+  <div class="diagram" data-anim="contend">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><label style="font-family:var(--mono)">hot-bin share % <input data-in="s" type="number" min="12.5" max="100" step="12.5" value="50" style="font:inherit;width:4em"></label><button data-p="12.5">uniform</button><button data-p="50" class="on">tree image</button><button data-p="75">75 %</button><button data-p="100">all one bin</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>An atomic costs a full memory round trip</h2>
+  <div class="diagram" data-anim="timeline">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">atomics on one location, 1 GHz clock; latencies are the book's DRAM example and illustrative cache values</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Atomic throughput versus memory bandwidth</h2>
+  <div class="cfg" data-anim="thru">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">channels × bytes</span><input type="number" min="1" max="64" value="8" data-in="ch" style="width:3.5em"><input type="number" min="1" max="64" value="8" data-in="bw" style="width:3.5em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">clock (GHz)</span><input type="number" min="0.1" max="5" step="0.1" value="1" data-in="f"></div>
+      <div class="cfg-row"><span class="cfg-lbl">DRAM latency (cyc)</span><input type="number" min="1" max="2000" value="200" data-in="ld"></div>
+      <div class="cfg-row"><span class="cfg-lbl">L2 latency (cyc)</span><input type="number" min="1" max="500" value="20" data-in="ll"></div>
+      <div class="cfg-row"><span class="cfg-lbl">bins</span><input type="number" min="1" max="65536" value="256" data-in="n"></div>
+      <div class="cfg-row"><span class="cfg-lbl">hottest bin (% of data)</span><input type="number" min="0" max="100" step="any" value="0" data-in="p"></div>
+      <div class="presets"><button data-p="8,8,1,200,20,256,0" class="on">book example</button><button data-p="8,8,1,200,20,4,50">tree image</button><button data-p="8,8,1,200,20,256,30">skewed photo</button></div>
+      <p class="small muted" style="margin:0">DDR: 2 transfers per clock per channel. 0 % = uniform. An atomic = one load latency + one store latency.</p>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Privatization: a private histogram per block</h2>
+  <div class="diagram" data-anim="priv">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">3 blocks of 8 threads, 4 bins (real blocks have up to 1024 threads)</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: private copies in global memory</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int* bins_pool,
+    unsigned int width, unsigned int height) {
+  unsigned int* bins_priv = &amp;bins_pool[blockIdx.x*NUM_BINS];
+
+  unsigned int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i &lt; width*height) {
+    unsigned char b = image[i];
+    cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+        bins_priv_ref(bins_priv[b]);
+    bins_priv_ref.fetch_add(1, cuda::memory_order_relaxed);
+  }
+  __syncthreads();
+
+  for (unsigned int b = threadIdx.x; b &lt; NUM_BINS; b += blockDim.x) {
+    if (bins_priv[b] &gt; 0) {
+      cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+          bins_ref(bins[b]);
+      bins_ref.fetch_add(bins_priv[b], cuda::memory_order_relaxed);
+    }
+  }
+}</code></pre>
+    <ul class="small">
+      <li><code>bins_pool</code>: gridDim.x × NUM_BINS counters, allocated <b>and zeroed</b> by the host. Block k owns the slice starting at k × NUM_BINS.</li>
+      <li>Contention drops by roughly the number of active blocks. The copies are small and hot, so they stay in L2.</li>
+      <li><b>Block scope</b> for the private copy: only this block touches it, which may allow a faster atomic.</li>
+      <li><code>__syncthreads()</code>, then each thread commits bins b, b + blockDim.x, …: works for any number of bins. Zero bins are skipped.</li>
+      <li>The commit is <b>device scope</b>, but at most one thread per block hits each public bin.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Where the private copy lives</h2>
+  <div class="diagram" data-anim="levels">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="public">no privatization</button><button data-mode="global" class="on">per block, global</button><button data-mode="shared">per block, shared</button><button data-mode="cluster">per cluster, DSMEM</button><button data-mode="thread">per thread, registers</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: private copies in shared memory</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  __shared__ unsigned int bins_s[NUM_BINS];
+  for (unsigned int b = threadIdx.x; b &lt; NUM_BINS; b += blockDim.x)
+    bins_s[b] = 0;
+  __syncthreads();
+
+  unsigned int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i &lt; width*height) {
+    unsigned char b = image[i];
+    cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+        bins_s_ref(bins_s[b]);
+    bins_s_ref.fetch_add(1, cuda::memory_order_relaxed);
+  }
+  __syncthreads();
+
+  for (unsigned int b = threadIdx.x; b &lt; NUM_BINS; b += blockDim.x) {
+    if (bins_s[b] &gt; 0) {
+      cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_device&gt;
+          bins_ref(bins[b]);
+      bins_ref.fetch_add(bins_s[b], cuda::memory_order_relaxed);
+    }
+  }
+}</code></pre>
+    <ul class="small">
+      <li>The only changes: <code>bins_s</code> is <code>__shared__</code>, so the block zeroes it itself, and needs a <b>first barrier</b> before anyone updates it.</li>
+      <li>Shared memory is on the SM, with a latency of a few cycles: shorter latency → <b>higher atomic throughput</b>.</li>
+      <li>Possible only if NUM_BINS counters fit in shared memory (256 bins: 1 KB).</li>
+      <li><b>Thread block clusters</b> (Hopper and later): blocks of a cluster can share one copy in <b>distributed shared memory</b>, wait for each other with a cluster barrier and commit once per cluster: room for more bins.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The price of privatization: init and commit per block</h2>
+  <div class="cfg" data-anim="cost">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">pixels</span><input type="number" min="1024" value="16777216" data-in="N" style="width:8em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">NUM_BINS</span><input type="number" min="1" max="65536" value="256" data-in="B"></div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input type="number" min="32" max="1024" step="32" value="256" data-in="T"></div>
+      <div class="cfg-row"><span class="cfg-lbl">SMs × blocks per SM</span><input type="number" min="1" max="1000" value="132" data-in="S" style="width:4em"><input type="number" min="1" max="32" value="8" data-in="K" style="width:3.5em"></div>
+      <div class="presets"><button data-p="16777216,256,256,132,8" class="on">4096², H100</button><button data-p="1048576,256,256,40,4">1024², T4</button><button data-p="16777216,4096,256,132,8">4096 bins</button></div>
+      <ul class="small" style="margin-top:.4em">
+        <li>Every block zeroes NUM_BINS counters and commits up to NUM_BINS atomics, however few pixels it processes.</li>
+        <li>Worth it when blocks <b>run at the same time</b>. Blocks beyond what fits on the GPU run in later waves: their overhead buys nothing.</li>
+        <li>Fix: <b>coarsening</b>, fewer blocks with more pixels per thread (next slide).</li>
+      </ul>
+    </div>
+    <div class="cfg-out" data-out></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread coarsening: contiguous or interleaved?</h2>
+  <div class="diagram" data-anim="partition">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="cont" class="on">contiguous</button><button data-mode="inter">interleaved</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy warp of 8 threads, COARSE_FACTOR = 4, 8-byte memory segments</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: coarsening, one line apart</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  __shared__ unsigned int bins_s[NUM_BINS];
+  // ... zero bins_s, __syncthreads() (as before)
+
+  unsigned int segment = COARSE_FACTOR*blockIdx.x*blockDim.x;
+  for (unsigned int c = 0; c &lt; COARSE_FACTOR; ++c) {
+    // contiguous: each thread walks its own run of pixels
+    // unsigned int i = segment + threadIdx.x*COARSE_FACTOR + c;
+    // interleaved: the block sweeps blockDim.x pixels at a time
+<span class="hl-line">    unsigned int i = segment + c*blockDim.x + threadIdx.x;  </span>
+    if (i &lt; width*height) {
+      unsigned char b = image[i];
+      cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+          bins_s_ref(bins_s[b]);
+      bins_s_ref.fetch_add(1, cuda::memory_order_relaxed);
+    }
+  }
+  __syncthreads();
+  // ... commit bins_s to bins (as before)
+}
+// launch: cdiv(width*height, COARSE_FACTOR*256) blocks of 256</code></pre>
+    <ul class="small">
+      <li>Each block owns a segment of COARSE_FACTOR × blockDim.x pixels; the grid shrinks by COARSE_FACTOR.</li>
+      <li><b>Contiguous</b> is the natural CPU choice: each thread streams its own cache lines, and with few threads per cache the lines stay.</li>
+      <li>On a GPU, a warp's 32 loads then hit 32 different places, and with thousands of threads per SM the lines are evicted before the thread comes back.</li>
+      <li><b>Interleaved</b>: in every iteration the warp reads 32 consecutive bytes, one <b>coalesced</b> transaction.</li>
+      <li>Refinement: read 4 pixels (one 32-bit word) per thread per iteration to use the full width of the load path.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread-level privatization</h2>
+  <div class="diagram" data-anim="tpriv">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">one block of 4 threads, COARSE_FACTOR = 6, interleaved, 4 bins</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: thread-level privatization</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>#define NUM_BINS 4            // few bins: 64 intensities each
+__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  __shared__ unsigned int bins_s[NUM_BINS];
+  // ... zero bins_s, __syncthreads() (as before)
+
+  unsigned int bins_t[NUM_BINS] = {};    // private to the thread
+  unsigned int segment = COARSE_FACTOR*blockIdx.x*blockDim.x;
+  for (unsigned int c = 0; c &lt; COARSE_FACTOR; ++c) {
+    unsigned int i = segment + c*blockDim.x + threadIdx.x;
+    if (i &lt; width*height) {
+      unsigned int bin = image[i] / (256/NUM_BINS);
+      #pragma unroll
+      for (unsigned int b = 0; b &lt; NUM_BINS; ++b)
+        bins_t[b] += (bin == b);            // no atomic at all
+    }
+  }
+  for (unsigned int b = 0; b &lt; NUM_BINS; ++b)   // thread -&gt; block
+    if (bins_t[b] &gt; 0) {
+      cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+          bins_s_ref(bins_s[b]);
+      bins_s_ref.fetch_add(bins_t[b], cuda::memory_order_relaxed);
+    }
+  __syncthreads();
+  // ... commit bins_s to bins (as before)      block -&gt; device
+}</code></pre>
+    <ul class="small">
+      <li>Nobody else can see <code>bins_t</code>, so a plain <code>+=</code> is correct.</li>
+      <li>Atomics on shared memory drop from one per pixel to at most NUM_BINS per thread.</li>
+      <li>Why the odd loop instead of <code>++bins_t[bin]</code>? Registers cannot be indexed at run time, so such an array usually lands in <b>local memory</b> (off-chip, cached). With the unrolled compare-and-add every index is a constant and <code>bins_t</code> stays in <b>registers</b>.</li>
+      <li>Three levels now: registers → shared (block scope) → global (device scope).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Many bins: keep only the frequent ones</h2>
+  <div class="cfg" data-anim="hot">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">NUM_BINS</span><input type="number" min="1" max="65536" value="256" data-in="n"></div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input type="number" min="32" max="1024" step="32" value="256" data-in="t"></div>
+      <div class="cfg-row"><span class="cfg-lbl">hot bins per thread</span><input type="number" min="0" max="256" value="4" data-in="k"></div>
+      <div class="cfg-row"><span class="cfg-lbl">skew (Zipf s)</span><input type="number" min="0" max="4" step="0.1" value="1" data-in="s"></div>
+      <div class="presets"><button data-p="4,256,4,1" >4 bins</button><button data-p="256,256,4,1" class="on">256, s = 1</button><button data-p="256,256,8,1.5">256, s = 1.5</button><button data-p="256,256,16,0">uniform</button></div>
+      <ul class="small" style="margin-top:.4em">
+        <li>A full private copy per thread costs NUM_BINS counters per thread: fine for 4 bins, impossible for 256.</li>
+        <li>Many data sets concentrate on a few values (the sky, a background colour). Keep counters only for those in registers; the rare bins go straight to the shared copy with an atomic.</li>
+        <li>The hot bins must be known in advance (a sample, the previous frame) or tracked on the fly.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Privatize only the most recent bin</h2>
+  <div class="diagram" data-anim="agg">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">the elements one thread processes, in order</span></div>
+  </div>
+  <p class="small muted">The book's thread-level privatization for many bins: each thread privatizes <b>one</b> bin, the most recently accessed one, as a counter <code>bin_r</code> in a register. Identical values in localized areas (a sky, a background) become one atomic per <b>run</b> instead of one per pixel. With interleaved partitioning a thread's consecutive pixels are blockDim.x apart, so runs are shorter than in the image itself, but large uniform regions still produce them. (The previous edition called this <i>aggregation</i>.)</p>
+</section>
+
+<section class="slide">
+  <h2>Code: privatizing the most recent bin</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void histogram_kernel(unsigned char* image,
+    unsigned int* bins, unsigned int width, unsigned int height) {
+  __shared__ unsigned int bins_s[NUM_BINS];
+  // ... zero bins_s, __syncthreads() (as before)
+  unsigned int segment = COARSE_FACTOR*blockIdx.x*blockDim.x;
+  if (segment + threadIdx.x &lt; width*height) {
+    unsigned int b = image[segment + threadIdx.x];  // first pixel
+    unsigned int bin_r = 1;              // private bin: count of b
+    for (unsigned int c = 1; c &lt; COARSE_FACTOR; ++c) {
+      unsigned int i = segment + c*blockDim.x + threadIdx.x;
+      if (i &lt; width*height) {
+        unsigned char bNext = image[i];
+        if (bNext == b) {
+          ++bin_r;                       // same bin: register only
+        } else {                         // flush, then switch bins
+          cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+              bins_s_ref(bins_s[b]);
+          bins_s_ref.fetch_add(bin_r, cuda::memory_order_relaxed);
+          b = bNext;
+          bin_r = 1;
+        }
+      }
+    }
+    cuda::atomic_ref&lt;unsigned int, cuda::thread_scope_block&gt;
+        bins_s_ref(bins_s[b]);           // the last run
+    bins_s_ref.fetch_add(bin_r, cuda::memory_order_relaxed);
+  }
+  __syncthreads();
+  // ... commit bins_s to bins (as before)
+}</code></pre>
+    <ul class="small">
+      <li>The first pixel is loaded before the loop, after a boundary check, and <code>bin_r</code> starts at 1; the loop starts at <code>c = 1</code>.</li>
+      <li>Each new pixel <code>bNext</code> is compared with the private bin: equal, increment the register; different, add the old count to the block's bin with one atomic, then switch.</li>
+      <li>The update is always <b>one element behind</b>, so after the loop one more atomic flushes the last run.</li>
+      <li>More statements and variables: with little similarity between consecutive pixels it can be <b>slower</b> than the previous kernel; with high repetitiveness, much faster.</li>
+      <li>The <code>if</code> can diverge, but with no similarity or heavy similarity all threads take the same path, and reduced contention usually pays for it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The kernels side by side</h2>
+  <table>
+    <tr><th></th><th>basic</th><th>private, global</th><th>private, shared</th><th>+ coarsening</th><th>+ thread-level</th></tr>
+    <tr><td>atomics on the public bins</td><td>1 per pixel</td><td>≤ NUM_BINS per block</td><td>≤ NUM_BINS per block</td><td>≤ NUM_BINS per block, fewer blocks</td><td>same</td></tr>
+    <tr><td>atomics per pixel, where</td><td>1, device scope, L2</td><td>1, block scope, L2</td><td>1, block scope, shared</td><td>1, block scope, shared</td><td>none (registers); ≤ NUM_BINS per thread to shared</td></tr>
+    <tr><td>worst contention</td><td>all threads of the grid</td><td>one block</td><td>one block</td><td>one block</td><td>none while counting</td></tr>
+    <tr><td>extra memory</td><td>—</td><td>gridDim.x × NUM_BINS in global</td><td>NUM_BINS per block in shared</td><td>same</td><td>NUM_BINS per thread in registers</td></tr>
+    <tr><td>init / commit</td><td>—</td><td>host memset / per block</td><td>per block</td><td>per block, amortized</td><td>per thread + per block</td></tr>
+    <tr><td>limits</td><td>skewed data</td><td>global latency</td><td>bins must fit in shared</td><td>enough blocks to fill the GPU</td><td>few bins only</td></tr>
+  </table>
+  <p class="small muted">The same structure appears whenever you count by category: words, intensities, events per type, orders per restaurant. Run all versions and compare: <code>ec2/histogram/histogram_image.cu</code>.</p>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>A histogram's output location depends on the data, so the <b>owner-computes rule</b> does not apply: any thread may update any bin (<b>output interference</b>). Plain <code>++bins[b]</code> loses updates through read-modify-write races.</li>
+    <li><code>cuda::atomic_ref&lt;T, scope&gt;</code> plus <code>fetch_add(1, memory_order_relaxed)</code> makes each update atomic. The scope says which threads must agree; relaxed is enough because nothing else is ordered by the update.</li>
+    <li>Atomics on one location are <b>serialized</b>: their throughput is about the inverse of <b>twice the memory latency</b>. One per 400 cycles is 2.5 M/s against 32 G elements/s of bandwidth. Skewed data concentrates them. Doing them in the last-level cache helps by an order of magnitude.</li>
+    <li><b>Privatization</b> gives subsets of threads their own copies: per block in global memory, per block in shared memory, per cluster in distributed shared memory, per thread in registers. Less contention and lower latency, paid for with init and commit.</li>
+    <li><b>Coarsening</b> reduces the number of private copies to initialize and merge; use <b>interleaved</b> partitioning so warps coalesce. <b>Thread-level privatization</b> goes one level further: a whole copy per thread when there are few bins, or only the most recent bin, which pays off when neighbouring data elements are similar.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 17.1–17.8</h2>
+  <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.3em;font-size:.72em">
+    <li>Each atomic operation in a DRAM system has a total latency of 100 ns. What is the maximal throughput of atomic operations on the same global memory variable?</li>
+    <li>A processor supports atomics in L2: 4 ns in L2, 100 ns in DRAM, and 90 % of the atomics hit in L2. What is the approximate throughput of atomics on the same global memory variable?</li>
+    <li>In 17.1, a kernel performs 5 floating-point operations per atomic operation. What is its maximal floating-point throughput, as limited by the atomics?</li>
+    <li>In 17.1, the variable is privatized into shared memory with a 1 ns access latency; every global atomic becomes a shared one, and the extra global atomics that merge the private copies add 10 % to the execution time. With 5 floating-point operations per atomic, what is the maximal floating-point throughput?</li>
+    <li>A histogram kernel processes 524 288 elements into 128 bins with 1024 threads per block. How many atomics on global memory does (a) the basic kernel perform, (b) the shared-memory privatized kernel without coarsening perform at most, (c) the same with a coarsening factor of 4 perform at most?</li>
+    <li>The private-copies-in-global kernel is launched with 2048 blocks and 256 bins of <code>unsigned int</code>. How large is <code>bins_pool</code>? Why must the host zero it? Which scope does each of its two atomics use, and why?</li>
+    <li>A warp of 32 threads, 1-byte pixels, COARSE_FACTOR = 8, aligned 32-byte sectors. How many sectors does one load of the warp touch with contiguous and with interleaved partitioning, and how many over the whole coarsening loop?</li>
+    <li>A thread of the most-recent-bin kernel sees the bins 7 7 7 2 2 7 7 7 7 1. How many shared-memory atomics does it issue, and where? Why does interleaved partitioning usually produce shorter runs than the image itself?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 17.1–17.8</h2>
+  <table style="font-size:.62em">
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>17.1</td><td>Atomics on one variable are serialized: 1 / 100 ns = <b>10 M atomic operations/s</b>.</td></tr>
+    <tr><td>17.2</td><td>Average latency 0.9 × 4 + 0.1 × 100 = 13.6 ns → 1 / 13.6 ns ≈ <b>73.5 M atomics/s</b>, 7.4 times 17.1.</td></tr>
+    <tr><td>17.3</td><td>5 × 10 M = <b>50 MFLOP/s</b>.</td></tr>
+    <tr><td>17.4</td><td>Shared atomics: 1 / 1 ns = 1 G/s; the merge adds 10 % to the time: 1 G / 1.1 ≈ 0.91 G atomics/s × 5 ≈ <b>4.5 GFLOP/s</b>, about 90 times 17.3.</td></tr>
+    <tr><td>17.5</td><td>(a) one per element: <b>524 288</b>. (b) 524 288 / 1024 = 512 blocks, each commits ≤ 128 bins: <b>≤ 65 536</b>. (c) 128 blocks × 128 bins: <b>≤ 16 384</b>.</td></tr>
+    <tr><td>17.6</td><td>2048 × 256 × 4 B = <b>2 MB</b>. The kernel only adds to its private copy, so it must start at 0 (<code>cudaMemset</code>). Private update: <b>block</b> scope, only this block touches the copy. Commit: <b>device</b> scope, all blocks add into the same public bins.</td></tr>
+    <tr><td>17.7</td><td>Contiguous: thread t reads byte 8t + c, spanning 256 B → <b>8 sectors</b> per load, <b>64</b> over 8 iterations (the same 8 sectors re-read, hits only if they survive in L1). Interleaved: 32 consecutive bytes → <b>1 sector</b> per load, <b>8</b> in total.</td></tr>
+    <tr><td>17.8</td><td>Runs 7 7 7 | 2 2 | 7 7 7 7 | 1 → <b>4 atomics</b> instead of 10: three in the loop, when the bin changes to 2, 7 and 1, and one after the loop for the last run. With interleaving, a thread's consecutive pixels are blockDim.x apart, not neighbours, so they are less likely to share a bin.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study and code</h2>
+  <ul class="small">
+    <li><code>ec2/histogram/histogram_image.cu</code>: the kernels of this session written with <code>cuda::atomic_ref</code> on a 256-bin grayscale image: sequential, basic, private in global, private in shared, contiguous and interleaved coarsening, thread-level privatization with 16 bins, and the book's kernel that privatizes the most recent bin, for 256 bins. Every version is checked against the CPU.</li>
+    <li><code>race_demo.cu</code>: the lost update, live. Plain <code>++bins[b]</code> against <code>atomic_ref</code> on the same input.</li>
+    <li><code>histogram.cu</code>: the text histogram (letters in 7 bins) with <code>atomicAdd</code>, from the basic kernel to coarsening and <b>aggregation</b>, with atomic counts and timings.</li>
+    <li><code>bikeshare_trip_durations.cu</code> and <code>bikeshare_station_hour.cu</code>: ideas for your project from another domain, a bike-sharing system: trip durations with percentiles, and rentals per station and hour.</li>
+    <li><code>colab.ipynb</code>: run everything on a Colab GPU. On a laptop without a GPU: <code>g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code>. Kernels are launched with <code>launch(kernel, grid, block, args...)</code> so the same file compiles both ways.</li>
+    <li><b>Exercise</b>: measure the basic kernel on a uniform image and on an all-white one, then add each optimization and explain every change in time.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>17 · Parallel histogram</span><span id="counter"></span></div>
+
+<script>
+(function () {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  const R = (p, x, y, w, h, a = {}) => p.appendChild(el('rect', { x, y, width: w, height: h, ...a }));
+  const T = (p, x, y, s, a = {}) => p.appendChild(el('text', { x, y, ...a }, s));
+  const L = (p, x1, y1, x2, y2, a = {}) => p.appendChild(el('line', { x1, y1, x2, y2, ...a }));
+  const mid = { 'text-anchor': 'middle' };
+  const newSvg = (root, vb, label) => { const host = root.querySelector('[data-svg]'); host.innerHTML = ''; const s = el('svg', { viewBox: vb, role: 'img', 'aria-label': label }); host.appendChild(s); return s; };
+  const fmt = (n) => n.toLocaleString('en-US');
+  const pct = (x) => (Math.round(x * 1000) / 10) + ' %';
+
+  function stepper(root, steps, render, ms) {
+    let k = 0, timer = null;
+    const play = root.querySelector('[data-act=play]');
+    const draw = () => render(k);
+    const tick = () => { k = (k + 1) % steps(); draw(); };
+    const start = () => { if (timer || reduce) return; timer = setInterval(tick, ms); if (play) play.textContent = 'Pause'; };
+    const stop = () => { clearInterval(timer); timer = null; if (play) play.textContent = 'Play'; };
+    if (play) play.addEventListener('click', () => timer ? stop() : start());
+    root.querySelector('[data-act=step]')?.addEventListener('click', () => { stop(); tick(); });
+    root.querySelector('[data-act=reset]')?.addEventListener('click', () => { stop(); k = 0; draw(); });
+    return { enter() { draw(); start(); }, leave: stop, reset() { stop(); k = 0; draw(); start(); }, get k() { return k; } };
+  }
+  const modeButtons = (root, attr, onPick) => root.querySelectorAll(`[data-${attr}]`).forEach(b => b.addEventListener('click', () => {
+    root.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset[attr]);
+  }));
+
+  const ANIM = {};
+
+  const arrowHead = (svg, id, color) => {
+    const d = svg.querySelector('defs') || svg.insertBefore(el('defs'), svg.firstChild);
+    const m = el('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto-start-reverse' });
+    m.appendChild(el('path', { d: 'M0,0 L10,5 L0,10 z', fill: color })); d.appendChild(m);
+    return `url(#${id})`;
+  };
+  const GRAY = '#9a9a9a', BLUE = '#2F6FD0', GOLD = '#C98A1B', RED = '#B03A3A', GREEN = '#2E7D4F', INK = '#1A1A1A';
+  const LBLUE = '#C9DBF4', LGOLD = '#F6EAD2', LRED = '#F6DADA', LGREEN = '#D6EBDC';
+  const syncButtons = (root, attr, val) => root.querySelectorAll(`[data-${attr}]`).forEach(b => b.classList.toggle('on', b.dataset[attr] === val));
+  // the four intensity intervals of the tree image: [0-63] black, [64-127] dark gray, [128-191] light gray, [192-255] white
+  const BINC = ['#1A1A1A', '#7A7A7A', '#C4C4C4', '#FFFFFF'], BINT = ['#fff', '#fff', INK, INK];
+  const BINL = ['[0-63]', '[64-127]', '[128-191]', '[192-255]'];
+  const binCell = (svg, x, y, w, h, b, a = {}) => R(svg, x, y, w, h, { fill: BINC[b], stroke: '#9a9a9a', 'stroke-width': .8, ...a });
+  const trim = (v) => v.toPrecision(3).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  const rate = (x) => x >= 1e9 ? trim(x / 1e9) + ' G' : x >= 1e6 ? trim(x / 1e6) + ' M' : x >= 1e3 ? trim(x / 1e3) + ' k' : trim(x);
+  const bytes = (b) => b >= 1048576 ? +(b / 1048576).toFixed(2) + ' MB' : b >= 1024 ? +(b / 1024).toFixed(2) + ' KB' : b + ' B';
+
+  // ------------------------------------------------------------ the tree image and its histogram
+  ANIM.tree = (root) => {
+    let mode = 'seq';
+    const svg = newSvg(root, '0 0 1000 400', 'An 8 by 8 grayscale tree image and its four-bin histogram, filled row by row or by one thread per pixel');
+    const IMG = ['33333333', '33311333', '33111133', '33111133', '33100133', '33300333', '22200222', '22222222'].map(r => [...r].map(Number));
+    const cs = 38, X0 = 40, Y0 = 34, BX = 600, BY = 340, sc = 6.6;
+    const hA = arrowHead(svg, 'tr-a', BLUE);
+    T(svg, X0, 22, 'image (8 × 8 pixels)', { 'font-size': 13, class: 'lbl' });
+    const px = [];
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) px.push({ r, c, b: IMG[r][c], e: binCell(svg, X0 + c * cs, Y0 + r * cs, cs - 2, cs - 2, IMG[r][c]) });
+    const cursor = svg.appendChild(el('rect', { fill: 'none', stroke: BLUE, 'stroke-width': 4, x: X0 - 3, width: 8 * cs + 2, height: cs + 2, opacity: 0 }));
+    T(svg, BX, 22, 'histogram', { 'font-size': 13, class: 'lbl' });
+    L(svg, BX, BY, BX + 380, BY, { stroke: INK }); L(svg, BX, BY, BX, BY - 40 * sc, { stroke: INK });
+    for (let v = 0; v <= 40; v += 10) { T(svg, BX - 8, BY - v * sc + 4, String(v), { 'font-size': 13, 'text-anchor': 'end' }); L(svg, BX - 4, BY - v * sc, BX, BY - v * sc, { stroke: INK }); }
+    const bars = [0, 1, 2, 3].map(b => {
+      const x = BX + 20 + b * 90;
+      T(svg, x + 35, BY + 18, BINL[b], { ...mid, 'font-size': 13 });
+      return { x, bar: binCell(svg, x, BY, 70, 0, b), val: T(svg, x + 35, BY - 6, '', { ...mid, 'font-size': 14, 'font-weight': 600 }) };
+    });
+    const lines = svg.insertBefore(el('g'), svg.querySelector('rect'));
+    const info = T(svg, X0, 380, '', { 'font-size': 14 });
+    const setBars = (h, txt) => bars.forEach((o, b) => { o.bar.setAttribute('y', BY - h[b] * sc); o.bar.setAttribute('height', h[b] * sc); o.val.setAttribute('y', BY - h[b] * sc - 6); o.val.textContent = txt ? txt[b] : String(h[b]); });
+    const cap = root.querySelector('[data-cap]');
+    const steps = () => mode === 'seq' ? 9 : 4;
+    const draw = (k) => {
+      lines.innerHTML = '';
+      if (mode === 'seq') {
+        const h = [0, 0, 0, 0]; px.forEach(p => { if (p.r < k) h[p.b]++; p.e.setAttribute('opacity', p.r < k || k === 0 ? 1 : .35); p.e.setAttribute('stroke', '#9a9a9a'); });
+        setBars(h);
+        cursor.setAttribute('opacity', k > 0 ? 1 : 0); cursor.setAttribute('y', Y0 + (k - 1) * cs - 2);
+        info.textContent = `pixels scanned: ${8 * k} of 64`;
+        cap.innerHTML = k === 0 ? 'Four intervals of 64 intensities: bin = pixel / 64. The sequential loop visits the pixels one by one and does <code>++bins[b]</code>; with one thread nobody else touches the bins.'
+          : k < 8 ? `Row ${k - 1}: ${IMG[k - 1].map(b => BINL[b]).filter((v, i, a) => a.indexOf(v) === i).join(', ')}. Each pixel is one read-modify-write of one bin.`
+          : 'Done: <b>6</b> black pixels (trunk), <b>12</b> dark gray (leaves), <b>14</b> light gray (grass), <b>32</b> white (sky). Half the image lands in one bin: remember that number.';
+      } else {
+        px.forEach(p => { p.e.setAttribute('opacity', 1); p.e.setAttribute('stroke', k === 0 ? BLUE : '#9a9a9a'); }); cursor.setAttribute('opacity', 0);
+        const cnt = [6, 12, 14, 32];
+        if (k === 1 || k === 2) px.forEach(p => {
+          const x1 = X0 + p.c * cs + cs / 2, y1 = Y0 + p.r * cs + cs / 2, x2 = bars[p.b].x + 35, y2 = BY - 30;
+          lines.appendChild(el('line', { x1, y1, x2, y2, stroke: p.b === 3 ? GOLD : BLUE, 'stroke-width': 1, opacity: .4 }));
+        });
+        if (k <= 1) setBars([0, 0, 0, 0], k === 1 ? ['×6', '×12', '×14', '×32'] : null);
+        else if (k === 2) setBars([1, 1, 1, 1], ['≥ 1 ?', '≥ 1 ?', '≥ 1 ?', '≥ 1 ?']);
+        else setBars(cnt);
+        info.textContent = ['64 threads, one per pixel, all at the same time', 'threads per bin at the same moment: 6, 12, 14, 32', 'plain ++bins[b]: updates are lost', 'atomic updates: correct, but serialized per bin'][k];
+        cap.innerHTML = ['The owner-computes rule no longer holds: a thread knows its <b>input</b>, but its output location depends on the data.',
+          'Many threads want the same bin at the same moment: <b>output interference</b>. 32 threads target the white bin.',
+          'With a plain <code>++bins[b]</code> each thread reads, adds 1 and writes back. Threads that read the same old value overwrite each other: any count from 1 up to the right one is possible.',
+          'With atomic increments the result is right, but the 32 updates of the white bin happen <b>one after the other</b>. The busiest bin sets the pace.'][k];
+      }
+    };
+    const st = stepper(root, steps, draw, 2000);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ read-modify-write race, step by step
+  ANIM.race = (root) => {
+    let mode = 'a';
+    const svg = newSvg(root, '0 0 1000 330', 'A timing table of two threads incrementing the same bin, with the registers and the memory value');
+    const SEQ = {
+      a: [[1, 'r'], [1, 'm'], [1, 'w'], [2, 'r'], [2, 'm'], [2, 'w']],
+      b: [[1, 'r'], [1, 'm'], [2, 'r'], [1, 'w'], [2, 'm'], [2, 'w']],
+      atomic: [[1, 'r'], [1, 'm', 2], [1, 'w', 2], [2, 'r'], [2, 'm'], [2, 'w']]
+    };
+    const OPS = { r: 'Old ← bins[x]', m: 'New ← Old + 1', w: 'bins[x] ← New' };
+    const cx = [40, 120, 380], cw = [80, 260, 260], Y0 = 30, rh = 40;
+    const hd = ['time', 'thread 1', 'thread 2'];
+    hd.forEach((h, i) => { R(svg, cx[i], Y0, cw[i] - 2, 30, { fill: INK }); T(svg, cx[i] + cw[i] / 2, Y0 + 20, h, { ...mid, fill: '#fff', 'font-size': 13 }); });
+    const rows = [];
+    for (let r = 0; r < 6; r++) {
+      const y = Y0 + 34 + r * rh;
+      R(svg, cx[0], y, cw[0] - 2, rh - 4, { fill: '#EDEDED' }); T(svg, cx[0] + 40, y + 23, String(r + 1), { ...mid, 'font-size': 13 });
+      rows.push([1, 2].map(c => ({ bg: R(svg, cx[c], y, cw[c] - 2, rh - 4, { fill: '#F7F7F7' }), t: T(svg, cx[c] + 12, y + 23, '', { 'font-size': 13 }) })));
+    }
+    const lock = svg.appendChild(el('rect', { x: cx[1] - 4, y: Y0 + 30, width: cw[1] + 6, height: 3 * rh + 4, fill: 'none', stroke: BLUE, 'stroke-width': 3, rx: 4, opacity: 0 }));
+    const lockT = T(svg, cx[1] + cw[1] / 2, Y0 + 34 + 6 * rh + 22, '', { ...mid, 'font-size': 13, fill: BLUE });
+    // memory and registers
+    T(svg, 700, 50, 'memory', { 'font-size': 13, class: 'lbl' });
+    const mem = R(svg, 700, 60, 250, 60, { class: 'mem', rx: 4 }); const memT = T(svg, 825, 98, '', { ...mid, 'font-size': 20, 'font-weight': 600 });
+    const regs = [1, 2].map(t => {
+      const y = 150 + (t - 1) * 80;
+      T(svg, 700, y - 6, `thread ${t} registers`, { 'font-size': 13, class: 'lbl' });
+      const o = R(svg, 700, y, 120, 44, { fill: LBLUE, rx: 3 }), n = R(svg, 830, y, 120, 44, { fill: LBLUE, rx: 3 });
+      return { ot: T(svg, 760, y + 28, '', { ...mid, 'font-size': 14 }), nt: T(svg, 890, y + 28, '', { ...mid, 'font-size': 14 }), o, n };
+    });
+    const cap = root.querySelector('[data-cap]');
+    const draw = (k) => {
+      const seq = SEQ[mode];
+      let m = 0; const st = { 1: { o: null, n: null }, 2: { o: null, n: null } };
+      rows.forEach(r => r.forEach(c => { c.t.textContent = ''; c.bg.setAttribute('fill', '#F7F7F7'); c.t.setAttribute('fill', INK); }));
+      for (let i = 0; i < k; i++) {
+        const [t, op, waiter] = seq[i], s = st[t];
+        let v;
+        if (op === 'r') { s.o = m; v = m; } else if (op === 'm') { s.n = s.o + 1; v = s.n; } else { m = s.n; v = m; }
+        const c = rows[i][t - 1]; c.t.textContent = `(${v}) ${OPS[op]}`; c.bg.setAttribute('fill', i === k - 1 ? LGOLD : '#fff');
+        if (waiter) { const w = rows[i][waiter - 1]; w.t.textContent = 'fetch_add: waits'; w.t.setAttribute('fill', RED); w.bg.setAttribute('fill', LRED); }
+      }
+      memT.textContent = `bins[x] = ${m}`; mem.classList.toggle('on', k > 0 && seq[k - 1][1] === 'w');
+      regs.forEach((r, i) => { const s = st[i + 1]; r.ot.textContent = `Old = ${s.o ?? '–'}`; r.nt.textContent = `New = ${s.n ?? '–'}`; });
+      lock.setAttribute('opacity', mode === 'atomic' && k >= 1 ? 1 : 0); lockT.textContent = mode === 'atomic' && k >= 1 ? 'thread 1: one indivisible read-modify-write' : '';
+      const last = k === 6;
+      cap.innerHTML = mode === 'a'
+        ? (k === 0 ? 'Each <code>++bins[x]</code> is three steps: <b>read</b> the old value, <b>modify</b> it in a register, <b>write</b> it back. The value in parentheses is the one written to the destination.'
+          : last ? 'Thread 1 finished before thread 2 started: bins[x] = <b>2</b>, correct. Thread 2 first, then thread 1, would be just as correct.' : `Time ${k}: thread ${seq[k - 1][0]} does ${OPS[seq[k - 1][1]]}.`)
+        : mode === 'b'
+          ? (k === 0 ? 'Same two increments, but the sequences now overlap in time.' : k === 3 ? 'Time 3: thread 2 reads bins[x] <i>before</i> thread 1 has written its result. It sees 0.'
+            : last ? 'bins[x] = <b>1</b>: thread 1\'s update is <b>lost</b>. The result depends on timing: a read-modify-write <b>race</b>. It compiles, runs and gives plausible, wrong counts.' : `Time ${k}: thread ${seq[k - 1][0]} does ${OPS[seq[k - 1][1]]}.`)
+          : (k === 0 ? 'With an atomic operation the hardware locks the location for the whole read-modify-write.' : k <= 3 ? 'Thread 2 issues its <code>fetch_add</code> but cannot start until thread 1\'s atomic completes.'
+            : last ? 'bins[x] = <b>2</b>. The two atomics were <b>serialized</b>. Either order is allowed; only the overlap is forbidden.' : `Time ${k}: thread 2 now reads the updated value 1.`);
+    };
+    const st = stepper(root, () => 7, draw, 1700);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ thread scopes
+  ANIM.scopes = (root) => {
+    let mode = 'device';
+    const svg = newSvg(root, '0 0 1000 330', 'Nested scopes: one thread, its block, its GPU, and the whole system with the CPU and other GPUs');
+    const frame = (x, y, w, h, label) => { const f = R(svg, x, y, w, h, { class: 'frame', rx: 5 }); T(svg, x + 10, y + 18, label, { 'font-size': 13, class: 'lbl' }); return f; };
+    const sysF = frame(6, 6, 988, 318, 'system');
+    const cpuF = frame(24, 40, 150, 260, 'CPU');
+    const g0 = frame(190, 40, 560, 260, 'GPU 0 (device)'), g1 = frame(766, 40, 210, 260, 'GPU 1');
+    const ths = [];
+    const block = (x, y, gpu, b) => {
+      const f = R(svg, x, y, 160, 150, { fill: '#fff', stroke: '#9a9a9a', rx: 4 }); T(svg, x + 8, y + 16, `block ${b}`, { 'font-size': 13, class: 'lbl' });
+      for (let i = 0; i < 8; i++) ths.push({ gpu, b, i, e: R(svg, x + 12 + (i % 4) * 36, y + 26 + Math.floor(i / 4) * 34, 28, 26, { fill: '#E6E6E6', rx: 3 }) });
+      R(svg, x + 10, y + 104, 140, 34, { class: 'mem', rx: 3 }); T(svg, x + 80, y + 126, 'shared memory', { ...mid, 'font-size': 13 });
+      return f;
+    };
+    const blocks = [block(206, 70, 0, 0), block(386, 70, 0, 1), block(566, 70, 0, 2), block(790, 70, 1, 0)];
+    const l2 = R(svg, 206, 236, 520, 50, { class: 'mem', rx: 3 }); T(svg, 466, 266, 'L2 cache + global memory', { ...mid, 'font-size': 13 });
+    R(svg, 790, 236, 160, 50, { class: 'mem', rx: 3 }); T(svg, 870, 266, 'its own memory', { ...mid, 'font-size': 13 });
+    const cores = [0, 1, 2, 3].map(i => R(svg, 40 + (i % 2) * 64, 70 + Math.floor(i / 2) * 64, 54, 54, { fill: '#E6E6E6', rx: 3 }));
+    T(svg, 99, 230, 'host memory', { ...mid, 'font-size': 13, class: 'lbl' });
+    const me = ths[0];
+    const ring = svg.appendChild(el('rect', { x: +me.e.getAttribute('x') - 4, y: +me.e.getAttribute('y') - 4, width: 36, height: 34, fill: 'none', stroke: GOLD, 'stroke-width': 3, rx: 4 }));
+    const draw = () => {
+      const lvl = { thread: 0, block: 1, device: 2, system: 3 }[mode];
+      ths.forEach(t => { const inS = t === me || (lvl >= 1 && t.gpu === 0 && t.b === 0) || (lvl >= 2 && t.gpu === 0) || lvl >= 3; t.e.setAttribute('fill', t === me ? GOLD : inS ? BLUE : '#E6E6E6'); });
+      cores.forEach(c => c.setAttribute('fill', lvl >= 3 ? BLUE : '#E6E6E6'));
+      blocks[0].setAttribute('stroke', lvl === 1 ? BLUE : '#9a9a9a'); blocks[0].setAttribute('stroke-width', lvl === 1 ? 4 : 1);
+      g0.classList.toggle('on', lvl === 2); sysF.classList.toggle('on', lvl === 3);
+      l2.classList.toggle('on', lvl === 2);
+      root.querySelector('[data-cap]').innerHTML = [
+        '<code>thread_scope_thread</code>: only the calling thread. Useless for sharing; it exists for completeness.',
+        '<code>thread_scope_block</code>: atomic with respect to threads of the <b>same block</b> only. Right for a block\'s private copy, in shared or in global memory. Threads of other blocks touching the same location could still race.',
+        '<code>thread_scope_device</code>: every thread of every block on <b>this GPU</b>. Required for the public <code>bins</code>, which all blocks update. This is what <code>atomicAdd</code> gives.',
+        '<code>thread_scope_system</code>: also the CPU and other GPUs, for memory they share (managed or pinned host memory). The widest and potentially the slowest.'][lvl] +
+        '\nA narrower scope promises the hardware less, so the operation may be cheaper. It never changes the result as long as only threads inside the scope touch the location.';
+      syncButtons(root, 'mode', mode);
+    };
+    root.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.mode; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ contention: a warp of atomics on 8 bins
+  ANIM.contend = (root) => {
+    const svg = newSvg(root, '0 0 1000 396', 'Thirty-two threads each issue one atomic increment; atomics on the same bin queue up and retire one per atomic latency');
+    const NT = 32, NB = 8, HOT = 3, q = root.querySelector('[data-in=s]');
+    let bins = [], queue = [], maxQ = 0;
+    const plan = () => {
+      const s = Math.max(12.5, Math.min(100, +q.value || 12.5));
+      const hot = Math.max(4, Math.min(NT, Math.round(NT * s / 100)));
+      const list = Array(hot).fill(HOT); let o = 0;
+      while (list.length < NT) { const b = [0, 1, 2, 4, 5, 6, 7][o++ % 7]; list.push(b); }
+      let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+      for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
+      bins = list; queue = Array(NB).fill(0); bins.forEach(b => queue[b]++); maxQ = Math.max(...queue);
+      syncButtons(root, 'p', String(s));
+    };
+    const cap = root.querySelector('[data-cap]');
+    const draw = (k) => {
+      svg.innerHTML = '';
+      T(svg, 20, 18, 'one warp: 32 threads, one atomic each (number = target bin)', { 'font-size': 13, class: 'lbl' });
+      const tx = (t) => 20 + t * 30.5;
+      bins.forEach((b, t) => { R(svg, tx(t), 26, 26, 24, { fill: b === HOT ? GOLD : BLUE, rx: 3, opacity: k >= 1 ? .45 : 1 }); T(svg, tx(t) + 13, 43, String(b), { ...mid, 'font-size': 13, fill: '#fff' }); });
+      const bx = (b) => 40 + b * 118, base = 330, th = 6.4;
+      const done = Math.max(0, k - 1);
+      if (k === 1) bins.forEach((b, t) => L(svg, tx(t) + 13, 50, bx(b) + 50, base - queue[b] * th - 4, { stroke: b === HOT ? GOLD : BLUE, 'stroke-width': 1, opacity: .45 }));
+      for (let b = 0; b < NB; b++) {
+        const left = k >= 1 ? Math.max(0, queue[b] - done) : 0, cnt = k >= 1 ? Math.min(queue[b], done) : 0;
+        for (let j = 0; j < left; j++) R(svg, bx(b), base - (j + 1) * th, 100, th - 1.2, { fill: b === HOT ? GOLD : BLUE, rx: 1 });
+        R(svg, bx(b), base + 2, 100, 26, { class: 'mem', rx: 3 });
+        T(svg, bx(b) + 50, base + 20, `bin ${b}: ${cnt}`, { ...mid, 'font-size': 13, 'font-weight': b === HOT ? 700 : 400 });
+      }
+      const t = Math.min(done, maxQ);
+      T(svg, 20, 386, k >= 1 ? `time: ${t} atomic latenc${t === 1 ? 'y' : 'ies'}` : 'time: 0', { 'font-size': 15, 'font-weight': 600 });
+      T(svg, 330, 386, `longest queue ${maxQ} → done after ${maxQ} latencies (uniform: 4, all in one bin: 32)`, { 'font-size': 13 });
+      cap.innerHTML = k === 0 ? `The bins are distinct addresses, so atomics on <b>different</b> bins proceed in parallel. Atomics on the <b>same</b> bin are serialized. Here ${queue[HOT]} of the 32 threads target bin ${HOT}.`
+        : k === 1 ? 'Every atomic joins the queue of its bin. Each queue drains at one operation per atomic latency, independently of the others.'
+          : done < maxQ ? (queue.filter(v => v).length === 1 ? `After ${done} latenc${done === 1 ? 'y' : 'ies'}: a single queue, so the 32 atomics run strictly one after the other.` : `After ${done} latenc${done === 1 ? 'y' : 'ies'}: ${done >= queue.filter((v, b) => b !== HOT).reduce((a, v) => Math.max(a, v), 0) ? 'the short queues are empty, ' : ''}the hot bin is still working.`)
+            : `All 32 updates done after <b>${maxQ}</b> latencies. Uniform data spreads them over 8 bins (4 latencies); skewed data makes the hottest bin the bottleneck. Real images are skewed.`;
+    };
+    plan();
+    const st = stepper(root, () => 2 + maxQ, draw, 900);
+    q.addEventListener('input', () => { plan(); st.reset(); });
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { q.value = b.dataset.p; plan(); st.reset(); }));
+    return st;
+  };
+
+  // ------------------------------------------------------------ atomics serialized on one location: DRAM vs L2 vs shared
+  ANIM.timeline = (root) => {
+    const svg = newSvg(root, '0 0 1000 330', 'Atomic operations on one location laid end to end on a time axis, for DRAM, last-level cache and shared-memory latencies');
+    const X0 = 170, W = 800, C = 1600, s = W / C;
+    const lanes = [{ name: 'DRAM', sub: '200 + 200 cycles', lat: 200, y: 50 }, { name: 'L2 (last level)', sub: '20 + 20 cycles', lat: 20, y: 140 }, { name: 'shared memory', sub: 'a few cycles', lat: 2, y: 230 }];
+    L(svg, X0, 300, X0 + W, 300, { stroke: INK });
+    for (let c = 0; c <= C; c += 400) { L(svg, X0 + c * s, 296, X0 + c * s, 304, { stroke: INK }); T(svg, X0 + c * s, 320, `${c}`, { ...mid, 'font-size': 13 }); }
+    T(svg, X0 + W, 290, 'cycles →', { 'font-size': 13, 'text-anchor': 'end', class: 'lbl' });
+    lanes.forEach(l => { T(svg, 20, l.y + 20, l.name, { 'font-size': 13, 'font-weight': 600 }); T(svg, 20, l.y + 38, l.sub, { 'font-size': 13, class: 'lbl' }); l.g = svg.appendChild(el('g')); l.cnt = T(svg, X0, l.y - 6, '', { 'font-size': 13 }); });
+    const S = [
+      { n: [1, 0, 0], cap: 'One atomic on a location in DRAM: a <b>load</b> (about 200 cycles in the book\'s example) followed by a <b>store</b> (another 200). The location stays locked the whole time.' },
+      { n: [2, 0, 0], cap: 'Atomic N + 1 on the same location cannot start until atomic N has completed: the latency of the round trip <b>is</b> the time per operation.' },
+      { n: [4, 0, 0], cap: 'At 1 GHz: one atomic per 400 cycles = <b>2.5 M atomics/s</b> on one location. The same memory system delivers 128 GB/s = 32 G four-byte elements/s: 12 800 times more.' },
+      { n: [4, 40, 0], cap: 'Modern GPUs perform device-scope atomics <b>in the last-level cache</b> (L2), shared by all SMs. Hot bins stay there. Tens of cycles instead of hundreds: at least <b>10 times</b> the throughput (25 M/s here).' },
+      { n: [4, 40, 400], cap: 'Shared memory sits on the SM, a few cycles away: shorter latency, again higher throughput, and only one block competes. This is what the privatized kernels exploit.' }
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length, (k) => {
+      S[k].n.forEach((n, i) => {
+        const l = lanes[i]; l.g.innerHTML = '';
+        const d = 2 * l.lat;
+        for (let a = 0; a < n; a++) {
+          const x = X0 + a * d * s;
+          if (n <= 40) {
+            l.g.appendChild(el('rect', { x, y: l.y, width: l.lat * s, height: 40, fill: i === 0 ? '#8C8C8C' : BLUE, opacity: .9 }));
+            l.g.appendChild(el('rect', { x: x + l.lat * s, y: l.y, width: l.lat * s - (n > 4 ? 1 : 2), height: 40, fill: i === 0 ? '#C4C4C4' : LBLUE }));
+            if (i === 0) { l.g.appendChild(el('text', { x: x + l.lat * s / 2, y: l.y + 25, 'text-anchor': 'middle', 'font-size': 13, fill: '#fff' }, 'load')); l.g.appendChild(el('text', { x: x + l.lat * s * 1.5, y: l.y + 25, 'text-anchor': 'middle', 'font-size': 13 }, `store · #${a + 1}`)); }
+          } else l.g.appendChild(el('rect', { x, y: l.y, width: Math.max(.8, d * s - .6), height: 40, fill: a % 2 ? GREEN : '#86C495' }));
+        }
+        l.cnt.textContent = n ? `${n} atomic${n > 1 ? 's' : ''} in ${n * d} cycles → ${rate(1e9 / d)} atomics/s on one location` : '';
+      });
+      cap.innerHTML = S[k].cap;
+    }, 3200);
+  };
+
+  // ------------------------------------------------------------ throughput calculator
+  ANIM.thru = (root) => {
+    const svg = newSvg(root, '0 0 600 250', 'Log-scale bars: memory bandwidth in elements per second against atomic throughput in DRAM and in L2');
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const draw = () => {
+      svg.innerHTML = '';
+      const ch = Math.max(1, +q('ch').value || 1), bw = Math.max(1, +q('bw').value || 1), f = Math.max(.01, +q('f').value || 1), ld = Math.max(1, +q('ld').value || 1), ll = Math.max(1, +q('ll').value || 1), n = Math.max(1, +q('n').value | 0), p = Math.max(0, Math.min(100, +q('p').value || 0));
+      const peak = ch * bw * 2 * f * 1e9, elems = peak / 4;
+      const one = f * 1e9 / (2 * ld), oneL = f * 1e9 / (2 * ll);
+      const spread = p > 0 ? Math.min(n, 100 / p) : n;
+      const rows = [['bandwidth', elems, '#86C495'], ['DRAM, 1 bin', one, '#8C8C8C'], [`DRAM, ${n} bins`, one * spread, '#8C8C8C'], ['L2, 1 bin', oneL, BLUE], [`L2, ${n} bins`, oneL * spread, BLUE]];
+      const lo = 1e5, hi = Math.pow(10, Math.ceil(Math.log10(Math.max(...rows.map(r => r[1])) * 1.01))), X0 = 150, Wd = 340;
+      const xs = (v) => X0 + Wd * (Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo));
+      for (let e = 5; e <= Math.log10(hi); e++) { const x = xs(Math.pow(10, e)); L(svg, x, 10, x, 222, { stroke: '#e2e2e2' }); T(svg, x, 240, e === 6 ? '1 M' : e === 9 ? '1 G' : `1e${e}`, { ...mid, 'font-size': 13, class: 'lbl' }); }
+      rows.forEach(([name, v, c], i) => {
+        const y = 14 + i * 42;
+        T(svg, X0 - 8, y + 20, name, { 'font-size': 14, 'text-anchor': 'end' });
+        R(svg, X0, y, Math.max(2, xs(v) - X0), 28, { fill: c, rx: 2 });
+        T(svg, xs(v) + 6, y + 20, `${rate(v)}/s`, { 'font-size': 14 });
+      });
+      out.innerHTML = `peak: ${ch} ch × ${bw} B × 2 × ${f} GHz = <b>${+(peak / 1e9).toFixed(1)} GB/s</b> = ${rate(elems)} elements/s` +
+        `<br>one atomic in DRAM: 2 × ${ld} = ${2 * ld} cycles → <b>${rate(one)}/s</b> per location` +
+        `<br>${p > 0 && 100 / p < n ? `hottest bin gets ${p} % → at most ${+spread.toFixed(2)} locations' worth` : `uniform over ${n} bins → ${n} locations in parallel`}: <b>${rate(one * spread)}/s</b>, ${+(elems / (one * spread)).toPrecision(3)}× below bandwidth` +
+        `<br>in L2: 2 × ${ll} = ${2 * ll} cycles → ${rate(oneL)}/s per location, <b>${rate(oneL * spread)}/s</b> spread (${+(ld / ll).toFixed(1)}× DRAM)`;
+      root.querySelectorAll('[data-p]').forEach(b => { const v = b.dataset.p.split(',').map(Number); b.classList.toggle('on', [ch, bw, f, ld, ll, n, p].every((x, i) => x === v[i])); });
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', draw));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const v = b.dataset.p.split(','); ['ch', 'bw', 'f', 'ld', 'll', 'n', 'p'].forEach((id, i) => q(id).value = v[i]); draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ privatization: one copy per block, then commit
+  ANIM.priv = (root) => {
+    const svg = newSvg(root, '0 0 1000 400', 'Three blocks of eight threads update their own private histograms, synchronize, and commit the nonzero bins to the public histogram');
+    const PIX = [3, 3, 3, 1, 1, 3, 3, 0, 3, 3, 2, 2, 1, 1, 3, 3, 2, 2, 2, 3, 3, 3, 0, 0];
+    const cw = 37, X0 = 40, pxX = (i) => X0 + i * cw + Math.floor(i / 8) * 16, bxX = (k) => X0 + k * (8 * cw + 16);
+    T(svg, X0, 16, 'image', { 'font-size': 13, class: 'lbl' });
+    PIX.forEach((b, i) => binCell(svg, pxX(i), 22, cw - 4, 24, b));
+    const thr = PIX.map((b, i) => { const e = R(svg, pxX(i), 60, cw - 4, 22, { fill: LBLUE, rx: 3 }); T(svg, pxX(i) + (cw - 4) / 2, 75, `t${i % 8}`, { ...mid, 'font-size': 13 }); return e; });
+    const priv = [0, 1, 2].map(k => {
+      const bx = bxX(k);
+      const fr = R(svg, bx - 5, 54, 8 * cw + 6, 136, { fill: 'none', stroke: '#9a9a9a', rx: 4 }); T(svg, bx + 4, 132, `block ${k}: private copy`, { 'font-size': 13, class: 'lbl' });
+      const bar = svg.appendChild(el('rect', { x: bx - 5, y: 106, width: 8 * cw + 6, height: 4, fill: RED, opacity: 0 }));
+      return { fr, bar, bins: [0, 1, 2, 3].map(b => ({ e: binCell(svg, bx + 4 + b * 74, 140, 66, 40, b), t: T(svg, bx + 37 + b * 74, 166, '0', { ...mid, 'font-size': 15, 'font-weight': 600, fill: BINT[b] }) })) };
+    });
+    T(svg, 40, 312, 'public copy: bins', { 'font-size': 13, class: 'lbl' }); T(svg, 40, 330, '(global memory)', { 'font-size': 13, class: 'lbl' });
+    const pub = [0, 1, 2, 3].map(b => ({ e: binCell(svg, 260 + b * 130, 294, 110, 44, b), t: T(svg, 315 + b * 130, 323, '0', { ...mid, 'font-size': 16, 'font-weight': 600, fill: BINT[b] }) }));
+    const lines = svg.appendChild(el('g')); svg.insertBefore(lines, svg.firstChild.nextSibling);
+    const info = T(svg, X0, 366, '', { 'font-size': 14 }), info2 = T(svg, X0, 390, '', { 'font-size': 14 });
+    const cnt = [0, 1, 2].map(k => { const c = [0, 0, 0, 0]; PIX.slice(k * 8, k * 8 + 8).forEach(b => c[b]++); return c; });
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 5, (k) => {
+      lines.innerHTML = '';
+      priv.forEach((p, i) => { p.bins.forEach((o, b) => o.t.textContent = k >= 1 ? cnt[i][b] : 0); p.bar.setAttribute('opacity', k === 2 ? 1 : 0); p.fr.setAttribute('stroke', k === 1 ? BLUE : '#9a9a9a'); });
+      thr.forEach(e => e.setAttribute('fill', k === 1 ? BLUE : LBLUE));
+      if (k === 1) PIX.forEach((b, i) => { const k2 = Math.floor(i / 8); lines.appendChild(el('line', { x1: pxX(i) + 16, y1: 82, x2: bxX(k2) + 37 + b * 74, y2: 140, stroke: BLUE, 'stroke-width': 1.2, opacity: .6 })); });
+      let atom = 0;
+      if (k >= 3) priv.forEach((p, i) => cnt[i].forEach((v, b) => { if (v) { atom++; if (k === 3) lines.appendChild(el('line', { x1: bxX(i) + 37 + b * 74, y1: 180, x2: 315 + b * 130, y2: 294, stroke: GOLD, 'stroke-width': 2, opacity: .8 })); } }));
+      pub.forEach((o, b) => o.t.textContent = k >= 3 ? cnt.reduce((s, c) => s + c[b], 0) : 0);
+      info.textContent = ['', 'block-scope atomics: at most 5 threads compete for one location (block 0, white)', '__syncthreads(): every private copy is complete', `commit: ${atom} device-scope atomics on the public copy (zero bins skipped)`, `24 pixels → 24 private atomics + ${atom} public ones, instead of 24 public atomics`][k];
+      info2.textContent = k >= 3 ? 'without privatization 12 threads of the grid would compete for the white bin' : '';
+      cap.innerHTML = ['Each block gets its <b>own copy</b> of the histogram. Threads of a block update only their block\'s copy, so contention happens only <b>inside</b> a block.',
+        'All blocks count at the same time, each in its own copy: different blocks never touch the same private location.',
+        'A barrier makes sure the whole block has finished counting before anyone reads the private copy.',
+        'Each block adds its <b>nonzero</b> private bins to the public copy. Addition is commutative and associative, so the order of the commits does not matter. At most one thread per block hits each public bin.',
+        'In general: N pixels need N public atomics without privatization, but at most blocks × NUM_BINS with it, each one far less contended.'][k];
+    }, 2800);
+  };
+
+  // ------------------------------------------------------------ privatization levels: where the copy lives
+  ANIM.levels = (root) => {
+    let mode = 'global';
+    const svg = newSvg(root, '0 0 1000 350', 'GPU memory hierarchy with the private histogram copies placed in L2, shared memory, distributed shared memory or registers, and the latency of an update at each level');
+    const M = {
+      public: { lat: 40, name: 'public, L2', who: 'every thread of the grid', copies: '1', ic: 'none', cap: '<b>No privatization</b>: one public copy in global memory, device-scope atomics executed in L2. Short of DRAM latency, but <b>every</b> thread of the grid can collide on a hot bin.' },
+      global: { lat: 40, name: 'block, global', who: 'threads of one block', copies: '1 per block (1024)', ic: 'host zeroes, block commits', cap: '<b>Per block, in global memory</b>: same latency (the copies live in L2), but only one block competes per copy. Works for any number of bins.' },
+      shared: { lat: 4, name: 'block, shared', who: 'threads of one block', copies: '1 per block (1024)', ic: 'block zeroes and commits', cap: '<b>Per block, in shared memory</b>: a few cycles per update, block scope. Limited by shared-memory capacity: NUM_BINS counters per resident block.' },
+      cluster: { lat: 15, name: 'cluster, DSMEM', who: 'threads of one cluster', copies: '1 per cluster (256 of 4)', ic: 'cluster barrier, then commit', cap: '<b>Per cluster, in distributed shared memory</b> (thread block clusters): the copy is spread over the shared memories of the cluster\'s blocks, so it can be several times larger. Remote accesses cost more than local shared memory, and there are fewer copies to commit.' },
+      thread: { lat: 1, name: 'thread, registers', who: 'nobody: no atomics', copies: '1 per thread (262 144)', ic: 'thread commits to block copy', cap: '<b>Per thread, in registers</b>: plain increments, no contention, no atomic. Only possible with very few bins, and the per-thread commits add up: needs coarsening.' }
+    };
+    const order = ['public', 'global', 'shared', 'cluster', 'thread'];
+    const draw = () => {
+      svg.innerHTML = '';
+      const on = (x) => x ? BLUE : '#E6E6E6';
+      R(svg, 10, 10, 610, 330, { class: 'frame', rx: 5 }); T(svg, 22, 30, 'GPU', { 'font-size': 13, class: 'lbl' });
+      if (mode === 'cluster') R(svg, 26, 40, 578, 186, { fill: 'none', stroke: GOLD, 'stroke-width': 3, 'stroke-dasharray': '8 5', rx: 6 });
+      [0, 1].forEach(s => {
+        const x = 36 + s * 290;
+        R(svg, x, 48, 268, 170, { fill: '#fff', stroke: '#6f6f6f', rx: 4 }); T(svg, x + 8, 64, `SM ${s}`, { 'font-size': 13, class: 'lbl' });
+        [0, 1].forEach(bk => {
+          const bx = x + 10 + bk * 128;
+          R(svg, bx, 72, 120, 78, { fill: '#fff', stroke: '#b0b0b0', rx: 3 }); T(svg, bx + 6, 86, `block ${s * 2 + bk}`, { 'font-size': 13, class: 'lbl' });
+          for (let t = 0; t < 4; t++) { R(svg, bx + 6 + t * 28, 94, 24, 22, { fill: mode === 'thread' ? GOLD : LBLUE, rx: 2 }); T(svg, bx + 18 + t * 28, 108, 'r', { ...mid, 'font-size': 13 }); if (mode === 'thread') for (let b = 0; b < 4; b++) R(svg, bx + 8 + t * 28 + b * 5, 120, 4, 22, { fill: BINC[b], stroke: '#888', 'stroke-width': .5 }); }
+        });
+        const sh = R(svg, x + 10, 158, 248, 48, { class: 'mem', rx: 3 });
+        T(svg, x + 134, 175, mode === 'cluster' ? `shared: bins ${2 * s}–${2 * s + 1} of the cluster copy` : 'shared memory', { ...mid, 'font-size': 13 });
+        if (mode === 'shared') { sh.classList.add('on'); for (let c = 0; c < 2; c++) for (let b = 0; b < 4; b++) R(svg, x + 20 + c * 124 + b * 26, 182, 24, 18, { fill: BINC[b], stroke: '#888', 'stroke-width': .6 }); }
+        if (mode === 'cluster') { sh.classList.add('on'); for (let b = 0; b < 2; b++) R(svg, x + 20 + b * 114, 182, 110, 18, { fill: BINC[2 * s + b], stroke: '#888', 'stroke-width': .6 }); }
+      });
+      const l2 = R(svg, 36, 234, 558, 44, { class: 'mem', rx: 3 }); T(svg, 46, 252, 'L2 cache (last level, shared by all SMs)', { 'font-size': 13 });
+      if (mode === 'public' || mode === 'global') {
+        l2.classList.add('on'); const n = mode === 'public' ? 1 : 4;
+        for (let c = 0; c < n; c++) for (let b = 0; b < 4; b++) R(svg, 330 + c * 66 + b * 15, 252, 13, 20, { fill: BINC[b], stroke: '#888', 'stroke-width': .6 });
+        T(svg, 590, 252, mode === 'public' ? 'public bins' : 'one copy per block', { 'font-size': 13, 'text-anchor': 'end' });
+      } else { for (let b = 0; b < 4; b++) R(svg, 530 + b * 15, 252, 13, 20, { fill: BINC[b], stroke: '#888', 'stroke-width': .6 }); T(svg, 522, 267, 'public bins', { 'font-size': 13, 'text-anchor': 'end' }); }
+      R(svg, 36, 288, 558, 40, { class: 'mem', rx: 3 }); T(svg, 315, 313, 'DRAM (global memory)', { ...mid, 'font-size': 13 });
+      // latency bars
+      T(svg, 650, 30, 'cycles per update (illustrative, log scale)', { 'font-size': 13, class: 'lbl' });
+      const xs = (v) => 790 + 190 * Math.log10(v) / Math.log10(400);
+      order.forEach((m, i) => {
+        const y = 44 + i * 34, cur = m === mode;
+        T(svg, 782, y + 17, M[m].name, { 'font-size': 13, 'text-anchor': 'end', 'font-weight': cur ? 700 : 400 });
+        R(svg, 790, y, Math.max(4, xs(M[m].lat) - 790), 24, { fill: cur ? BLUE : '#D0D0D0', rx: 2 });
+        T(svg, Math.max(794, xs(M[m].lat)) + 4, y + 17, m === 'thread' ? '1' : m === 'cluster' ? '> shared' : m === 'shared' ? 'a few' : 'tens', { 'font-size': 13 });
+      });
+      const y0 = 230;
+      [['competing', M[mode].who], ['copies', M[mode].copies], ['init / commit', M[mode].ic]].forEach(([a, b], i) => { T(svg, 650, y0 + i * 34, a, { 'font-size': 13, class: 'lbl' }); T(svg, 650, y0 + i * 34 + 18, b, { 'font-size': 14 }); });
+      T(svg, 650, 338, 'copies for 1024 blocks of 256 threads', { 'font-size': 13, class: 'lbl' });
+      root.querySelector('[data-cap]').innerHTML = M[mode].cap;
+      syncButtons(root, 'mode', mode);
+    };
+    root.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.mode; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ init / commit overhead vs number of blocks
+  ANIM.cost = (root) => {
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const draw = () => {
+      const N = Math.max(1, +q('N').value | 0), B = Math.max(1, +q('B').value | 0), Tb = Math.max(1, +q('T').value | 0), S = Math.max(1, +q('S').value | 0), K = Math.max(1, +q('K').value | 0);
+      const Rb = S * K;
+      const cfs = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+      const rows = cfs.map(cf => { const blocks = Math.ceil(N / (Tb * cf)); return { cf, blocks, waves: Math.ceil(blocks / Rb), ops: blocks * B + blocks * Math.min(B, Tb * cf) }; });
+      const best = rows.find(r => r.blocks <= Rb);
+      let h = '<table><tr><th>coarse</th><th>blocks</th><th>waves</th><th>init+commit</th><th>/ pixel</th><th>slots used</th></tr>';
+      rows.forEach(r => {
+        const fill = r.blocks < Rb ? `${Math.round(100 * r.blocks / Rb)} %` : '100 %';
+        h += `<tr class="${r === best ? 'hot' : ''}"><td>${r.cf}</td><td>${fmt(r.blocks)}</td><td>${fmt(r.waves)}</td><td>${fmt(r.ops)}</td><td>${(r.ops / N).toFixed(3)}</td><td>${fill}</td></tr>`;
+      });
+      h += '</table>';
+      h += `<p style="margin:.4em 0 0">${fmt(Rb)} blocks of ${Tb} threads fit at once (${S} SMs × ${K}). NUM_BINS = ${B}: each block pays ${fmt(B)} zero-writes and up to ${fmt(B)} commit atomics.` +
+        (best ? ` <b>COARSE_FACTOR ${best.cf}</b> is the smallest that fits the grid in one wave: overhead ${(best.ops / N).toFixed(3)} operations per pixel instead of ${(rows[0].ops / N).toFixed(2)}.` : ' Even COARSE_FACTOR 256 needs several waves.') +
+        ' Going further leaves SMs idle.</p>';
+      out.innerHTML = h;
+      root.querySelectorAll('[data-p]').forEach(b => b.classList.toggle('on', b.dataset.p === [N, B, Tb, S, K].join(',')));
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', draw));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const v = b.dataset.p.split(','); ['N', 'B', 'T', 'S', 'K'].forEach((id, i) => q(id).value = v[i]); draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ contiguous vs interleaved partitioning
+  ANIM.partition = (root) => {
+    let mode = 'cont';
+    const svg = newSvg(root, '0 0 1000 330', 'Eight threads with coarsening factor four read a 32-pixel block segment, contiguously or interleaved, and the memory segments each iteration touches');
+    const PAL = ['#2F6FD0', '#C98A1B', '#2E7D4F', '#B03A3A', '#7B4FB0', '#1C8C8C', '#C2588F', '#6B6B6B'];
+    const NT = 8, CF = 4, cw = 28, X0 = 52, EY = 150, SEG = 8;
+    const idx = (t, c) => mode === 'cont' ? t * CF + c : c * NT + t;
+    const cap = root.querySelector('[data-cap]');
+    const draw = (k) => {
+      svg.innerHTML = '';
+      const c = Math.min(k, CF - 1), fin = k === CF;
+      T(svg, 20, 22, 'threads of one warp', { 'font-size': 13, class: 'lbl' });
+      for (let t = 0; t < NT; t++) { R(svg, X0 + t * 112, 32, 100, 28, { fill: PAL[t], rx: 3 }); T(svg, X0 + t * 112 + 50, 51, `thread ${t}`, { ...mid, 'font-size': 13, fill: '#fff' }); }
+      T(svg, X0, EY + 56, 'block segment: 32 pixels (1 byte each), in memory segments of 8 bytes', { 'font-size': 13, class: 'lbl' });
+      const owner = Array(32).fill(-1), when = Array(32).fill(-1);
+      for (let t = 0; t < NT; t++) for (let cc = 0; cc < CF; cc++) { owner[idx(t, cc)] = t; when[idx(t, cc)] = cc; }
+      const touched = new Set();
+      for (let i = 0; i < 32; i++) {
+        const cur = !fin && when[i] === c, past = fin || when[i] < c;
+        R(svg, X0 + i * cw, EY, cw - 2, 34, { fill: cur || past ? PAL[owner[i]] : '#F2F2F2', opacity: cur ? 1 : past ? .3 : 1, stroke: '#c9c9c9' });
+        T(svg, X0 + i * cw + (cw - 2) / 2, EY + 22, String(i), { ...mid, 'font-size': 13, fill: cur ? '#fff' : INK });
+        if (cur) { touched.add(Math.floor(i / SEG)); L(svg, X0 + owner[i] * 112 + 50, 60, X0 + i * cw + 13, EY - 2, { stroke: PAL[owner[i]], 'stroke-width': 1.8 }); }
+      }
+      for (let s = 0; s < 4; s++) { R(svg, X0 + s * SEG * cw - 1, EY - 4, SEG * cw, 42, { fill: 'none', stroke: touched.has(s) ? GOLD : '#9a9a9a', 'stroke-width': touched.has(s) ? 3.5 : 1, rx: 3 }); }
+      const per = mode === 'cont' ? 4 : 1, tot = per * (fin ? CF : c + 1);
+      if (!fin) {
+        T(svg, X0, 238, `iteration c = ${c}: thread t reads pixel ${mode === 'cont' ? 't × 4 + c' : 'c × 8 + t'} → ${[...Array(NT).keys()].map(t => idx(t, c)).join(', ')}`, { 'font-size': 14 });
+        T(svg, X0, 262, `memory segments touched by this load: ${touched.size} · transactions so far: ${tot}`, { 'font-size': 14, 'font-weight': 600, fill: mode === 'cont' ? RED : GREEN });
+      } else {
+        T(svg, X0, 238, `whole loop: contiguous 4 × 4 = 16 transactions, interleaved 4 × 1 = 4`, { 'font-size': 14, 'font-weight': 600 });
+        T(svg, X0, 262, 'real warp: 32 threads, 32-byte sectors, COARSE_FACTOR 32 → contiguous 32 sectors per load, interleaved 1', { 'font-size': 13 });
+      }
+      if (mode === 'cont') T(svg, X0, 296, 'on a CPU: thread t\'s 4 pixels share one cache line, fetched once and reused from its private cache', { 'font-size': 13, class: 'lbl' });
+      else T(svg, X0, 296, 'the 8 threads jointly read blockDim.x consecutive pixels per iteration, then all move on by blockDim.x', { 'font-size': 13, class: 'lbl' });
+      cap.innerHTML = mode === 'cont'
+        ? (fin ? 'Contiguous partitioning makes every load of the warp touch as many segments as there are threads. On a GPU the lines will not survive in L1 until the thread returns: thousands of threads share the cache.' : c === 0 ? 'Contiguous: thread t owns pixels 4t … 4t + 3. In the first iteration the warp reads pixels 0, 4, 8, …: <b>strided</b>, spread over all four memory segments.' : `Iteration ${c}: the next pixel of every run, still one access per segment, ${c + 1} × 4 transactions so far.`)
+        : (fin ? 'Interleaved partitioning: every iteration is one <b>coalesced</b> transaction. The difference from the contiguous kernel is a single line of index arithmetic.' : c === 0 ? 'Interleaved: in iteration c, thread t reads pixel c × 8 + t. The warp reads pixels 0 … 7, <b>one</b> segment.' : `Iteration ${c}: pixels ${c * 8} … ${c * 8 + 7}, again one segment.`);
+    };
+    const st = stepper(root, () => CF + 1, draw, 2200);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ thread-level privatization
+  ANIM.tpriv = (root) => {
+    const svg = newSvg(root, '0 0 1000 390', 'Four threads count their pixels in private register counters without atomics, then commit them to the block copy and the block copy to global memory');
+    const PIX = [3, 3, 3, 3, 3, 1, 3, 2, 3, 1, 3, 2, 0, 3, 3, 3, 3, 3, 1, 3, 3, 3, 3, 3];
+    const NT = 4, CF = 6, cw = 38, X0 = 40;
+    T(svg, X0, 14, 'pixels of the block segment (thread t reads pixel c × 4 + t; green: already counted)', { 'font-size': 13, class: 'lbl' });
+    const px = PIX.map((b, i) => { const e = binCell(svg, X0 + i * cw, 20, cw - 4, 28, b); T(svg, X0 + i * cw + 17, 62, String(i), { ...mid, 'font-size': 13, class: 'lbl' }); return e; });
+    const regs = [...Array(NT).keys()].map(t => {
+      const x = X0 + t * 235;
+      const fr = R(svg, x, 84, 218, 96, { fill: '#fff', stroke: '#9a9a9a', rx: 4 }); T(svg, x + 8, 101, `thread ${t}: bins_t (registers)`, { 'font-size': 13, class: 'lbl' });
+      return { x, fr, c: [0, 1, 2, 3].map(b => ({ e: binCell(svg, x + 10 + b * 51, 112, 46, 40, b), t: T(svg, x + 33 + b * 51, 138, '0', { ...mid, 'font-size': 15, 'font-weight': 600, fill: BINT[b] }) })) };
+    });
+    T(svg, 40, 254, 'bins_s: shared, block scope', { 'font-size': 13, class: 'lbl' });
+    const sh = [0, 1, 2, 3].map(b => ({ e: binCell(svg, 270 + b * 115, 230, 100, 38, b), t: T(svg, 320 + b * 115, 255, '0', { ...mid, 'font-size': 15, 'font-weight': 600, fill: BINT[b] }) }));
+    T(svg, 40, 326, 'bins: global, device scope', { 'font-size': 13, class: 'lbl' });
+    const gl = [0, 1, 2, 3].map(b => ({ e: binCell(svg, 270 + b * 115, 304, 100, 34, b), t: T(svg, 320 + b * 115, 327, '0', { ...mid, 'font-size': 15, 'font-weight': 600, fill: BINT[b] }) }));
+    const lines = svg.appendChild(el('g'));
+    const info = T(svg, X0, 372, '', { 'font-size': 14 });
+    const cnt = (t, upto) => { const c = [0, 0, 0, 0]; for (let k = 0; k < upto; k++) c[PIX[k * NT + t]]++; return c; };
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => CF + 3, (k) => {
+      lines.innerHTML = '';
+      const it = Math.min(k, CF);
+      px.forEach((e, i) => { const c = Math.floor(i / NT), cur = k >= 1 && k <= CF && c === k - 1, past = c < it && !cur; e.setAttribute('stroke', cur ? BLUE : past ? GREEN : '#9a9a9a'); e.setAttribute('stroke-width', cur ? 3.5 : past ? 2 : .8); });
+      regs.forEach((r, t) => { const c = cnt(t, it); r.c.forEach((o, b) => o.t.textContent = c[b]); r.fr.setAttribute('stroke', k >= 1 && k <= CF ? BLUE : '#9a9a9a'); });
+      if (k >= 1 && k <= CF) for (let t = 0; t < NT; t++) { const i = (k - 1) * NT + t, b = PIX[i]; lines.appendChild(el('line', { x1: X0 + i * cw + 17, y1: 48, x2: regs[t].x + 33 + b * 51, y2: 112, stroke: BLUE, 'stroke-width': 1.8 })); }
+      let nz = 0; const tot = [0, 0, 0, 0];
+      regs.forEach((r, t) => cnt(t, CF).forEach((v, b) => { tot[b] += v; if (v) { nz++; if (k === CF + 1) lines.appendChild(el('line', { x1: r.x + 33 + b * 51, y1: 152, x2: 320 + b * 115, y2: 230, stroke: GOLD, 'stroke-width': 2 })); } }));
+      sh.forEach((o, b) => o.t.textContent = k >= CF + 1 ? tot[b] : 0);
+      if (k === CF + 2) tot.forEach((v, b) => { if (v) lines.appendChild(el('line', { x1: 320 + b * 115, y1: 268, x2: 320 + b * 115, y2: 304, stroke: GREEN, 'stroke-width': 3 })); });
+      gl.forEach((o, b) => o.t.textContent = k >= CF + 2 ? tot[b] : 0);
+      info.textContent = k === 0 ? '' : k <= CF ? `iteration ${k - 1}: 4 plain increments in registers · atomics so far: 0` : k === CF + 1 ? `thread → block: ${nz} block-scope atomics (nonzero counters only) instead of 24` : `block → device: ${tot.filter(v => v).length} device-scope atomics, after __syncthreads()`;
+      cap.innerHTML = k === 0 ? 'After coarsening every thread handles several pixels, so it can keep its <b>own</b> histogram. With 4 bins that is 4 counters, small enough for registers.'
+        : k <= CF ? `Iteration ${k - 1}: each thread reads one pixel (interleaved) and increments its own counter. No other thread can see it: <b>no atomic</b>, no contention, register speed.`
+          : k === CF + 1 ? 'When its loop ends, each thread adds its nonzero counters to the block\'s shared copy with block-scope atomics: 8 instead of 24, and the white bin sees 4 updates instead of 18.'
+            : 'After the barrier, the block commits its shared copy to global memory as before. Three levels of privatization: registers → shared → global.';
+    }, 1800);
+  };
+
+  // ------------------------------------------------------------ hot bins: what a per-thread copy costs, and what a few hot counters catch
+  ANIM.hot = (root) => {
+    const svg = newSvg(root, '0 0 600 210', 'Frequency of the bins sorted from most to least frequent under a Zipf distribution; the bins kept in registers are highlighted');
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const draw = () => {
+      svg.innerHTML = '';
+      const n = Math.max(1, +q('n').value | 0), t = Math.max(1, +q('t').value | 0), k = Math.max(0, Math.min(n, +q('k').value | 0)), s = Math.max(0, +q('s').value || 0);
+      const w = [...Array(n).keys()].map(r => 1 / Math.pow(r + 1, s)), W = w.reduce((a, b) => a + b, 0);
+      const caught = w.slice(0, k).reduce((a, b) => a + b, 0) / W;
+      const show = Math.min(n, 64), bw = 540 / show, mx = w[0] / W;
+      T(svg, 30, 16, `share per bin, most frequent first${n > show ? ` (first ${show} of ${n})` : ''}`, { 'font-size': 14, class: 'lbl' });
+      for (let r = 0; r < show; r++) { const h = 150 * (w[r] / W) / mx; R(svg, 30 + r * bw, 180 - h, Math.max(1, bw - 1), h, { fill: r < k ? BLUE : '#C4C4C4' }); }
+      L(svg, 30, 180, 572, 180, { stroke: INK });
+      T(svg, 30, 202, `blue: ${k} bins in registers = ${(caught * 100).toFixed(1)} % of the updates`, { 'font-size': 15 });
+      const full = n * 4, blockB = full * t;
+      out.innerHTML = `full per-thread copy: ${n} counters = ${bytes(full)} per thread, ${bytes(blockB)} per block of ${t}` +
+        `<br>${n <= 32 ? '<span class="ok">fits in registers</span>' : n <= 255 ? '<span class="bad">' + n + ' registers per thread: occupancy collapses</span>' : '<span class="bad">more than the 255 registers a thread may have</span>'}; in shared memory: ${blockB <= 228 * 1024 ? 'fits in 228 KB' : '<span class="bad">exceeds the 228 KB of an SM</span>'}` +
+        `<br>hot counters: <b>${k}</b> registers per thread catch <b>${(caught * 100).toFixed(1)} %</b> of the updates without atomics; the other ${((1 - caught) * 100).toFixed(1)} % go to shared memory as atomics`;
+      root.querySelectorAll('[data-p]').forEach(b => b.classList.toggle('on', b.dataset.p === [n, t, k, s].join(',')));
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', draw));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const v = b.dataset.p.split(','); ['n', 't', 'k', 's'].forEach((id, i) => q(id).value = v[i]); draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ aggregation of runs
+  ANIM.agg = (root) => {
+    const svg = newSvg(root, '0 0 1000 300', 'A thread walks through its elements, counting runs of the same bin in a register and issuing one atomic per run');
+    const SEQ = [3, 3, 3, 3, 1, 1, 3, 3, 3, 0, 0, 3];
+    const cw = 64, X0 = 40;
+    T(svg, X0, 18, 'bins of the elements this thread processes (green: done)', { 'font-size': 13, class: 'lbl' });
+    const cells = SEQ.map((b, i) => { const e = binCell(svg, X0 + i * cw, 26, cw - 6, 40, b); T(svg, X0 + i * cw + (cw - 6) / 2, 51, String(b), { ...mid, 'font-size': 15, fill: BINT[b] }); return e; });
+    const ptr = svg.appendChild(el('rect', { y: 22, width: cw + 2, height: 48, fill: 'none', stroke: BLUE, 'stroke-width': 3.5, rx: 4 }));
+    const CODE = ['if (bin == prevBin) ++accumulator;', 'else {', '  if (accumulator > 0)', '    atomic add accumulator to bins_s[prevBin];', '  prevBin = bin; accumulator = 1;', '}'];
+    const code = CODE.map((s, i) => ({ bg: R(svg, 40, 92 + i * 24, 470, 22, { fill: 'none' }), t: T(svg, 48, 108 + i * 24, s, { 'font-size': 14, style: 'white-space:pre' }) }));
+    T(svg, 560, 100, 'registers', { 'font-size': 13, class: 'lbl' });
+    R(svg, 560, 108, 170, 44, { fill: LBLUE, rx: 3 }); R(svg, 740, 108, 220, 44, { fill: LBLUE, rx: 3 });
+    const pv = T(svg, 645, 136, '', { ...mid, 'font-size': 15 }), ac = T(svg, 850, 136, '', { ...mid, 'font-size': 15 });
+    T(svg, 560, 180, 'atomics issued', { 'font-size': 13, class: 'lbl' });
+    const list = svg.appendChild(el('g'));
+    const info = T(svg, 40, 288, '', { 'font-size': 14, 'font-weight': 600 });
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => SEQ.length + 2, (k) => {
+      let prev = -1, acc = 0; const iss = []; let br = null;
+      for (let i = 0; i < Math.min(k, SEQ.length); i++) {
+        const b = SEQ[i];
+        if (b === prev) { acc++; br = 'same'; } else { br = acc > 0 ? 'flush' : 'first'; if (acc > 0) iss.push([prev, acc]); prev = b; acc = 1; }
+      }
+      const fin = k === SEQ.length + 1;
+      if (fin && acc > 0) { iss.push([prev, acc]); br = 'final'; }
+      cells.forEach((e, i) => { const done = fin || i < k - 1; e.setAttribute('stroke', done ? GREEN : '#9a9a9a'); e.setAttribute('stroke-width', done ? 2 : .8); });
+      ptr.setAttribute('x', X0 + Math.min(k - 1, SEQ.length - 1) * cw - 4); ptr.setAttribute('opacity', k >= 1 && !fin ? 1 : 0);
+      const hl = br === 'same' ? [0] : br === 'flush' ? [1, 2, 3, 4] : br === 'first' ? [1, 2, 4] : br === 'final' ? [3] : [];
+      code.forEach((c, i) => c.bg.setAttribute('fill', hl.includes(i) ? (i === 3 ? LGOLD : LBLUE) : 'none'));
+      pv.textContent = `prevBin = ${prev < 0 ? '–' : prev}`; ac.textContent = `accumulator = ${acc}`;
+      list.innerHTML = '';
+      iss.forEach(([b, a], i) => { list.appendChild(el('rect', { x: 560 + (i % 3) * 140, y: 190 + Math.floor(i / 3) * 34, width: 132, height: 28, fill: LGOLD, stroke: GOLD, rx: 3 })); list.appendChild(el('text', { x: 626 + (i % 3) * 140, y: 209 + Math.floor(i / 3) * 34, 'text-anchor': 'middle', 'font-size': 13 }, `bins_s[${b}] += ${a}`)); });
+      info.textContent = `elements processed: ${Math.min(k, SEQ.length)} · atomics: ${iss.length}${fin ? ' instead of 12' : ''}`;
+      cap.innerHTML = k === 0 ? 'The thread remembers the bin of the previous element and how many in a row it has seen.'
+        : fin ? 'After the loop, flush the last run. <b>5 atomics instead of 12</b>, each carrying a larger increment. With no runs, the same code issues one atomic per element plus extra branching.'
+          : br === 'same' ? `Element ${k - 1} is in the same bin as the previous one: just <code>++accumulator</code>, no memory access.`
+            : br === 'first' ? 'First element: start a run.'
+              : `Element ${k - 1} starts a new run: one atomic adds the whole previous run, then the run restarts.`;
+    }, 1500);
+  };
+
+  // ------------------------------------------------------------ deck navigation
+  const slides = [...document.querySelectorAll('.slide')];
+  const counter = document.getElementById('counter');
+  document.querySelectorAll('[data-ref]').forEach(e => { const t = document.getElementById(e.dataset.ref); e.textContent = t ? slides.indexOf(t) + 1 : '?'; });
+  const inst = new Map();
+  slides.forEach(s => s.querySelectorAll('[data-anim]').forEach(d => { if (ANIM[d.dataset.anim]) inst.set(s, ANIM[d.dataset.anim](d)); }));
+  let i = Math.max(0, Math.min(slides.length - 1, (parseInt(location.hash.slice(1), 10) || 1) - 1)), current = null;
+  function show(n) {
+    if (current) current.leave();
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    history.replaceState(null, '', '#' + (i + 1));
+    current = inst.get(slides[i]) || null;
+    if (current) current.enter();
+  }
+  const typing = (t) => t && t.closest && t.closest('input, select, textarea');
+  document.addEventListener('keydown', e => {
+    if (typing(e.target)) return;
+    if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { if (e.target.closest && e.target.closest('button')) return; e.preventDefault(); show(i + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'p') { if (current) current.leave(); slides.forEach(s => s.classList.add('active')); inst.forEach(a => a.enter && a.enter()); inst.forEach(a => a.leave && a.leave()); window.print(); }
+  });
+  document.addEventListener('click', e => {
+    if (e.target.closest('a, pre, code, button, input, label, select, canvas, svg, .diagram, .cfg, table, .flat')) return;
+    show(e.clientX > innerWidth / 2 ? i + 1 : i - 1);
+  });
+  show(i);
+})();
+</script>
+</body>
+</html>
+</body>
+</html>

@@ -1,0 +1,677 @@
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 13</div>
+  <h1>Memory architecture and data locality</h1>
+  <p class="muted">Session 12 showed how the GPU runs threads. This session is about feeding them: why most kernels so far are limited by memory, which memories CUDA gives us, and how <b>tiling</b> with shared memory cuts global memory traffic, on the GPU and on the CPU.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 5 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Diagrams are animated or interactive: use Play, Step and Reset, or type your own numbers. Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>Why memory, after compute</h2>
+  <div class="cols">
+    <ul>
+      <li>The kernels we wrote so far reach only a tiny fraction of the GPU's speed.</li>
+      <li>Reason: their data lives in <b>global memory</b>, off-chip DRAM with long latency (hundreds of cycles) and finite bandwidth.</li>
+      <li>Many warps can hide latency (session 12), but when every thread waits for DRAM, the memory paths congest and the SMs sit idle.</li>
+      <li>The fix: keep reused data in <b>on-chip memories</b> (registers, shared memory) so most accesses never reach DRAM.</li>
+    </ul>
+    <table>
+      <tr><th>Part</th><th>Question</th></tr>
+      <tr><td>Bandwidth as a limit</td><td>Is my kernel compute-bound or memory-bound?</td></tr>
+      <tr><td>CUDA memory types</td><td>Where can a variable live, who sees it, for how long?</td></tr>
+      <tr><td>Tiling</td><td>How do threads share loads to cut traffic?</td></tr>
+      <tr><td>Tiled matmul kernel</td><td>What does the code look like, line by line?</td></tr>
+      <tr><td>Boundary checks</td><td>What if the size is not a multiple of the tile?</td></tr>
+      <tr><td>Memory and occupancy</td><td>How much shared memory can a block use?</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The memory wall: why our kernels are slow</h2>
+  <div class="diagram" data-anim="wall">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">§5 introduction: long DRAM latency, finite bandwidth, congestion</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Two hardware limits: compute and memory bandwidth</h2>
+  <div class="cols">
+    <ul>
+      <li><b>Peak compute throughput</b>: arithmetic operations per second. H100: <b>66.9 TFLOPS</b> in single precision.</li>
+      <li><b>Peak memory bandwidth</b>: bytes per second from a memory. H100 global memory: <b>3.35 TB/s</b>.</li>
+      <li><b>Compute-bound</b> kernel: the arithmetic units are busy most of the time. <b>Memory-bound</b>: the cores wait for data.</li>
+      <li>The deciding number is the <b>compute-to-global-memory-access ratio</b> (arithmetic intensity), in FLOP per byte.</li>
+    </ul>
+    <div>
+<pre><code>threshold = peak FLOPS / peak bandwidth
+          = 66.9 TFLOPS / 3.35 TB/s
+          ≈ 20.0 FLOP/B   (H100)
+
+C[i] = A[i] + B[i];      // vector addition
+// 1 FLOP, 12 B (load A, load B, store C)
+// 1 / 12 = 0.083 FLOP/B  ≪ 20  → memory-bound</code></pre>
+      <p class="small muted" style="margin-top:.6em">The peaks are limits, not guarantees: only well-optimized kernels get close to them.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Compute-bound or memory-bound: who is waiting?</h2>
+  <div class="diagram" data-anim="bound">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="va" class="on">vector add</button><button data-mode="mm">naive matmul</button><button data-mode="tile">tiled 32 × 32</button><button data-mode="hi">40 FLOP/B</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">H100: 66.9 TFLOPS, 3.35 TB/s</span></div>
+  </div>
+</section>
+
+<section class="slide" id="s-roof">
+  <h2>The roofline model</h2>
+  <div class="cfg" data-anim="roofline" style="grid-template-columns:minmax(0,.9fr) minmax(0,1.3fr)">
+    <div>
+      <div class="presets" style="margin-top:0"><button data-dev="66.9,3.35" class="on">H100</button><button data-dev="0.2,0.1">200 GFLOPS, 100 GB/s</button><button data-dev="0.3,0.25">300 GFLOPS, 250 GB/s</button></div>
+      <div class="cfg-row"><span class="cfg-lbl" style="min-width:0">your kernel: FLOP</span><input id="rf-flop" type="number" min="0" step="1" value="36" data-in="flop" style="width:4em"><span class="cfg-lbl" style="min-width:0">bytes</span><input id="rf-bytes" type="number" min="1" step="1" value="28" data-in="bytes" style="width:4em"></div>
+      <div data-legend></div>
+      <div class="cap" data-cap></div>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Speed-of-light analysis: how close to the hardware?</h2>
+  <div class="cfg" data-anim="sol">
+    <div>
+<pre><code>C[i] = A[i] + B[i];   // 12 bytes per element</code></pre>
+      <div class="cfg-row" style="margin-top:.6em"><span class="cfg-lbl">elements</span><input id="sol-n" type="number" min="1" value="1000000000" data-in="n" style="width:9em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">measured time (ms)</span><input id="sol-t" type="number" min="0.01" step="0.1" value="4" data-in="t"></div>
+      <div class="cfg-row"><span class="cfg-lbl">peak bandwidth (TB/s)</span><input id="sol-bw" type="number" min="0.01" step="0.01" value="3.35" data-in="bw"></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <p class="small muted">Divide the bandwidth a memory-bound kernel achieves by the peak: that is how fast it runs relative to “the speed of light”. 90 % leaves only 10 % to gain from further optimization.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Matrix multiplication: high potential, low reality</h2>
+  <div class="cols">
+    <div>
+      <p><b>In principle</b> (each element loaded once):</p>
+<pre><code>work  = N² dot products × 2N = 2N³ FLOP
+data  = 3 matrices × N² × 4 B = 12N² B
+ratio = 2N³ / 12N² = N/6 FLOP/B
+N = 1024  →  ≈ 171 FLOP/B   (≫ 20: compute-bound)</code></pre>
+      <p style="margin-top:.6em"><b>Our kernel</b> from session 11, inner loop:</p>
+<pre><code>for (int k = 0; k &lt; Width; ++k)
+  Pvalue += M[row*Width + k] * N[k*Width + col];
+// 2 loads (8 B) for 2 FLOP  →  0.25 FLOP/B</code></pre>
+    </div>
+    <ul>
+      <li>0.25 FLOP/B &lt; 20: the kernel is <b>memory-bound</b>.</li>
+      <li>Best possible: 3.35 TB/s × 0.25 FLOP/B = <b>0.84 TFLOPS</b>, about 1.3 % of 66.9 TFLOPS.</li>
+      <li>Against the H100's tensor cores (989 TFLOPS) it is about 0.08 %.</li>
+      <li>Caches help a little in practice, but the real fix is to <b>reduce global memory accesses</b> in the code. That is what tiling does.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>CUDA memory types (Fig. 5.1)</h2>
+  <div class="diagram" data-anim="memtypes">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">R = read, W = write · after Fig. 5.1</span></div>
+  </div>
+</section>
+
+<section class="slide" id="s-reach">
+  <h2>Who can read and write each memory (Fig. 5.1)</h2>
+  <div class="diagram" data-anim="reach">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-role="host" class="on">Host</button><button data-role="t00">Thread (0,0), block 0</button><button data-role="t01">Thread (1,0), block 0</button><button data-role="t10">Thread (0,0), block 1</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">R = read, W = write</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The memory hierarchy at a glance (H100)</h2>
+  <div class="diagram" data-anim="pyramid">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">H100 SXM figures; latencies are rough orders of magnitude</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Inside a von Neumann processor (Fig. 5.2)</h2>
+  <div class="diagram" data-anim="fetch">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">registers inside the processor, memory outside</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why registers are fast: one instruction instead of two</h2>
+  <div class="diagram" data-anim="regs">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="reg" class="on">Operand in a register</button><button data-mode="mem">Operand in global memory</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Three reasons to keep operands in registers, and the price</h2>
+  <div class="diagram" data-anim="regwin">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><label style="font-family:var(--mono)">registers per thread <input data-in="r" type="number" min="1" max="255" value="32" style="font:inherit;width:4.5em;padding:.1em .3em;border:1px solid var(--line-strong);border-radius:3px"></label><span data-out style="font-family:var(--mono)"></span><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted"></span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Shared memory versus registers inside the SM</h2>
+  <div class="diagram" data-anim="shared">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">one processing block of an SM · after Fig. 5.3</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Distributed shared memory: blocks of a cluster (Hopper)</h2>
+  <div class="diagram" data-anim="dsmem">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">§5.2: thread block clusters, since Hopper</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Declaring where a variable lives</h2>
+  <div class="cols wl">
+<pre><code>__constant__ float coeff[64];   // constant memory
+__device__   int   negCount;    // global memory
+
+__global__ void kernel(const float* in, float* out,
+                       int n) {
+  __shared__ float tile[256];   // shared, per block
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  float acc = 0.0f;             // i, acc: registers
+
+  // global → shared
+  tile[threadIdx.x] = (i &lt; n) ? in[i] : 0.0f;
+  __syncthreads();              // every thread gets here
+
+  int left = threadIdx.x &gt; 0 ? threadIdx.x - 1 : 0;
+  acc = coeff[0] * tile[threadIdx.x]
+      + coeff[1] * tile[left];
+  if (i &lt; n) {
+    out[i] = acc;
+    if (acc &lt; 0) atomicAdd(&amp;negCount, 1);  // all threads
+  }
+}</code></pre>
+    <table>
+      <tr><th>Declaration</th><th>Memory</th><th>Scope</th><th>Lifetime</th></tr>
+      <tr><td>automatic scalar</td><td>register</td><td>thread</td><td>grid</td></tr>
+      <tr><td>automatic array</td><td>local</td><td>thread</td><td>grid</td></tr>
+      <tr><td><code>__shared__</code></td><td>shared</td><td>block</td><td>grid</td></tr>
+      <tr><td><code>__device__</code></td><td>global</td><td>grid</td><td>application</td></tr>
+      <tr><td><code>__constant__</code></td><td>constant</td><td>grid</td><td>application</td></tr>
+    </table>
+  </div>
+  <p class="small muted"><b>Scope</b>: which threads see the variable. <b>Lifetime</b>: one kernel run (grid) or the whole program (application). An automatic array such as <code>float w[8];</code> would go to local memory. Assumes blocks of 256 threads.</p>
+</section>
+
+<section class="slide">
+  <h2>Lifetime: one grid or the whole application</h2>
+  <div class="diagram" data-anim="lifetime">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">3 blocks × 256 threads per launch</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Scope and lifetime in practice</h2>
+  <div class="cols">
+    <ul class="small">
+      <li><b>Registers</b>: automatic scalars. One private copy per thread, gone when the thread ends. Fastest, but limited (too many cost occupancy, session 12).</li>
+      <li><b>Local memory</b>: automatic arrays and spilled registers. Private per thread, but stored in global memory: slow. The compiler may keep an array in registers if all indices are constants.</li>
+      <li><b>Shared memory</b>: <code>__shared__</code>. One copy per block, visible to all its threads, lives as long as the kernel. The tool for cooperation.</li>
+      <li><b>Constant memory</b>: <code>__constant__</code>, declared outside functions, read-only in kernels, cached; 64 KB in total.</li>
+      <li><b>Global variables</b>: <code>__device__</code>. Visible to all kernels and kept between launches; use sparingly (they hurt modularity).</li>
+    </ul>
+    <div class="cfg" data-anim="copies" style="grid-template-columns:1fr;font-size:.85em">
+      <div>
+        <div class="cfg-row"><span class="cfg-lbl">blocks in the grid</span><input id="cp-b" type="number" min="1" value="1000" data-in="b"></div>
+        <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input id="cp-t" type="number" min="1" max="1024" value="512" data-in="t"></div>
+        <div class="cfg-out" data-out></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Local memory: private, but in DRAM</h2>
+  <div class="diagram" data-anim="local">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="const" class="on">constant indices</button><button data-mode="dyn">index known at run time</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">automatic arrays and register spills</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Constant memory: one value for every thread</h2>
+  <div class="diagram" data-anim="cmem">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="same" class="on">same address</button><button data-mode="diff">different addresses</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">details of the constant cache in Chapter 7</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Choosing where a variable lives</h2>
+  <div class="diagram" data-anim="choose">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-ex="i" class="on">loop counter</button><button data-ex="w">array w[k]</button><button data-ex="tile">tile of M</button><button data-ex="coef">filter coefficients</button><button data-ex="mat">matrices</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted"></span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Tiling: small fast memory, large slow memory</h2>
+  <div class="cols">
+    <ul>
+      <li>Global memory is <b>large but slow</b>; shared memory is <b>small but fast</b>.</li>
+      <li>Strategy: split the data into <b>tiles</b> that fit in shared memory, like covering a big wall with small tiles.</li>
+      <li>The threads of a block load a tile together, then all of them reuse it from shared memory.</li>
+      <li>Requirement: the computation on each tile can be done independently of the others. Not every algorithm can be tiled.</li>
+    </ul>
+    <div class="note small">
+      <p>The rest of the session builds the tiled matrix product step by step:</p>
+      <ol style="margin:.3em 0 0;padding-left:1.2em;display:grid;gap:.3em">
+        <li>see that threads of a block load the same elements (next slide);</li>
+        <li>load each element once into shared memory, in phases;</li>
+        <li>write the kernel and its index arithmetic;</li>
+        <li>make it correct for any matrix size;</li>
+        <li>check what the shared memory costs in occupancy.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The same elements, loaded again and again</h2>
+  <div class="diagram" data-anim="access">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">4 × 4 matrices, 2 × 2 blocks; block (0, 0) computes the outlined tile of P · after Figs. 5.5 and 5.6</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>How much traffic does tiling save?</h2>
+  <div class="cfg" data-anim="reduce">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">Width</span><input id="rd-w" type="number" min="1" value="1024" data-in="w"></div>
+      <div class="cfg-row"><span class="cfg-lbl">TILE_WIDTH</span><input id="rd-t" type="number" min="1" max="64" value="16" data-in="t"></div>
+      <div class="presets"><button data-p="1024,1">no tiling</button><button data-p="1024,2">2 × 2</button><button data-p="1024,16">16 × 16</button><button data-p="1024,32">32 × 32</button><button data-p="8,4">8 × 8 matrix, 4 × 4</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Tiled matrix multiplication in phases</h2>
+  <div class="diagram" data-anim="phases">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-blk="0,0" class="on">block (0, 0)</button><button data-blk="0,1">block (0, 1)</button><button data-blk="1,0">block (1, 0)</button><button data-blk="1,1">block (1, 1)</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">after Figs. 5.7 and 5.8</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The tiled kernel (Fig. 5.9)</h2>
+  <div class="cols wl">
+<pre><code> 1  #define TILE_WIDTH 16
+ 2  __global__ void matrixMulKernel(float* M, float* N,
+                                    float* P, int Width) {
+ 3    __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
+ 4    __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
+ 5
+ 6    int bx = blockIdx.x;  int by = blockIdx.y;
+ 7    int tx = threadIdx.x; int ty = threadIdx.y;
+ 8
+ 9    // the P element this thread computes
+10    int Row = by * TILE_WIDTH + ty;
+11    int Col = bx * TILE_WIDTH + tx;
+12
+13    float Pvalue = 0;
+14    for (int ph = 0; ph &lt; Width / TILE_WIDTH; ++ph) {
+15      // load one M tile and one N tile together
+16      Mds[ty][tx] = M[Row*Width + ph*TILE_WIDTH + tx];
+17      Nds[ty][tx] = N[(ph*TILE_WIDTH + ty)*Width + Col];
+18      __syncthreads();
+19
+20      for (int k = 0; k &lt; TILE_WIDTH; ++k)
+21        Pvalue += Mds[ty][k] * Nds[k][tx];
+22      __syncthreads();
+23    }
+24    P[Row * Width + Col] = Pvalue;
+25  }</code></pre>
+    <ul class="small">
+      <li><b>3–4</b>: shared arrays, one copy per block, reused in every phase.</li>
+      <li><b>6–11</b>: automatic scalars, so registers; each thread computes P[Row][Col].</li>
+      <li><b>14</b>: one iteration per phase: Width / TILE_WIDTH phases. This is <b>strip-mining</b>: a long loop cut into phases.</li>
+      <li><b>16–17</b>: each thread loads <b>one</b> M element and <b>one</b> N element.</li>
+      <li><b>18</b>: wait until the whole tile is loaded (read-after-write).</li>
+      <li><b>20–21</b>: TILE_WIDTH multiply-adds, all from shared memory.</li>
+      <li><b>22</b>: wait until everyone has used the tile before it is overwritten (write-after-read).</li>
+      <li><b>Pvalue</b> stays in a register the whole time: <b>register tiling</b>.</li>
+      <li>Assumes Width is a multiple of TILE_WIDTH; fixed later.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Which element does each thread load? (Fig. 5.10)</h2>
+  <div class="cfg" data-anim="index">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">TILE_WIDTH</span><span class="presets" style="margin:0"><button data-tw="2" class="on">2</button><button data-tw="4">4</button></span><span class="muted">Width = 8</span></div>
+      <div class="cfg-row"><span class="cfg-lbl">block (bx, by)</span><input id="ix-bx" type="number" min="0" value="1" data-in="bx" style="width:3.5em"><input id="ix-by" type="number" min="0" value="2" data-in="by" style="width:3.5em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">thread (tx, ty)</span><input id="ix-tx" type="number" min="0" value="1" data-in="tx" style="width:3.5em"><input id="ix-ty" type="number" min="0" value="0" data-in="ty" style="width:3.5em"></div>
+      <div class="cap" data-cap></div>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why both barriers are needed</h2>
+  <div class="diagram" data-anim="hazards">
+    <div data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="both" class="on">Both barriers</button><button data-mode="no18">Without line 18</button><button data-mode="no22">Without line 22</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">two threads of one block, thread 1 is slower</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Strip-mining: one long loop becomes phases</h2>
+  <div class="diagram" data-anim="strip">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">Width = 8, TILE_WIDTH = 4 · lines 16–28 of Fig. 5.9</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>What tiling buys, and what it does not</h2>
+  <div class="cols">
+    <ul>
+      <li>Global loads drop by a factor of <b>TILE_WIDTH</b>. With 32 × 32 tiles: 0.25 → <b>8 FLOP/B</b>.</li>
+      <li>On an H100: 3.35 TB/s × 8 FLOP/B = <b>26.8 TFLOPS</b>, against 0.84 without tiling.</li>
+      <li>Still memory-bound (8 &lt; 20): 40 % of the peak. Chapter 15 pushes further; libraries such as <b>cuBLAS</b> and <b>CUTLASS</b> already do.</li>
+      <li><b>Locality</b>: each phase works on a small subset of the data, so a small fast memory can serve it.</li>
+    </ul>
+    <ul>
+      <li>Two kinds of dependence between threads: <b>read-after-write</b> (true: the reader needs the data) and <b>write-after-read</b> (false: only the reuse of the same location creates it).</li>
+      <li><b>Tiling is not only shared memory</b>: Pvalue in a register is register tiling.</li>
+      <li><b>CPUs tile too</b> (blocking), but rely on the cache implicitly. A GPU SM runs so many threads that they compete for cache, so GPUs keep reused data on chip <b>explicitly</b> in shared memory.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why GPUs keep reused data in shared memory, not in the cache</h2>
+  <div class="diagram" data-anim="cache">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="cpu" class="on">CPU core</button><button data-mode="gpu">GPU SM, cache only</button><button data-mode="shm">GPU SM, shared memory</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">§5.4: CPUs tile with caches implicitly, GPUs explicitly</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: locality on the CPU</h2>
+  <div class="cols wl">
+<pre><code>// naive: B is read down a column
+for (int i = 0; i &lt; n; ++i)
+  for (int j = 0; j &lt; n; ++j)
+    for (int k = 0; k &lt; n; ++k)
+      C[i*n + j] += A[i*n + k] * B[k*n + j];
+
+// rows: same arithmetic, B and C read along rows
+for (int i = 0; i &lt; n; ++i)
+  for (int k = 0; k &lt; n; ++k) {
+    float a = A[i*n + k];              // register
+    for (int j = 0; j &lt; n; ++j)
+      C[i*n + j] += a * B[k*n + j];
+  }
+
+// tiled: the same loops over T x T tiles, so a tile
+// of B stays in the cache while it is reused;
+// strips of tiles then run on several threads</code></pre>
+    <div>
+      <table>
+        <tr><th>13_memory_locality/example_63.cpp, n = 1536</th><th>Time</th><th>Speedup</th></tr>
+        <tr><td>naive (i, j, k)</td><td>4.85 s</td><td>1×</td></tr>
+        <tr><td>rows (i, k, j)</td><td>0.32 s</td><td>15×</td></tr>
+        <tr><td>tiled 64 × 64</td><td>0.39 s</td><td>12×</td></tr>
+        <tr><td>tiled, 10 threads</td><td>0.08 s</td><td>60×</td></tr>
+      </table>
+      <p class="small" style="margin-top:.6em">Measured on a 10-core laptop. Almost all the gain is <b>locality</b>: reading along rows. Explicit tiles did not beat the hardware cache here, which is the book's point: a CPU's cache does the tiling for a few threads; a GPU needs it done by hand in shared memory.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Boundary checks: when Width is not a multiple of the tile</h2>
+  <div class="diagram" data-anim="boundary">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-w="3" class="on">Width 3</button><button data-w="5">Width 5</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">TILE_WIDTH = 2 · walks every block and phase · after Figs. 5.11 and 5.12</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The kernel with boundary checks (Fig. 5.13)</h2>
+  <div class="cols wl">
+<pre><code>float Pvalue = 0;
+int phases = (Width + TILE_WIDTH - 1) / TILE_WIDTH;
+for (int ph = 0; ph &lt; phases; ++ph) {
+  int mCol = ph * TILE_WIDTH + tx;     // column of M
+  int nRow = ph * TILE_WIDTH + ty;     // row of N
+  // load M only if the element exists, else 0
+  if (Row &lt; Width &amp;&amp; mCol &lt; Width)
+    Mds[ty][tx] = M[Row * Width + mCol];
+  else
+    Mds[ty][tx] = 0.0f;
+  // load N only if the element exists, else 0
+  if (nRow &lt; Width &amp;&amp; Col &lt; Width)
+    Nds[ty][tx] = N[nRow * Width + Col];
+  else
+    Nds[ty][tx] = 0.0f;
+  __syncthreads();
+
+  for (int k = 0; k &lt; TILE_WIDTH; ++k)
+    Pvalue += Mds[ty][k] * Nds[k][tx];
+  __syncthreads();
+}
+if (Row &lt; Width &amp;&amp; Col &lt; Width)     // a real P element?
+  P[Row * Width + Col] = Pvalue;</code></pre>
+    <ul class="small">
+      <li>Three different tests: loading M, loading N, storing P. Rule: <b>every memory access needs a check of its own indices</b>.</li>
+      <li>A missing element is loaded as <b>0.0f</b>: it adds nothing to the dot product.</li>
+      <li>Threads that compute no P element must <b>still load</b> their tile elements and reach both barriers: other threads of the block need those values.</li>
+      <li>The number of phases becomes <code>ceil(Width / TILE_WIDTH)</code>.</li>
+      <li><b>Rectangular matrices</b>: an <i>j × k</i> M times a <i>k × l</i> N gives a <i>j × l</i> P. Replace Width by <i>j</i>, <i>k</i> or <i>l</i> depending on which dimension it measures (exercise).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: launching the tiled kernel from the host</h2>
+  <div class="cols wl">
+<pre><code>void matMul(const float* M_h, const float* N_h,
+            float* P_h, int Width) {
+  size_t bytes = (size_t)Width * Width * sizeof(float);
+  float *M_d, *N_d, *P_d;
+  cudaMalloc(&amp;M_d, bytes);
+  cudaMalloc(&amp;N_d, bytes);
+  cudaMalloc(&amp;P_d, bytes);
+  cudaMemcpy(M_d, M_h, bytes, cudaMemcpyHostToDevice);
+  cudaMemcpy(N_d, N_h, bytes, cudaMemcpyHostToDevice);
+
+  int g = (Width + TILE_WIDTH - 1) / TILE_WIDTH;
+  dim3 block(TILE_WIDTH, TILE_WIDTH);  // 1 thread per P
+  dim3 grid(g, g);                     // cover all of P
+  matrixMulKernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(M_d, N_d,
+                                     P_d, Width);
+
+  cudaError_t err = cudaGetLastError();  // launch errors
+  if (err != cudaSuccess)
+    printf("launch failed: %s\n",
+           cudaGetErrorString(err));
+
+  // this copy waits for the kernel to finish
+  cudaMemcpy(P_h, P_d, bytes, cudaMemcpyDeviceToHost);
+  cudaFree(M_d); cudaFree(N_d); cudaFree(P_d);
+}</code></pre>
+    <ul class="small">
+      <li>The block <b>must</b> be TILE_WIDTH × TILE_WIDTH: each thread loads exactly one element of each tile.</li>
+      <li>The grid is rounded up, so with the boundary-checked kernel any Width works.</li>
+      <li>TILE_WIDTH = 16 → 256 threads and 2 KB of shared memory per block; 32 → 1024 threads and 8 KB.</li>
+      <li>We checked this kernel by emulating its launch on the CPU (every block, phase and barrier) for Width 3 to 1000 and tiles 2 to 32: the results match a plain triple loop, and the global loads drop by exactly TILE_WIDTH when Width is a multiple of it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Memory usage limits occupancy too</h2>
+  <div class="cfg" data-anim="smem">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input id="sm-t" type="number" min="1" max="1024" value="256" data-in="t"></div>
+      <div class="cfg-row"><span class="cfg-lbl">shared KB per block</span><input id="sm-s" type="number" min="0" step="0.5" value="38" data-in="s"></div>
+      <div class="cfg-row"><span class="cfg-lbl">shared KB per SM</span><input id="sm-sm" type="number" min="1" value="228" data-in="sm"></div>
+      <div class="presets"><button data-p="256,2">tiled 16 × 16</button><button data-p="1024,8">tiled 32 × 32</button><button data-p="256,38">38 KB, 256 threads</button><button data-p="512,48">48 KB, 512 threads</button><button data-p="128,100">100 KB, 128 threads</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <p class="small muted">H100: up to 228 KB of shared memory, 2048 threads and 32 blocks per SM. Full occupancy allows at most 228 KB / 2048 = 114 B of shared memory per thread. The SM can also trade cache for more shared memory.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: shared memory sized at launch time</h2>
+  <div class="cols wl">
+<pre><code>// one dynamic array, split by hand into Mds and Nds
+__global__ void matrixMulKernel(float* M, float* N,
+                                float* P, int Width,
+                                int tw) {
+  extern __shared__ float Mds_Nds[];
+  float* Mds = Mds_Nds;            // first tw*tw floats
+  float* Nds = Mds_Nds + tw * tw;  // next tw*tw floats
+  ...
+  Mds[ty * tw + tx] = ...;         // 1D index
+}
+
+// host: pick the tile from what the device offers
+cudaDeviceProp p;
+cudaGetDeviceProperties(&amp;p, 0);
+size_t need32 = 2 * 32 * 32 * sizeof(float);  // 8 KB
+int tw = (p.sharedMemPerBlock &gt;= need32) ? 32 : 16;
+size_t size = 2 * tw * tw * sizeof(float);
+int g = (Width + tw - 1) / tw;
+dim3 block(tw, tw), grid(g, g);
+matrixMulKernel&lt;&lt;&lt;grid, block, size&gt;&gt;&gt;(
+    M_d, N_d, P_d, Width, tw);</code></pre>
+    <ul class="small">
+      <li>A fixed <code>__shared__ float Mds[TILE_WIDTH][TILE_WIDTH]</code> is set at compile time; changing it means recompiling.</li>
+      <li><code>extern __shared__</code> without a size: the size comes from the <b>third launch parameter</b>, in bytes.</li>
+      <li>There is only one such array per kernel, so Mds and Nds are sections of it, indexed in 1D.</li>
+      <li><code>sharedMemPerBlock</code> tells the host how much a block may use, so the program can adapt to each GPU.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>Speed depends on the <b>compute-to-global-memory-access ratio</b>. Below the device threshold (H100: 20 FLOP/B) a kernel is memory-bound; the roofline shows how far it is from the limit.</li>
+    <li>CUDA offers registers (per thread), shared memory (per block), constant memory (read-only, cached) and global memory. The on-chip ones are small but serve data without using DRAM bandwidth.</li>
+    <li><b>Tiling</b>: threads of a block load a tile into shared memory together, wait at a barrier, and reuse it. Global traffic drops by TILE_WIDTH.</li>
+    <li>Two barriers per phase: read-after-write before using the tile, write-after-read before overwriting it.</li>
+    <li>Boundary checks make the kernel work for any size: every access tests its own indices, missing elements count as 0.</li>
+    <li>Shared memory and registers are limited per SM: using more can lower occupancy. Locality matters on CPUs as well.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 13.1–13.5</h2>
+  <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.45em">
+    <li>Can shared memory reduce global memory traffic in a <b>matrix addition</b>? Look at which elements each thread reads and whether threads share any.</li>
+    <li>For an 8 × 8 matrix product, how many global loads of M and N are made in total without tiling, with 2 × 2 tiles and with 4 × 4 tiles? Check that the reduction equals the tile width.</li>
+    <li>What goes wrong in the kernel of Fig. 5.9 if line 18 (the first <code>__syncthreads()</code>) is removed? And if line 22 is removed?</li>
+    <li>Ignoring capacity, why would you put values loaded from global memory in shared memory rather than in registers?</li>
+    <li>With 16 × 16 tiles, by what factor does the global memory traffic for M and N drop?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Exercises 13.6–13.10</h2>
+  <ol class="small" start="6" style="margin:0;padding-left:1.4em;display:grid;gap:.45em">
+    <li>A kernel is launched with 800 blocks of 256 threads. How many copies of an automatic scalar variable are created? Of a <code>__shared__</code> variable? Of a <code>__constant__</code> one?</li>
+    <li>In an N × N matrix product, how many times is each input element read from global memory without tiling, and with T × T tiles?</li>
+    <li>A kernel does 24 floating-point operations and 5 accesses of 4 bytes to global memory per thread. Is it compute-bound or memory-bound on (a) a device with 400 GFLOPS and 200 GB/s, (b) one with 250 GFLOPS and 250 GB/s?</li>
+    <li>An SM has 164 KB of shared memory and 2048 thread slots. A kernel uses 512 threads and 48 KB of shared memory per block. What is its occupancy? What if it used 40 KB?</li>
+    <li>With Width = 5 and TILE_WIDTH = 2: how many phases does the boundary-checked kernel run, and how many threads of block (2, 2) store a P element?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 13.1–13.5</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>13.1</td><td><b>No.</b> Each thread reads A[i][j] and B[i][j] once and no other thread needs them: there is no reuse to share. Matrix addition is memory-bound whatever we do.</td></tr>
+    <tr><td>13.2</td><td>Each of 64 threads loads 8 M + 8 N = 16 → <b>1024</b> loads. 2 × 2 tiles: 8 / 2 = 4 phases × 2 = 8 per thread → <b>512</b> (÷2). 4 × 4 tiles: 2 phases × 2 = 4 → <b>256</b> (÷4).</td></tr>
+    <tr><td>13.3</td><td>Without line 18 a thread may use Mds/Nds elements that other threads have not loaded yet (stale values from the previous phase or garbage). Without line 22 a fast thread may overwrite the tile with the next phase while slower threads still read the current one. Both give wrong results that change from run to run.</td></tr>
+    <tr><td>13.4</td><td>Registers are private: a value in a register serves only its own thread. Shared memory lets one load serve <b>all</b> threads of the block, which is the whole point of tiling.</td></tr>
+    <tr><td>13.5</td><td>By a factor of <b>16</b>: each loaded element is used by 16 threads.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Solutions 13.6–13.10</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>13.6</td><td>Automatic scalar: one per thread, 800 × 256 = <b>204,800</b>. Shared: one per block, <b>800</b>. Constant: <b>1</b>.</td></tr>
+    <tr><td>13.7</td><td>Without tiling: <b>N</b> times (once per thread that needs it). With T × T tiles: <b>N / T</b> times.</td></tr>
+    <tr><td>13.8</td><td>24 FLOP / 20 B = 1.2 FLOP/B. (a) threshold 400 / 200 = 2: 1.2 &lt; 2, <b>memory-bound</b>. (b) threshold 250 / 250 = 1: 1.2 &gt; 1, <b>compute-bound</b>.</td></tr>
+    <tr><td>13.9</td><td>48 KB: ⌊164 / 48⌋ = 3 blocks = 1536 threads → <b>75 %</b>, limited by shared memory. 40 KB: 4 blocks = 2048 threads → <b>100 %</b>.</td></tr>
+    <tr><td>13.10</td><td>⌈5 / 2⌉ = <b>3</b> phases. Block (2, 2) covers rows and columns 4–5; only row 4 and column 4 exist, so <b>1</b> thread stores P[4][4]. All 4 threads still load and reach the barriers.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study: where this continues</h2>
+  <ul>
+    <li><b>Chapter 6</b>: memory coalescing (how a warp's accesses combine into DRAM transactions), thread coarsening, and a checklist of optimizations.</li>
+    <li><b>Chapter 7</b>: constant memory in practice, with convolution.</li>
+    <li><b>Try it</b>: run <code>13_memory_locality/example_63.cpp</code> with n = 2048, or with tiles of 32 and 256. When does tiling start to beat plain row order on your machine?</li>
+    <li><b>Try it</b>: put your own kernel's FLOP and bytes per thread into the roofline (slide <span data-ref="s-roof"></span>). How far is it from the roof?</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>13 · Memory architecture and data locality</span><span id="counter"></span></div>

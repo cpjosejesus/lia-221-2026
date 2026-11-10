@@ -1,0 +1,1537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU Architecture and Scheduling</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+--acc:#2F6FD0;--acc-soft:#DCE7F8;--acc2:#C98A1B;--acc2-soft:#F6EAD2;--line-strong:#BDBDBD;--bad-soft:#F6DADA;--ok-soft:#D6EBDC}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:5vh 7vw 7vh;display:none;flex-direction:column;justify-content:center;gap:1rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.45em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:62ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.4em}
+.small{font-size:.78em}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2.5vw;align-items:start}
+.cols.wl{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
+.cols.wr{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr)}
+@media (max-width:820px){.cols,.cols.wl,.cols.wr{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.54em;line-height:1.45;background:var(--code);padding:.8em 1em;border-radius:3px;margin:0;overflow:auto;max-height:70vh;white-space:pre-wrap;overflow-wrap:break-word}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.66em;width:100%}th{text-align:left;font-size:.78em;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.35em .8em .35em 0}td{border-bottom:1px solid var(--line);padding:.4em .8em .4em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 7vw;font-size:.55em;color:var(--muted);font-family:var(--mono);background:var(--bg)}
+.note{border-left:3px solid var(--ink);padding-left:1em;max-width:62ch}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+
+.diagram{width:100%;max-width:1150px}
+.svgwrap svg{width:100%;height:auto;max-height:54vh;display:block}
+.dctl{display:flex;gap:.5em;align-items:center;flex-wrap:wrap;font-size:.56em;margin-top:.4em}
+.dctl button{font:inherit;border:1px solid var(--line-strong);background:#fff;color:var(--ink);border-radius:3px;padding:.2em .75em;cursor:pointer}
+.dctl button:hover{border-color:var(--ink)}
+.dctl button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dctl button:focus-visible,.cfg input:focus-visible,.cfg button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.cap{font-family:var(--mono);font-size:.54em;line-height:1.55;min-height:3.2em;margin-top:.3em;white-space:pre-wrap}
+.cap b{color:var(--acc)}
+.cap i{font-style:normal;color:var(--acc2);font-weight:600}
+
+svg text{font-family:var(--mono)}
+svg text:not([fill]){fill:var(--ink)}
+svg .lbl{font-family:var(--body);fill:var(--muted)}
+svg .frame{fill:none;stroke:#9a9a9a;stroke-width:1.5;transition:stroke .3s,stroke-width .3s}
+svg .frame.on{stroke:var(--acc);stroke-width:4}
+svg .dash{fill:none;stroke:#c9c9c9;stroke-width:1.2;stroke-dasharray:5 4}
+svg .sp{fill:#C9DBF4;transition:fill .3s}
+svg .sp.on{fill:var(--acc)}
+svg .ctl{fill:#E6E6E6}
+svg .mem{fill:#EDEDED;stroke:#bdbdbd;stroke-width:1;transition:fill .3s,stroke .3s}
+svg .mem.on{fill:var(--acc2-soft);stroke:var(--acc2);stroke-width:2.5}
+svg .wire{stroke:#bdbdbd;stroke-width:1.5;fill:none;transition:stroke .3s}
+svg .wire.on{stroke:var(--acc2);stroke-width:3}
+svg .wire.blue.on{stroke:var(--acc)}
+svg .chip{fill:#EDEDED;stroke:#9a9a9a;transition:fill .3s,stroke .3s,opacity .3s}
+svg .chip.run{fill:var(--acc-soft);stroke:var(--acc);stroke-width:2}
+svg .chip.done{fill:var(--ok-soft);stroke:var(--ok)}
+svg .chip.gone{opacity:.18}
+svg .bar{fill:var(--acc)}
+svg .bar2{fill:var(--acc2)}
+svg .barok{fill:var(--ok)}
+svg .hatch{fill:url(#hatch)}
+svg .cell{fill:#fff;stroke:#d0d0d0}
+svg .on-a{fill:#86C495}
+svg .on-b{fill:#E7B467}
+svg .on-c{fill:var(--acc)}
+svg .on-y{fill:#F2C230}
+svg .faint{fill:#F4F4F4;stroke:#e2e2e2}
+svg .busy{fill:#5f5f5f}
+svg .idle{fill:var(--bad-soft)}
+svg .ready{fill:#EEF3FB}
+svg .tok{transition:transform .7s ease}
+svg .red{stroke:var(--bad)!important}
+svg .hidden{display:none}
+@media (prefers-reduced-motion:reduce){svg .tok,svg .frame,svg .sp,svg .mem,svg .chip{transition:none}}
+
+/* calculators */
+.cfg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:2.5vw;align-items:start;font-size:.66em}
+@media (max-width:820px){.cfg{grid-template-columns:1fr}}
+.cfg-row{display:flex;gap:.7em;align-items:center;flex-wrap:wrap;margin-bottom:.6em}
+.cfg-lbl{font-family:var(--mono);min-width:9.5em;color:var(--muted)}
+.cfg input{font:inherit;font-family:var(--mono);width:6em;padding:.15em .4em;border:1px solid var(--line-strong);border-radius:3px}
+.cfg .presets{display:flex;flex-wrap:wrap;gap:.4em;margin:.3em 0 .8em}
+.cfg .presets button{font:inherit;font-size:.82em;border:1px solid var(--line-strong);background:#fff;border-radius:3px;padding:.15em .55em;cursor:pointer}
+.cfg .presets button:hover{border-color:var(--ink)}
+.cfg-out{font-family:var(--mono);font-size:.92em;line-height:1.6}
+.cfg-out b{color:var(--acc)}
+.cfg pre{font-size:.82em}
+.cfg-big{font-size:2em;font-weight:600;font-family:var(--mono);line-height:1.1}
+.cfg-big small{font-size:.38em;font-weight:400;color:var(--muted);font-family:var(--body)}
+.cfg-msg{margin-top:.5em}
+.cfg-msg.ok{color:var(--ok)}.cfg-msg.bad{color:var(--bad)}
+.gauge{position:relative;height:.9em;background:var(--code);border-radius:3px;margin:.5em 0;overflow:hidden}
+.gauge i{position:absolute;left:0;top:0;bottom:0;background:var(--acc);transition:width .4s ease}
+canvas[data-canvas]{display:block;max-width:100%}
+.legend{list-style:none;padding:0;margin:.3em 0 0;font-size:.85em;display:flex;flex-wrap:wrap;gap:.3em 1.2em}
+.legend li{display:flex;gap:.45em;align-items:center}
+.legend i{display:inline-block;width:.9em;height:.9em;border:1px solid #aaa;flex:none}
+
+/* 2D -> linear */
+.flat{position:relative;width:100%}
+.flat .fc{position:absolute;display:flex;align-items:center;justify-content:center;font-family:var(--mono);box-sizing:border-box;border:1px solid #fff;transition:left .6s ease,top .6s ease}
+.flat .pad{position:absolute;box-sizing:border-box;border:1px dashed #c9c9c9;background:#fff}
+.flat .wl{position:absolute;font-family:var(--mono);color:var(--acc);font-size:.5em;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.flat .fc{transition:none}}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.5vw}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#F6EAD2"/><line x1="0" y1="0" x2="0" y2="8" stroke="#C98A1B" stroke-width="3"/>
+    </pattern>
+  </defs>
+</svg>
+<div class="deck">
+
+<!-- 1 -->
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 12</div>
+  <h1>Inside the GPU: compute architecture and scheduling</h1>
+  <p class="muted">Session 11 showed how to launch a grid of blocks of threads. This session opens the hardware: where the blocks run, how threads are grouped into warps, why branches can cost time, how the GPU hides memory latency, and what limits how many threads fit at once.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 4 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). The diagrams are redrawn and animated: use their Play, Step and Reset buttons. Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<!-- 2 -->
+<section class="slide">
+  <h2>From the programming model to the machine</h2>
+  <div class="cols">
+    <ul>
+      <li>CPUs are built to make <b>one</b> thread finish fast (low latency). GPUs are built to finish <b>many</b> threads per second (high throughput).</li>
+      <li>Sessions 10–11: we wrote kernels and chose <code>&lt;&lt;&lt;grid, block&gt;&gt;&gt;</code>. We never asked where those threads physically run.</li>
+      <li>Knowing the hardware explains performance that the code alone cannot: why 256 threads per block can beat 32, why an <code>if</code> can halve speed, why “more threads” hides memory delays.</li>
+    </ul>
+    <table>
+      <tr><th>Topic</th><th>Question it answers</th></tr>
+      <tr><td>SMs and block scheduling</td><td>Where does a block run?</td></tr>
+      <tr><td>Barriers, scalability</td><td>Who can wait for whom?</td></tr>
+      <tr><td>Warps and SIMD</td><td>How do threads really execute?</td></tr>
+      <tr><td>Control divergence</td><td>What does an <code>if</code> cost?</td></tr>
+      <tr><td>Latency tolerance</td><td>Why so many threads?</td></tr>
+      <tr><td>Occupancy</td><td>How many threads fit?</td></tr>
+      <tr><td>Device queries</td><td>What does <i>this</i> GPU have?</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="slide">
+  <h2>Architecture of a modern GPU</h2>
+  <div class="diagram" data-anim="gpu">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">GPU → GPC → SM → streaming processors → memory</span></div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="slide">
+  <h2>Vocabulary, with one real GPU as a yardstick</h2>
+  <table>
+    <tr><th>Term</th><th>What it is</th><th>NVIDIA H100</th></tr>
+    <tr><td>SM (streaming multiprocessor)</td><td>The unit that runs blocks: control logic, many processors, on-chip memory</td><td>132 SMs</td></tr>
+    <tr><td>Streaming processor (“CUDA core”)</td><td>One arithmetic lane inside an SM</td><td>128 per SM, 16,896 in total</td></tr>
+    <tr><td>GPC (GPU processing cluster)</td><td>A group of SMs (Hopper and later)</td><td>8 GPCs</td></tr>
+    <tr><td>Processing block</td><td>A slice of an SM with its own instruction fetch/dispatch</td><td>4 per SM, 32 lanes each</td></tr>
+    <tr><td>Warp</td><td>32 threads that execute one instruction together</td><td>up to 64 warps per SM</td></tr>
+    <tr><td>Global memory</td><td>Off-chip DRAM (GDDR or HBM), large, high bandwidth, high latency</td><td>tens of GB of HBM</td></tr>
+    <tr><td>Limits per SM</td><td>Threads, blocks and registers are shared by the resident blocks</td><td>2048 threads, 32 blocks, 65,536 registers</td></tr>
+  </table>
+  <p class="small muted">“Streaming processor” is the book's name for what marketing calls a CUDA core; the book avoids “core” so it is not confused with a CPU core.</p>
+</section>
+
+<!-- 5 -->
+<section class="slide">
+  <h2>Thread block scheduling: blocks are assigned to SMs whole</h2>
+  <div class="diagram" data-anim="blocksched">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">10 blocks of unequal length · 2 SMs · up to 3 resident blocks per SM</span></div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="slide">
+  <h2>What block-by-block assignment guarantees</h2>
+  <div class="cols">
+    <ul>
+      <li>All threads of a block go to the <b>same SM</b>, and they are there <b>at the same time</b>. A block only starts when the SM has room for all of it.</li>
+      <li>That is what lets threads of one block cooperate: they can meet at a <b>barrier</b> (<code>__syncthreads()</code>) and exchange data through fast <b>shared memory</b> inside the SM (chapter 5).</li>
+      <li>Threads in <b>different</b> blocks get no such guarantee: their blocks may run at different times, on different SMs, in any order.</li>
+      <li>The run-time keeps a list of blocks not yet started and hands one out whenever a running block finishes and frees its slot.</li>
+    </ul>
+    <div class="note small">
+      <p><b>Hopper adds one level.</b> Blocks can be grouped into a <i>thread block cluster</i>. The blocks of a cluster are scheduled together on the same GPC, can synchronize with each other through the Cooperative Groups API, and can read each other's shared memory (<i>distributed shared memory</i>).</p>
+    </div>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="slide" id="s-barrier">
+  <h2>Barrier synchronization: nobody continues until everyone arrives</h2>
+  <div class="diagram" data-anim="barrier">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">6 threads of one block · solid = working · hatched = waiting at <code>__syncthreads()</code> · green = after the barrier</span></div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="slide">
+  <h2>A barrier every thread must reach: the wrong and the right way</h2>
+  <div class="cols wr">
+    <div>
+<pre data-mode-pane="wrong"><code>__global__ void step(float* x) {
+  int t = threadIdx.x;
+  if (t % 2 == 0) {
+    x[t] *= 2.0f;
+    __syncthreads();      // barrier A
+  } else {
+    x[t] += 1.0f;
+    __syncthreads();      // barrier B
+  }
+  x[t] -= x[t ^ 1];
+}</code></pre>
+<pre data-mode-pane="right" hidden><code>__global__ void step(float* x) {
+  int t = threadIdx.x;
+  if (t % 2 == 0) {
+    x[t] *= 2.0f;
+  } else {
+    x[t] += 1.0f;
+  }
+  __syncthreads();        // one barrier, all threads
+  x[t] -= x[t ^ 1];
+}</code></pre>
+      <p class="small muted" style="margin-top:.6em">Each <code>__syncthreads()</code> call site is a <b>different</b> barrier. It must be reached by all threads of the block, or by none.</p>
+    </div>
+    <div class="diagram" data-anim="badbarrier">
+      <div class="svgwrap" data-svg></div>
+      <div class="cap" data-cap></div>
+      <div class="dctl"><button data-mode="wrong" class="on">Wrong</button><button data-mode="right">Right</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="slide">
+  <h2>Barrier scope and why it is limited to a block</h2>
+  <div class="cols">
+    <ul>
+      <li><b>Block</b>: <code>__syncthreads()</code>. Cheap, because the whole block is resident on one SM at once.</li>
+      <li><b>Cluster</b> (Hopper+): cluster-wide barrier through Cooperative Groups; also waits for distributed-shared-memory operations to complete.</li>
+      <li><b>Grid</b>: possible through Cooperative Groups, but heavy, and only valid when every block of the grid can be resident at the same time.</li>
+      <li>The set of threads a barrier waits for is called its <b>scope</b>.</li>
+    </ul>
+    <ul>
+      <li>A barrier only works if every thread in its scope can <b>eventually arrive</b>. If one thread could not run until another thread passed the barrier, they would wait forever.</li>
+      <li>CUDA prevents this inside a block by giving the block <b>all</b> its resources before it starts: every thread of the block is running, so every thread can reach the barrier.</li>
+      <li>Blocks, on the other hand, are <b>not</b> allowed to wait for each other. That freedom is what the next slide is about.</li>
+    </ul>
+  </div>
+  <p class="note small"><b>Why the two underscores?</b> <code>__syncthreads()</code> is an <i>intrinsic</i>: it looks like a library call, but the compiler replaces it with a special hardware instruction, with no function call. CUDA marks intrinsics with a leading <code>__</code>; gcc and Clang have intrinsics too (for example for CPU vector instructions).</p>
+</section>
+
+<!-- 9c -->
+<section class="slide">
+  <h2>Code: a barrier in a real kernel</h2>
+  <div class="cols wl">
+<pre><code>#define BLOCK 256
+
+// Reverses every chunk of BLOCK elements of d in place.
+// n must be a multiple of BLOCK. Launch with
+//   reverseChunks&lt;&lt;&lt;n / BLOCK, BLOCK&gt;&gt;&gt;(d_d);
+__global__ void reverseChunks(int* d) {
+  __shared__ int s[BLOCK];          // one copy per block
+  int t = threadIdx.x;
+  int base = blockIdx.x * BLOCK;
+
+  s[t] = d[base + t];               // 1. write my slot
+  __syncthreads();                  // 2. wait for all slots
+  d[base + t] = s[BLOCK - 1 - t];   // 3. read another's slot
+}</code></pre>
+    <ul class="small">
+      <li>Thread <i>t</i> reads the slot that thread <i>255 − t</i> wrote. Without the barrier it could read before that thread has written: a race, and a wrong result that changes from run to run.</li>
+      <li>The barrier is <b>outside any branch</b>, so every thread of the block reaches it.</li>
+      <li>Blocks never need each other: each one reverses its own chunk, so the grid scales to any GPU.</li>
+      <li><code>__shared__</code> memory, the per-block scratchpad, is the topic of session 13.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="slide">
+  <h2>Transparent scalability: the same grid on a small and a large GPU</h2>
+  <div class="diagram" data-anim="scale">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">8 blocks · device A runs 2 at a time · device B runs 4 at a time</span></div>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="slide">
+  <h2>Waves and the tail effect</h2>
+  <div class="cfg" data-anim="waves">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">blocks in the grid</span><input type="number" min="1" value="660" data-in="blocks"></div>
+      <div class="cfg-row"><span class="cfg-lbl">blocks at once</span><input type="number" min="1" value="264" data-in="cap"></div>
+      <div class="presets"><button data-p="660,264">660 / 264</button><button data-p="528,264">528 / 264</button><button data-p="8,2">8 / 2</button><button data-p="8,4">8 / 4</button><button data-p="2000,264">2000 / 264</button></div>
+      <div class="cfg-out" data-out></div>
+      <p class="small muted" style="margin-top:.6em">A <b>wave</b> is a group of blocks running at the same time. Many waves help when blocks have uneven work (the hardware rebalances); with few waves, a half-empty last wave leaves SMs idle. To avoid that <b>tail effect</b>, choose a number of blocks that is a multiple of the blocks that fit at once.</p>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="slide">
+  <h2>Warps: the unit the SM actually schedules</h2>
+  <div class="cfg" data-anim="warps">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input type="number" min="1" max="1024" value="256" data-in="bs"></div>
+      <div class="cfg-row"><span class="cfg-lbl">blocks in the SM</span><input type="number" min="1" max="32" value="3" data-in="nb"></div>
+      <div class="presets"><button data-p="256,3">256 × 3</button><button data-p="48,3">48 × 3</button><button data-p="100,2">100 × 2</button><button data-p="1024,2">1024 × 2</button><button data-p="32,8">32 × 8</button></div>
+      <div class="cfg-out" data-out></div>
+      <div class="dctl" style="font-size:.85em"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<!-- 13 -->
+<section class="slide">
+  <h2>Multidimensional blocks become one line before they become warps</h2>
+  <div class="diagram" data-anim="linear">
+    <div class="flat" data-flat></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-size="4" class="on">4 × 4 block</button><button data-size="8">8 × 8 block</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">labels are (threadIdx.y, threadIdx.x) · same order as a row-major 2D array</span></div>
+  </div>
+</section>
+
+<!-- 13c -->
+<section class="slide">
+  <h2>Code: which warp and which lane am I?</h2>
+  <div class="cols wl">
+<pre><code>__global__ void whoAmI(int* warpOf, int* laneOf) {
+  // linear index inside the block (row-major)
+  int t = threadIdx.y * blockDim.x + threadIdx.x;
+  int warp = t / warpSize;   // warpSize is 32 so far
+  int lane = t % warpSize;   // position inside the warp
+
+  // one output slot per thread of the grid
+  int g = blockIdx.x * (blockDim.x * blockDim.y) + t;
+  warpOf[g] = warp;
+  laneOf[g] = lane;
+}
+
+// whoAmI&lt;&lt;&lt;blocks, dim3(16, 16)&gt;&gt;&gt;(warp_d, lane_d);</code></pre>
+    <table>
+      <tr><th>16 × 16 block: thread (x, y)</th><th>t</th><th>warp</th><th>lane</th></tr>
+      <tr><td>(0, 0)</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>(15, 1)</td><td>31</td><td>0</td><td>31</td></tr>
+      <tr><td>(0, 2)</td><td>32</td><td>1</td><td>0</td></tr>
+      <tr><td>(5, 3)</td><td>53</td><td>1</td><td>21</td></tr>
+      <tr><td>(15, 15)</td><td>255</td><td>7</td><td>31</td></tr>
+    </table>
+  </div>
+  <p class="small muted">Every two rows of a 16-wide block form one warp. Use <code>warpSize</code> rather than a literal 32.</p>
+</section>
+
+<!-- 14 -->
+<section class="slide">
+  <h2>Inside an SM: processing blocks execute warps in SIMD</h2>
+  <div class="diagram" data-anim="simd">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy SM: 2 processing blocks × 8 lanes, warps of 8 · an H100 SM has 4 processing blocks × 32 lanes and 32-thread warps</span></div>
+  </div>
+</section>
+
+<!-- 15 -->
+<section class="slide">
+  <h2>Why warps? From the von Neumann model to SIMD</h2>
+  <div class="diagram" data-anim="vonneumann">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="cpu" class="on">One processor</button><button data-mode="gpu">GPU processing block</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<!-- 15b -->
+<section class="slide">
+  <h2>SIMD, SIMT and Flynn's taxonomy</h2>
+  <div class="cols">
+    <table>
+      <tr><th>Flynn class</th><th>Meaning</th><th>Example</th></tr>
+      <tr><td>SISD</td><td>one instruction stream, one data stream</td><td>a simple scalar core</td></tr>
+      <tr><td>SIMD</td><td>one instruction applied to many data</td><td>a GPU processing block; CPU vector units</td></tr>
+      <tr><td>MISD</td><td>many instructions on one data stream</td><td>rare (some fault-tolerant systems)</td></tr>
+      <tr><td>MIMD</td><td>independent instruction streams</td><td>a multicore CPU; the many SMs of a GPU</td></tr>
+    </table>
+    <ul class="small">
+      <li><b>Why SIMD hardware:</b> fetch, decode and the instruction cache are paid once and shared by many lanes, so more chip area and power go to arithmetic.</li>
+      <li><b>SIMT:</b> you write code for one scalar thread; the hardware groups threads into warps and runs each warp on SIMD lanes. On a CPU you must use vector instructions or intrinsics yourself.</li>
+      <li><b>Warp size</b> is an implementation choice: 32 on every NVIDIA GPU so far. Read it from <code>warpSize</code> instead of hard-coding it.</li>
+      <li><b>Warp-level primitives</b> (shuffles, votes; chapters 10–12) let the threads of a warp exchange data without shared memory.</li>
+      <li><b>The price:</b> the threads of a warp should follow the same instructions. When they do not, we get <i>control divergence</i>.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 16 -->
+<section class="slide">
+  <h2>Control divergence: an <code>if</code> inside a warp</h2>
+  <div class="diagram" data-anim="diverge">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-cond="0" class="on">threadIdx.x &lt; 24</button><button data-cond="1">threadIdx.x % 2 == 0</button><button data-cond="2">threadIdx.x &gt; 2</button><button data-cond="3">blockIdx.x == 0</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<!-- 17 -->
+<section class="slide">
+  <h2>Divergence in loops, and why you cannot count on reconvergence</h2>
+  <div class="cols wr">
+    <ul class="small">
+      <li>A loop whose trip count depends on the thread (<code>n = a[threadIdx.x]</code>) keeps the warp busy until its <b>longest</b> thread finishes; finished lanes sit idle.</li>
+      <li>Rule of thumb: a condition that depends on <code>threadIdx</code> <i>can</i> diverge; one that is the same for the whole warp (<code>blockIdx</code>, a kernel argument) cannot.</li>
+      <li>Up to Pascal the two paths ran one after the other. From Volta on, <b>independent thread scheduling</b> may interleave them, so threads of a warp are not guaranteed to be back together after a branch.</li>
+      <li>If all threads of a warp must finish a phase before any continues, say so: <code>__syncwarp()</code>.</li>
+    </ul>
+    <div class="diagram" data-anim="loopdiv">
+      <div class="svgwrap" data-svg></div>
+      <div class="cap" data-cap></div>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- 17c -->
+<section class="slide">
+  <h2>Code: divergent and warp-uniform branches</h2>
+  <div class="cols wl">
+<pre><code>__global__ void branches(float* x, int n) {
+  int t = threadIdx.x;
+  int i = blockIdx.x * blockDim.x + t;
+  // C: diverges only in the warp that holds i == n
+  if (i &gt;= n) return;
+
+  // A: odd and even lanes split in EVERY warp: 2 passes
+  if (t % 2 == 0) x[i] = x[i] * 2.0f;
+  else            x[i] = x[i] + 1.0f;
+
+  // B: same for all 32 lanes of a warp: 1 pass
+  if ((t / warpSize) % 2 == 0) x[i] = x[i] * 2.0f;
+  else                         x[i] = x[i] + 1.0f;
+
+  // D: A's work as data, not control flow
+  float twice = x[i] * 2.0f, plus = x[i] + 1.0f;
+  x[i] = (t % 2 == 0) ? twice : plus;
+}</code></pre>
+    <ul class="small">
+      <li><b>A</b> and <b>B</b> do the same amount of work per thread; A costs two passes per warp, B one.</li>
+      <li>If the mapping of work to threads is yours to choose, give each <b>warp</b> a single kind of work (B).</li>
+      <li><b>C</b>: the early return for the boundary check diverges in at most one warp.</li>
+      <li><b>D</b>: for very short branches, computing both results and selecting one avoids the branch. The compiler often does this by itself (predication).</li>
+      <li>Never place <code>__syncthreads()</code> after an early <code>return</code> that only some threads take.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 18 -->
+<section class="slide">
+  <h2>The most common divergence: the boundary check</h2>
+  <div class="cfg" data-anim="boundary1d">
+    <div>
+<pre><code>int i = blockIdx.x * blockDim.x + threadIdx.x;
+if (i &lt; n) C[i] = A[i] + B[i];</code></pre>
+      <div class="cfg-row" style="margin-top:.7em"><span class="cfg-lbl">vector length n</span><input type="number" min="1" value="1003" data-in="n"></div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input type="number" min="32" step="32" value="64" data-in="b"></div>
+      <div class="presets"><button data-p="1003,64">1003 / 64</button><button data-p="100,32">100 / 32</button><button data-p="1000,256">1000 / 256</button><button data-p="10000,256">10000 / 256</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <ul class="legend"><li><i style="background:#C9DBF4"></i>all 32 threads work</li><li><i style="background:#E7B467"></i>divergent warp</li><li><i style="background:#F4F4F4"></i>no thread works</li></ul>
+    </div>
+  </div>
+</section>
+
+<!-- 19 -->
+<section class="slide" id="s-b2d">
+  <h2>Boundary checks in 2D: which warps diverge?</h2>
+  <div class="cfg" data-anim="boundary2d">
+    <div>
+<pre><code>int col = blockIdx.x * 16 + threadIdx.x;
+int row = blockIdx.y * 16 + threadIdx.y;
+if (col &lt; width &amp;&amp; row &lt; height) { ... }</code></pre>
+      <div class="cfg-row" style="margin-top:.7em"><span class="cfg-lbl">width × height</span><input type="number" min="1" value="76" data-in="w"><input type="number" min="1" value="62" data-in="h"></div>
+      <div class="presets"><button data-p="76,62">76 × 62</button><button data-p="76,63">76 × 63</button><button data-p="200,150">200 × 150</button><button data-p="100,70">100 × 70</button><button data-p="1000,1000">1000 × 1000</button></div>
+      <div class="cfg-out" data-out></div>
+      <p class="small muted" style="margin-top:.5em">16 × 16 blocks: each warp is two rows of 16 threads. A warp diverges only if some of its threads are inside the picture and some outside. Region 1 = blocks fully inside, 2 = right column, 3 = bottom row, 4 = corner.</p>
+    </div>
+    <div>
+      <canvas data-canvas width="640" height="420"></canvas>
+      <ul class="legend"><li><i style="background:#C9DBF4"></i>warp fully inside</li><li><i style="background:#E7B467"></i>divergent warp</li><li><i style="background:#EDEDED"></i>warp fully outside</li><li><i style="background:#fff;border-color:#B03A3A"></i>picture edge</li></ul>
+    </div>
+  </div>
+</section>
+
+<!-- 20 -->
+<section class="slide">
+  <h2>Warp scheduling and latency tolerance</h2>
+  <div class="diagram" data-anim="latency">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-w="1">1 warp</button><button data-w="2">2 warps</button><button data-w="4" class="on">4 warps</button><button data-w="6">6 warps</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">each warp: 8 instructions; L = global load, 5 cycles of waiting</span></div>
+  </div>
+  <p class="small">An H100 SM has 128 streaming processors but holds up to 2048 threads (64 warps): <b>16×</b> more threads than it can run in one cycle. Choosing a ready warp every cycle is called <b>fine-grained multithreading</b>. This is why GPUs spend less chip area on caches and branch prediction than CPUs, and more on arithmetic units and memory channels.</p>
+</section>
+
+<!-- 21 -->
+<section class="slide">
+  <h2>Zero-overhead scheduling: switching warps costs nothing</h2>
+  <div class="diagram" data-anim="ctxswitch">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">left: a CPU context switch · right: a GPU warp switch</span></div>
+  </div>
+</section>
+
+<!-- 21b -->
+<section class="slide">
+  <h2>How an SM's resources are partitioned</h2>
+  <div class="cols">
+    <ul class="small">
+      <li>Besides its processors, an SM has <b>thread slots</b>, <b>block slots</b>, <b>registers</b> and <b>shared memory</b> (chapter 5). Every resident block takes its share.</li>
+      <li>The split is <b>dynamic</b>: many small blocks or few large ones. A fixed split would waste slots on small blocks and reject large ones.</li>
+      <li><b>Occupancy</b> = warps assigned to the SM ÷ the maximum it supports. High occupancy means many warps to switch between, so better latency hiding.</li>
+      <li>Any resource can be the limit. On an H100, full occupancy needs ≤ <b>32 registers per thread</b>: 65,536 registers ÷ 2048 threads.</li>
+      <li>Shared memory is limited the same way; chapter 5 does that analysis.</li>
+    </ul>
+    <table>
+      <tr><th>Threads per block</th><th>Blocks per SM</th><th>Threads per SM</th><th>Limit reached</th></tr>
+      <tr><td>1024</td><td>2</td><td>2048</td><td>threads</td></tr>
+      <tr><td>512</td><td>4</td><td>2048</td><td>threads</td></tr>
+      <tr><td>256</td><td>8</td><td>2048</td><td>threads</td></tr>
+      <tr><td>128</td><td>16</td><td>2048</td><td>threads</td></tr>
+      <tr><td>64</td><td>32</td><td>2048</td><td>threads and blocks</td></tr>
+      <tr><td>32</td><td>32</td><td class="bad">1024</td><td>blocks (32 slots)</td></tr>
+    </table>
+  </div>
+  <p class="small muted">H100 limits per SM: 2048 threads (64 warps), 32 blocks, 65,536 registers; at most 1024 threads per block.</p>
+</section>
+
+<!-- 22 -->
+<section class="slide" id="s-occ">
+  <h2>Resource partitioning and occupancy</h2>
+  <div class="cfg" data-anim="occupancy">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input type="number" min="1" max="1024" value="512" data-in="bs"></div>
+      <div class="cfg-row"><span class="cfg-lbl">registers per thread</span><input type="number" min="1" max="255" value="31" data-in="rg"></div>
+      <div class="cfg-row"><span class="cfg-lbl">SM: thr · blk · reg</span><input type="number" value="2048" data-in="mt" title="threads per SM" style="width:4.4em"><input type="number" value="32" data-in="mb" title="blocks per SM" style="width:3.2em"><input type="number" value="65536" data-in="mr" title="registers per SM" style="width:5em"></div>
+      <div class="presets"><button data-p="1024,16">1024 thr</button><button data-p="32,16">32 thr</button><button data-p="768,16">768 thr</button><button data-p="512,64">64 regs</button><button data-p="512,31">512 · 31 regs</button><button data-p="512,33">512 · 33 regs</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <p class="small muted">The 64 warp slots of the SM (2048 threads). Each colour band is one resident block; grey slots are unused.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 23 -->
+<section class="slide">
+  <h2>Occupancy in numbers: four ways to lose it</h2>
+  <table>
+    <tr><th>Kernel</th><th>Resident blocks</th><th>Threads</th><th>Occupancy</th><th>Limited by</th></tr>
+    <tr><td>1024 threads/block</td><td>2</td><td>2048</td><td class="ok">100 %</td><td>threads (fits exactly)</td></tr>
+    <tr><td>32 threads/block</td><td>32</td><td>1024</td><td class="bad">50 %</td><td>block slots: 32 blocks × 32 threads</td></tr>
+    <tr><td>768 threads/block</td><td>2</td><td>1536</td><td class="bad">75 %</td><td>threads: 2048 is not a multiple of 768</td></tr>
+    <tr><td>64 registers/thread</td><td>any</td><td>1024</td><td class="bad">50 %</td><td>registers: 65,536 / 64 = 1024 threads</td></tr>
+    <tr><td>512 threads, 31 registers</td><td>4</td><td>2048</td><td class="ok">100 %</td><td>4 × 512 × 31 = 63,488 ≤ 65,536</td></tr>
+    <tr><td>512 threads, 33 registers</td><td>3</td><td>1536</td><td class="bad">75 %</td><td>4 blocks would need 67,584 registers</td></tr>
+  </table>
+  <p class="small">Last two rows: two extra local variables cost a quarter of the SM. That sudden drop is a <b>performance cliff</b>. The compiler may <i>spill</i> registers to memory to stay under the limit, which raises occupancy but slows each thread. Limits here are those of an H100: 2048 threads, 32 blocks and 65,536 registers per SM.</p>
+</section>
+
+<!-- 24 -->
+<section class="slide" id="s-query">
+  <h2>Asking the GPU what it has</h2>
+  <div class="cols wl">
+<pre><code>int count = 0;
+cudaGetDeviceCount(&amp;count);    // integrated GPUs count too
+
+for (int d = 0; d &lt; count; ++d) {
+  cudaDeviceProp p;
+  cudaGetDeviceProperties(&amp;p, d);
+  printf("%d: %s, compute capability %d.%d\n",
+         d, p.name, p.major, p.minor);
+  printf("   %d SMs, %d threads/block, warp %d\n",
+         p.multiProcessorCount, p.maxThreadsPerBlock,
+         p.warpSize);
+  printf("   %d threads/SM, %d registers/block\n",
+         p.maxThreadsPerMultiProcessor, p.regsPerBlock);
+}</code></pre>
+    <table>
+      <tr><th>Field</th><th>Meaning</th></tr>
+      <tr><td><code>multiProcessorCount</code></td><td>number of SMs</td></tr>
+      <tr><td><code>maxThreadsPerBlock</code></td><td>block size limit (1024 today)</td></tr>
+      <tr><td><code>maxThreadsDim[0..2]</code></td><td>limit per block dimension</td></tr>
+      <tr><td><code>maxGridSize[0..2]</code></td><td>limit per grid dimension</td></tr>
+      <tr><td><code>regsPerBlock</code></td><td>registers a block may use (usually = per SM)</td></tr>
+      <tr><td><code>warpSize</code></td><td>32 on every GPU so far</td></tr>
+      <tr><td><code>clockRate</code></td><td>with the SM count: peak throughput</td></tr>
+      <tr><td><code>major</code>, <code>minor</code></td><td>compute capability (A100: 8.0, H100: 9.0)</td></tr>
+    </table>
+  </div>
+  <p class="small muted">For occupancy, <code>cudaOccupancyMaxActiveBlocksPerMultiprocessor()</code> answers the question of slide <span data-ref="s-occ"></span> for a real kernel; the Nsight Compute occupancy calculator does the same interactively. Programs that use clusters can ask <code>cudaOccupancyMaxPotentialClusterSize()</code>. Note: despite its name, <code>regsPerBlock</code> is usually the register count of a whole SM.</p>
+</section>
+
+<!-- 24c -->
+<section class="slide">
+  <h2>Code: let the runtime compute occupancy</h2>
+  <div class="cols wl">
+<pre><code>__global__ void myKernel(float* x, int n);
+
+int blockSize = 256, blocksPerSM = 0;
+size_t dynShared = 0;              // dynamic shared bytes
+cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    &amp;blocksPerSM, myKernel, blockSize, dynShared);
+
+cudaDeviceProp p;
+cudaGetDeviceProperties(&amp;p, 0);
+float occ = (float)(blocksPerSM * blockSize)
+          / p.maxThreadsPerMultiProcessor;
+printf("%d blocks/SM, occupancy %.0f %%\n",
+       blocksPerSM, 100 * occ);
+
+// Or let CUDA suggest the block size:
+int minGrid = 0, best = 0;
+cudaOccupancyMaxPotentialBlockSize(&amp;minGrid, &amp;best,
+                                   myKernel, 0, 0);
+myKernel&lt;&lt;&lt;(n + best - 1) / best, best&gt;&gt;&gt;(x_d, n);</code></pre>
+    <ul class="small">
+      <li>The runtime knows what the calculator of slide <span data-ref="s-occ"></span> does not: the real register and shared-memory use of <i>this</i> compiled kernel.</li>
+      <li><code>minGrid</code> is the smallest grid that fills every SM at that occupancy.</li>
+      <li>Compile with <code>nvcc -Xptxas -v</code> to print the registers and shared memory each kernel uses.</li>
+      <li>High occupancy is a means, not the goal: always measure the running time too.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 25 -->
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>A GPU is an array of SMs (grouped into GPCs). Blocks are assigned to SMs <b>whole</b>, in any order: threads of a block can share memory and barriers; blocks cannot wait for each other. That is what makes the same code scale from a small to a large GPU.</li>
+    <li>Inside the SM, blocks are cut into <b>warps</b> of 32 consecutive threads (row-major for 2D/3D blocks). A processing block fetches one instruction and runs it for the whole warp: SIMD hardware, programmed as scalar threads (SIMT).</li>
+    <li>Threads of a warp that take different branches cost <b>extra passes</b> (control divergence). Boundary checks are the usual cause; their cost shrinks as the data grows.</li>
+    <li>An SM keeps <b>many more warps than it can execute</b> and switches between them for free, so memory latency is hidden by other warps' work.</li>
+    <li><b>Occupancy</b> = resident warps / maximum warps. Threads, block slots and registers are partitioned dynamically; any of them can be the limit.</li>
+  </ul>
+</section>
+
+<!-- 26 -->
+<section class="slide">
+  <h2>Exercise 12.1: count warps, divergence and SIMD efficiency</h2>
+  <div class="cols wl">
+<pre><code> 1  __global__ void k(int* a, int* b) {
+ 2    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+ 3    if (threadIdx.x &lt; 48 || threadIdx.x &gt;= 112)
+ 4      b[i] = a[i] + 1;
+ 5    if (i % 4 == 0)
+ 6      a[i] = b[i] * 2;
+ 7    for (unsigned int j = 0; j &lt; 4 - (i % 4); ++j)
+ 8      b[i] += j;
+ 9  }
+10
+11  void run(int* a_d, int* b_d) {
+12    unsigned int N = 2048;
+13    k&lt;&lt;&lt;(N + 127) / 128, 128&gt;&gt;&gt;(a_d, b_d);
+14  }</code></pre>
+    <ol class="small" type="a" style="margin:0;padding-left:1.2em;display:grid;gap:.35em">
+      <li>How many warps per block, and in the grid?</li>
+      <li>Statement on line 4: how many warps are active? How many diverge? SIMD efficiency of warps 0, 1, 2 and 3 of block 0?</li>
+      <li>Statement on line 6: active warps, divergent warps, SIMD efficiency of warp 0?</li>
+      <li>Loop on line 7: how many iterations run without divergence, and how many with?</li>
+    </ol>
+  </div>
+</section>
+
+<!-- 27 -->
+<section class="slide">
+  <h2>Exercises 12.2–12.7</h2>
+  <ol class="small" start="2" style="margin:0;padding-left:1.4em;display:grid;gap:.45em">
+    <li>A vector addition has 3000 elements, one thread per element, 256 threads per block. How many threads are launched, and how many warps diverge because of the boundary check?</li>
+    <li>Eight threads of a block need 1.8, 2.6, 2.1, 3.0, 2.2, 1.5, 2.9 and 2.4 µs to reach a barrier. What percentage of their total time is spent waiting at it?</li>
+    <li>“My blocks have exactly 32 threads, so I can drop <code>__syncthreads()</code>.” Is this a good idea? Explain.</li>
+    <li>An SM holds up to 2048 threads and 8 blocks. Which block size puts the most threads in the SM: 128, 256, 384 or 768?</li>
+    <li>An SM allows 32 blocks and 2048 threads. Which of these can be resident at once, and at what occupancy? (a) 16 × 128 threads (b) 32 × 32 (c) 64 × 32 (d) 8 × 256 (e) 32 × 96</li>
+    <li>Limits: 2048 threads, 32 blocks, 65,536 registers per SM. Full occupancy or not, and what limits it? (a) 256 threads/block, 30 registers (b) 64 threads, 24 registers (c) 128 threads, 40 registers (d) 32 threads, 20 registers</li>
+  </ol>
+  <p class="small muted">12.8: a 100 × 70 image is processed with 16 × 16 blocks. How many warps are launched and how many diverge? (Check your answer with slide <span data-ref="s-b2d"></span>.) 12.9: a device allows at most 512 threads per block; someone launches 32 × 32 blocks for a 1024 × 1024 matrix product. What happens?</p>
+</section>
+
+<!-- 28 -->
+<section class="slide">
+  <h2>Solutions 12.1</h2>
+  <table>
+    <tr><th>Part</th><th>Answer</th><th>Why</th></tr>
+    <tr><td>a</td><td>4 warps per block; 16 blocks × 4 = <b>64</b> warps</td><td>128 / 32 = 4; (2048 + 127) / 128 = 16 blocks</td></tr>
+    <tr><td>b</td><td><b>48</b> active, <b>32</b> divergent; warp 0: 100 %, warp 1: 50 %, warp 2: 0 %, warp 3: 50 %</td><td>Per block: warp 0 (threads 0–31) all pass; warp 1 (32–63) only 32–47; warp 2 (64–95) none; warp 3 (96–127) only 112–127.</td></tr>
+    <tr><td>c</td><td><b>64</b> active, <b>64</b> divergent, 25 %</td><td>In every warp exactly 8 of 32 threads have <code>i % 4 == 0</code>.</td></tr>
+    <tr><td>d</td><td><b>1</b> iteration without divergence, <b>3</b> with</td><td>Trip counts are 4, 3, 2, 1 inside every warp: iteration j = 0 runs on all 32 lanes, j = 1, 2, 3 on 24, 16, 8.</td></tr>
+  </table>
+  <p class="small muted">Warp 2 is inactive for line 4 but not divergent: none of its threads take the branch, so the hardware skips it in one pass.</p>
+</section>
+
+<!-- 29 -->
+<section class="slide">
+  <h2>Solutions 12.2–12.5</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th><th>Why</th></tr>
+    <tr><td>12.2</td><td><b>3072</b> threads (12 blocks, 96 warps); <b>1</b> divergent warp</td><td>Warp 93 holds threads 2976–3007: 24 work, 8 do not. Warps 94 and 95 are entirely idle, which is not divergence.</td></tr>
+    <tr><td>12.3</td><td><b>≈ 22.9 %</b></td><td>Everyone waits until 3.0 µs: waiting = 8 × 3.0 − 18.5 = 5.5 µs of 24 µs.</td></tr>
+    <tr><td>12.4</td><td><b>No</b></td><td>Warps are not guaranteed to run in lockstep (independent thread scheduling since Volta), so a warp-sized block still needs at least <code>__syncwarp()</code>. The code would also break silently if the block size ever changes.</td></tr>
+    <tr><td>12.5</td><td><b>256</b></td><td>128 → 8 blocks = 1024 threads; 256 → 8 blocks = 2048; 384 → 5 blocks = 1920; 768 → 2 blocks = 1536.</td></tr>
+  </table>
+</section>
+
+<!-- 30 -->
+<section class="slide">
+  <h2>Solutions 12.6–12.9</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>12.6</td><td>(a) yes, 100 % · (b) yes, 50 % (block slots run out) · (c) <b>no</b>: 64 blocks &gt; 32 · (d) yes, 100 % · (e) <b>no</b>: 3072 threads &gt; 2048</td></tr>
+    <tr><td>12.7</td><td>(a) full: 8 blocks, 61,440 registers · (b) full: 32 blocks of 64 threads, 49,152 registers · (c) <b>75 %</b>, limited by registers: 5120 per block, 12 blocks fit · (d) <b>50 %</b>, limited by the 32 block slots</td></tr>
+    <tr><td>12.8</td><td>35 blocks, <b>280</b> warps, <b>35</b> divergent (12.5 %): the 32 warps of the right-hand block column plus 3 in the corner block. The bottom block row never diverges: each warp there is fully inside or fully outside.</td></tr>
+    <tr><td>12.9</td><td>A 32 × 32 block is 1024 threads, over the 512 limit: the launch fails and the kernel never runs. Use 16 × 16 blocks (256 threads) and a 64 × 64 grid instead.</td></tr>
+  </table>
+</section>
+
+<!-- 31 -->
+<section class="slide">
+  <h2>Self-study: where this continues</h2>
+  <ul>
+    <li><b>Chapter 5, memory architecture:</b> registers, shared memory and caches inside the SM; tiling a matrix product so each value is loaded from global memory once per block, not once per thread.</li>
+    <li><b>Chapter 6, performance:</b> memory coalescing (the GPU version of walking rows, not columns), thread coarsening, and a checklist of optimizations.</li>
+    <li><b>Try it:</b> run the device query of slide <span data-ref="s-query"></span> on any machine with an NVIDIA GPU, then compute by hand the occupancy of the matrix kernel from session 11 for 16 × 16 and 32 × 32 blocks.</li>
+    <li><b>Tools:</b> Nsight Compute shows achieved occupancy, warp stall reasons and divergence for a real kernel.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>12 · Inside the GPU: compute architecture and scheduling</span><span id="counter"></span></div>
+
+<script>
+(function () {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  const R = (p, x, y, w, h, a = {}) => p.appendChild(el('rect', { x, y, width: w, height: h, ...a }));
+  const T = (p, x, y, s, a = {}) => p.appendChild(el('text', { x, y, ...a }, s));
+  const L = (p, x1, y1, x2, y2, a = {}) => p.appendChild(el('line', { x1, y1, x2, y2, ...a }));
+  const mid = { 'text-anchor': 'middle' };
+  const newSvg = (root, vb, label) => { const host = root.querySelector('[data-svg]'); host.innerHTML = ''; const s = el('svg', { viewBox: vb, role: 'img', 'aria-label': label }); host.appendChild(s); return s; };
+  const fmt = (n) => n.toLocaleString('en-US');
+  const pct = (x) => (Math.round(x * 1000) / 10) + ' %';
+
+  function stepper(root, steps, render, ms) {
+    let k = 0, timer = null;
+    const play = root.querySelector('[data-act=play]');
+    const draw = () => render(k);
+    const tick = () => { k = (k + 1) % steps(); draw(); };
+    const start = () => { if (timer || reduce) return; timer = setInterval(tick, ms); if (play) play.textContent = 'Pause'; };
+    const stop = () => { clearInterval(timer); timer = null; if (play) play.textContent = 'Play'; };
+    if (play) play.addEventListener('click', () => timer ? stop() : start());
+    root.querySelector('[data-act=step]')?.addEventListener('click', () => { stop(); tick(); });
+    root.querySelector('[data-act=reset]')?.addEventListener('click', () => { stop(); k = 0; draw(); });
+    return { enter() { draw(); start(); }, leave: stop, reset() { stop(); k = 0; draw(); start(); }, get k() { return k; } };
+  }
+  const modeButtons = (root, attr, onPick) => root.querySelectorAll(`[data-${attr}]`).forEach(b => b.addEventListener('click', () => {
+    root.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset[attr]);
+  }));
+
+  const ANIM = {};
+
+  // ------------------------------------------------------------ 3. GPU architecture
+  ANIM.gpu = (root) => {
+    const svg = newSvg(root, '0 0 1000 430', 'A GPU made of two GPCs of four SMs each, connected to memory controllers and global memory');
+    const gpu = R(svg, 4, 4, 992, 422, { class: 'frame', rx: 6 });
+    const gpcs = [], smFr = [], sps = [], smMem = [], wires = [];
+    for (let g = 0; g < 2; g++) {
+      const gx = 18 + g * 490;
+      gpcs.push(R(svg, gx, 14, 474, 262, { class: 'frame', rx: 4 }));
+      T(svg, gx + 237, 33, 'GPC', { ...mid, 'font-size': 15, class: 'lbl' });
+      for (let s = 0; s < 4; s++) {
+        const sx = gx + 12 + s * 115, sy = 44;
+        smFr.push(R(svg, sx, sy, 105, 220, { class: 'frame', rx: 3 }));
+        T(svg, sx + 52, sy + 18, 'SM', { ...mid, 'font-size': 14, 'font-weight': 600 });
+        R(svg, sx + 8, sy + 26, 89, 18, { class: 'ctl' }); T(svg, sx + 52, sy + 39, 'Control', { ...mid, 'font-size': 11 });
+        const mine = [];
+        for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) mine.push(R(svg, sx + 10 + c * 22, sy + 52 + r * 24, 18, 20, { class: 'sp', rx: 2 }));
+        sps.push(mine);
+        smMem.push(R(svg, sx + 8, sy + 152, 89, 24, { class: 'mem', rx: 2 }));
+        T(svg, sx + 52, sy + 168, 'Memory', { ...mid, 'font-size': 11 });
+        T(svg, sx + 52, sy + 200, `SM ${g * 4 + s}`, { ...mid, 'font-size': 11, class: 'lbl' });
+        wires.push(L(svg, sx + 52, sy + 220, sx + 52, 292, { class: 'wire' }));
+      }
+    }
+    wires.push(L(svg, 40, 292, 960, 292, { class: 'wire' }));
+    const ctrls = [];
+    for (let c = 0; c < 6; c++) {
+      const x = 38 + c * 157;
+      wires.push(L(svg, x + 60, 292, x + 60, 304, { class: 'wire' }));
+      ctrls.push(R(svg, x, 304, 120, 38, { class: 'mem', rx: 3 }));
+      T(svg, x + 60, 328, 'mem. controller', { ...mid, 'font-size': 11 });
+      wires.push(L(svg, x + 60, 342, x + 60, 362, { class: 'wire' }));
+    }
+    const glob = R(svg, 24, 362, 952, 52, { class: 'mem', rx: 3 });
+    T(svg, 500, 393, 'Global memory: off-chip DRAM (GDDR or HBM), gigabytes', { ...mid, 'font-size': 15 });
+    const caps = [
+      '<b>The GPU</b> is an array of Streaming Multiprocessors (SMs). Your kernel sees one device;\nthe hardware is many SMs working side by side.',
+      '<b>GPC</b>: since Hopper, SMs are grouped into GPU Processing Clusters.\nAn H100 has 132 SMs in 8 GPCs; this drawing shows 2 GPCs of 4 SMs.',
+      '<b>One SM</b>: its processors share one control unit and one block of on-chip memory.\nBlocks of threads are assigned to SMs (next slides).',
+      '<b>Streaming processors</b> (often called CUDA cores) do the arithmetic.\nH100: 128 per SM, 132 × 128 = <b>16,896</b> in the whole GPU.',
+      '<b>On-chip memory</b> in every SM: registers, shared memory, caches.\nSmall, very fast, private to the SM: the topic of chapter 5.',
+      '<b>Global memory</b>: gigabytes of off-chip DRAM (GDDR, or HBM stacked next to the GPU).\nMany memory controllers work in parallel for bandwidth: chapter 6.'
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => caps.length, (k) => {
+      gpu.classList.toggle('on', k === 0);
+      gpcs.forEach((g, i) => g.classList.toggle('on', k === 1 && i === 0));
+      smFr.forEach((s, i) => s.classList.toggle('on', (k === 2 || k === 3) && i === 0));
+      sps.forEach((m, i) => m.forEach(r => r.classList.toggle('on', k === 3 && i === 0)));
+      smMem.forEach(m => m.classList.toggle('on', k === 4));
+      [...ctrls, glob].forEach(m => m.classList.toggle('on', k === 5));
+      wires.forEach(w => w.classList.toggle('on', k === 5));
+      cap.innerHTML = caps[k];
+    }, 3000);
+  };
+
+  // ------------------------------------------------------------ 5. block scheduling
+  ANIM.blocksched = (root) => {
+    const D = [3, 2, 4, 2, 3, 1, 2, 3, 2, 2], N = D.length, order = [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2]];
+    const slots = [[null, null, null], [null, null, null]], start = {}, done = [], snaps = [];
+    let next = 0;
+    const assign = (t, ev) => { for (const [s, k] of order) if (slots[s][k] === null && next < N) { slots[s][k] = next; start[next] = t; ev.push(`B${next} → SM ${s}`); next++; } };
+    let t = 0, ev = []; assign(0, ev);
+    snaps.push({ t, slots: slots.map(r => r.slice()), next, done: [], ev, start: { ...start } });
+    const left = D.slice();
+    while (done.length < N) {
+      t++; ev = [];
+      for (let s = 0; s < 2; s++) for (let k = 0; k < 3; k++) { const b = slots[s][k]; if (b !== null && --left[b] === 0) { done.push(b); slots[s][k] = null; ev.push(`B${b} finished`); } }
+      assign(t, ev);
+      snaps.push({ t, slots: slots.map(r => r.slice()), next, done: done.slice(), ev, start: { ...start } });
+    }
+    const svg = newSvg(root, '0 0 1000 400', 'Ten blocks waiting in a grid are assigned to two SMs with three slots each as earlier blocks finish');
+    R(svg, 6, 8, 300, 344, { class: 'frame', rx: 4 });
+    T(svg, 20, 34, 'Grid: blocks not started', { class: 'lbl', 'font-size': 16 });
+    const qchips = [];
+    for (let b = 0; b < N; b++) {
+      const x = 26 + (b % 2) * 140, y = 52 + Math.floor(b / 2) * 58;
+      const r = R(svg, x, y, 124, 44, { class: 'chip', rx: 4 });
+      const tx = T(svg, x + 62, y + 28, `B${b} · ${D[b]}t`, { ...mid, 'font-size': 15 });
+      qchips.push({ r, tx });
+    }
+    const slotEls = [];
+    for (let s = 0; s < 2; s++) {
+      const sx = 330 + s * 336;
+      R(svg, sx, 8, 316, 344, { class: 'frame', rx: 4 });
+      T(svg, sx + 14, 34, `SM ${s}`, { 'font-size': 17, 'font-weight': 600 });
+      slotEls.push([]);
+      for (let k = 0; k < 3; k++) {
+        const y = 50 + k * 98;
+        R(svg, sx + 12, y, 292, 86, { class: 'dash', rx: 4 });
+        const chip = R(svg, sx + 24, y + 10, 268, 38, { class: 'chip', rx: 4 });
+        const lab = T(svg, sx + 158, y + 35, '', { ...mid, 'font-size': 15 });
+        R(svg, sx + 24, y + 58, 268, 12, { fill: '#F0F0F0', rx: 2 });
+        const bar = R(svg, sx + 24, y + 58, 0, 12, { class: 'bar', rx: 2 });
+        slotEls[s].push({ chip, lab, bar });
+      }
+    }
+    const doneT = T(svg, 8, 385, '', { 'font-size': 15 });
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => snaps.length + 1, (k) => {
+      const S = snaps[Math.min(k, snaps.length - 1)];
+      qchips.forEach((q, b) => { q.r.classList.toggle('gone', b < S.next); q.tx.setAttribute('opacity', b < S.next ? .25 : 1); });
+      for (let s = 0; s < 2; s++) for (let j = 0; j < 3; j++) {
+        const E = slotEls[s][j], b = S.slots[s][j];
+        if (b === null) { E.chip.setAttribute('class', 'chip gone'); E.lab.textContent = 'free slot'; E.bar.setAttribute('width', 0); }
+        else { E.chip.setAttribute('class', 'chip run'); const el2 = S.t - S.start[b]; E.lab.textContent = `B${b}  ·  ${el2} of ${D[b]} time units`; E.bar.setAttribute('width', 268 * el2 / D[b]); }
+      }
+      doneT.textContent = 'finished: ' + (S.done.length ? S.done.map(b => 'B' + b).join(', ') : '—');
+      const run = [0, 1].map(s => S.slots[s].filter(b => b !== null).map(b => 'B' + b).join(' ') || '—');
+      cap.innerHTML = `time <b>${S.t}</b>   ${S.ev.length ? S.ev.join(' · ') : 'no change'}\n` +
+        `SM 0 runs ${run[0]}   SM 1 runs ${run[1]}   waiting ${N - S.next}   finished ${S.done.length}` +
+        (S.done.length === N ? '\n<i>All 10 blocks done.</i> Each block ran start to finish on one SM; a freed slot was refilled at once.' : '');
+    }, 1500);
+  };
+
+  // ------------------------------------------------------------ 7. barrier timing
+  ANIM.barrier = (root) => {
+    const d = [3.0, 4.6, 3.8, 1.6, 5.2, 2.4], n = d.length, tm = Math.max(...d), end = 7, sx = 130, sc = 118;
+    const svg = newSvg(root, '0 0 1000 360', 'Six threads reach a barrier at different times; all wait until the last one arrives, then continue together');
+    for (let t = 0; t <= end; t++) { L(svg, sx + t * sc, 22, sx + t * sc, 322, { stroke: '#EFEFEF' }); T(svg, sx + t * sc, 342, `${t} µs`, { ...mid, 'font-size': 12, class: 'lbl' }); }
+    const rows = d.map((di, i) => {
+      const y = 30 + i * 49;
+      T(svg, 20, y + 25, `thread ${i}`, { 'font-size': 15 });
+      const work = R(svg, sx, y + 6, 0, 28, { class: 'bar', rx: 2 });
+      const wait = R(svg, sx + di * sc, y + 6, 0, 28, { class: 'hatch' });
+      const after = R(svg, sx + tm * sc, y + 6, 0, 28, { class: 'barok', rx: 2 });
+      const dot = el('circle', { cx: sx + di * sc, cy: y + 20, r: 6, fill: '#1A1A1A', opacity: 0 }); svg.appendChild(dot);
+      return { work, wait, after, dot, di };
+    });
+    const bar = L(svg, sx + tm * sc, 16, sx + tm * sc, 326, { stroke: '#B03A3A', 'stroke-width': 3, opacity: 0 });
+    const barT = T(svg, sx + tm * sc + 6, 14, 'all released', { 'font-size': 13, fill: '#B03A3A', opacity: 0 });
+    const cursor = L(svg, sx, 20, sx, 326, { stroke: '#1A1A1A', 'stroke-dasharray': '3 3' });
+    const steps = end * 5 + 1, cap = root.querySelector('[data-cap]');
+    const waitTotal = d.reduce((a, x) => a + tm - x, 0);
+    return stepper(root, () => steps + 4, (k) => {
+      const t = Math.min(k, steps - 1) / 5;
+      cursor.setAttribute('x1', sx + t * sc); cursor.setAttribute('x2', sx + t * sc);
+      let arrived = 0;
+      rows.forEach(r => {
+        r.work.setAttribute('width', Math.min(t, r.di) * sc);
+        r.wait.setAttribute('width', t > r.di ? (Math.min(t, tm) - r.di) * sc : 0);
+        r.after.setAttribute('width', t > tm ? (t - tm) * sc : 0);
+        r.dot.setAttribute('opacity', t >= r.di ? 1 : 0);
+        if (t >= r.di) arrived++;
+      });
+      const rel = t >= tm;
+      bar.setAttribute('opacity', rel ? 1 : 0); barT.setAttribute('opacity', rel ? 1 : 0);
+      const waiting = rows.map((r, i) => t >= r.di && !rel ? i : -1).filter(i => i >= 0);
+      cap.innerHTML = `t = <b>${t.toFixed(1)} µs</b>   arrived at the barrier: <b>${arrived}</b> of ${n}` +
+        (rel ? `\nThe last thread (thread 4) arrived at ${tm} µs, so everyone is released together: “no one is left behind”.\nTime spent waiting: ${waitTotal.toFixed(1)} of ${(n * tm).toFixed(1)} thread·µs = <i>${pct(waitTotal / (n * tm))}</i>` :
+          `\n${waiting.length ? 'waiting: thread ' + waiting.join(', thread ') : 'nobody has arrived yet'}`);
+    }, 140);
+  };
+
+  // ------------------------------------------------------------ 8. wrong / right barrier
+  ANIM.badbarrier = (root) => {
+    let mode = 'wrong';
+    const svg = newSvg(root, '0 0 600 420', 'Even and odd threads stop at two different barriers, so neither is ever complete; with one shared barrier all eight pass');
+    const g = el('g'); svg.appendChild(g);
+    const panes = document.querySelectorAll('[data-mode-pane]');
+    let toks = [], lines = {}, counts = {};
+    function build() {
+      g.innerHTML = ''; toks = []; lines = {}; counts = {};
+      T(g, 300, 24, 'if (t % 2 == 0)', { ...mid, 'font-size': 16 });
+      T(g, 150, 122, 'then: x[t] *= 2', { ...mid, 'font-size': 14, class: 'lbl' });
+      T(g, 450, 122, 'else: x[t] += 1', { ...mid, 'font-size': 14, class: 'lbl' });
+      if (mode === 'wrong') {
+        lines.a = L(g, 40, 260, 260, 260, { stroke: '#1A1A1A', 'stroke-width': 4 });
+        lines.b = L(g, 340, 260, 560, 260, { stroke: '#1A1A1A', 'stroke-width': 4 });
+        T(g, 150, 288, 'barrier A (line 5)', { ...mid, 'font-size': 14 });
+        T(g, 450, 288, 'barrier B (line 8)', { ...mid, 'font-size': 14 });
+        counts.a = T(g, 150, 312, '', { ...mid, 'font-size': 14 });
+        counts.b = T(g, 450, 312, '', { ...mid, 'font-size': 14 });
+      } else {
+        lines.a = L(g, 60, 300, 540, 300, { stroke: '#1A1A1A', 'stroke-width': 4 });
+        T(g, 300, 328, 'one barrier (line 8)', { ...mid, 'font-size': 14 });
+        counts.a = T(g, 300, 352, '', { ...mid, 'font-size': 14 });
+      }
+      for (let t = 0; t < 8; t++) {
+        const tg = el('g', { class: 'tok' });
+        tg.appendChild(el('circle', { cx: 0, cy: 0, r: 17, fill: t % 2 ? '#E7B467' : '#86C495', stroke: '#1A1A1A' }));
+        tg.appendChild(el('text', { x: 0, y: 5, 'text-anchor': 'middle', 'font-size': 14 }, String(t)));
+        g.appendChild(tg); toks.push(tg);
+      }
+    }
+    const pos = (t, k) => {
+      if (k === 0) return [90 + t * 60, 60];
+      const even = t % 2 === 0, j = Math.floor(t / 2);
+      if (k === 1) return [even ? 60 + j * 60 : 360 + j * 60, 160];
+      if (mode === 'wrong') return [even ? 60 + j * 60 : 360 + j * 60, 236];
+      return k === 2 ? [90 + t * 60, 276] : [90 + t * 60, 380];
+    };
+    const caps = {
+      wrong: ['All 8 threads of the block reach the <b>if</b>.',
+        'Even threads take the then-path, odd threads the else-path.',
+        'Each group stops at <b>its own</b> __syncthreads(). Barrier A has 4 of 8 threads, barrier B has 4 of 8.\nEach barrier keeps waiting for the other 4.',
+        '<i>Neither barrier is ever complete.</i> This breaks the rule for __syncthreads(): the behaviour is undefined,\nand in practice the block can hang forever (a deadlock) or produce wrong results.'],
+      right: ['All 8 threads of the block reach the <b>if</b>.',
+        'Even threads take the then-path, odd threads the else-path. Neither path has a barrier.',
+        'Both paths end, and all 8 threads arrive at the <b>same</b> barrier: 8 of 8.',
+        '<b>Released.</b> Every thread passed the same barrier, so every x[t] was updated before any thread reads x[t ^ 1].']
+    };
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => 4, (k) => {
+      toks.forEach((tg, t) => { const [x, y] = pos(t, k); tg.style.transform = `translate(${x}px, ${y}px)`; });
+      if (mode === 'wrong') {
+        counts.a.textContent = k >= 2 ? '4 of 8 arrived' : ''; counts.b.textContent = k >= 2 ? '4 of 8 arrived' : '';
+        [lines.a, lines.b].forEach(l => l.setAttribute('stroke', k === 3 ? '#B03A3A' : '#1A1A1A'));
+      } else {
+        counts.a.textContent = k >= 2 ? '8 of 8 arrived' : '';
+        lines.a.setAttribute('stroke', k === 3 ? '#2E7D4F' : '#1A1A1A');
+      }
+      cap.innerHTML = caps[mode][k];
+    }, 2200);
+    build();
+    modeButtons(root, 'mode', (m) => { mode = m; panes.forEach(p => p.hidden = p.dataset.modePane !== m); build(); st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ 10. transparent scalability
+  ANIM.scale = (root) => {
+    const svg = newSvg(root, '0 0 1000 400', 'The same eight blocks run in four waves on a two-SM device and in two waves on a four-SM device');
+    R(svg, 4, 6, 330, 380, { class: 'frame', rx: 4 }); T(svg, 18, 30, 'Device A: 2 SMs', { 'font-size': 16, 'font-weight': 600 });
+    R(svg, 360, 6, 280, 380, { class: 'frame', rx: 4 }); T(svg, 374, 30, 'Kernel grid: 8 blocks', { 'font-size': 16, 'font-weight': 600 });
+    R(svg, 666, 6, 330, 380, { class: 'frame', rx: 4 }); T(svg, 680, 30, 'Device B: 4 SMs', { 'font-size': 16, 'font-weight': 600 });
+    const grid = [];
+    for (let b = 0; b < 8; b++) { const x = 385 + (b % 2) * 118, y = 52 + Math.floor(b / 2) * 78; const r = R(svg, x, y, 106, 58, { class: 'chip', rx: 4 }); T(svg, x + 53, y + 35, `Block ${b}`, { ...mid, 'font-size': 15 }); grid.push(r); }
+    const lane = (x0, nSM, w, label) => {
+      for (let s = 0; s < nSM; s++) T(svg, x0 + s * (w + 10) + w / 2, 60, `SM${s}`, { ...mid, 'font-size': 12, class: 'lbl' });
+      const cells = [];
+      for (let b = 0; b < 8; b++) {
+        const wave = Math.floor(b / nSM), s = b % nSM, x = x0 + s * (w + 10), y = 72 + wave * 76;
+        const r = R(svg, x, y, w, 58, { class: 'chip gone', rx: 4 }); const t = T(svg, x + w / 2, y + 35, `B${b}`, { ...mid, 'font-size': 14, opacity: 0 });
+        cells.push({ r, t, wave });
+      }
+      L(svg, x0 - 16, 72, x0 - 16, 372, { stroke: '#9a9a9a', 'stroke-width': 1.5 }); T(svg, x0 - 22, 372, 'time ↓', { 'font-size': 11, class: 'lbl', 'text-anchor': 'end', transform: `rotate(-90 ${x0 - 22} 372)` });
+      return cells;
+    };
+    const A = lane(50, 2, 125), B = lane(706, 4, 60);
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 6, (k) => {
+      const show = (cells, nWaves) => cells.forEach(c => { const on = c.wave < Math.min(k, nWaves); c.r.setAttribute('class', on ? (c.wave === Math.min(k, nWaves) - 1 && k <= nWaves ? 'chip run' : 'chip done') : 'chip gone'); c.t.setAttribute('opacity', on ? 1 : 0); });
+      show(A, 4); show(B, 2);
+      const aDone = Math.min(2 * k, 8), bDone = Math.min(4 * k, 8);
+      grid.forEach((g, b) => g.setAttribute('class', b < aDone && b < bDone ? 'chip done' : b < bDone ? 'chip run' : 'chip'));
+      cap.innerHTML = k === 0 ? 'One grid of 8 independent blocks, two different GPUs, <b>no code change</b>.' :
+        `time step ${Math.min(k, 4)}: device A has run <b>${aDone}</b> blocks (${Math.min(k, 4)} of 4 waves), device B <b>${bDone}</b> (${Math.min(k, 2)} of 2 waves)` +
+        (k >= 4 ? '\n<i>Same result, half the time on the bigger GPU.</i> This works only because blocks never wait for each other:\nthe hardware may run them in any order and any number at a time. That is transparent scalability.' : '');
+    }, 1800);
+  };
+
+  // ------------------------------------------------------------ 11. waves
+  ANIM.waves = (root) => {
+    const inp = { blocks: root.querySelector('[data-in=blocks]'), cap: root.querySelector('[data-in=cap]') }, out = root.querySelector('[data-out]');
+    function update() {
+      const nb = Math.max(1, +inp.blocks.value | 0), c = Math.max(1, +inp.cap.value | 0);
+      const waves = nb / c, full = Math.floor(nb / c), rest = nb - full * c, nw = Math.ceil(waves);
+      const svg = newSvg(root, '0 0 600 420', `${nb} blocks in waves of ${c}`);
+      const shown = Math.min(nw, 9), h = Math.min(40, 360 / shown - 8);
+      for (let w = 0; w < shown; w++) {
+        const isLast = w === nw - 1, f = isLast && rest ? rest / c : 1, y = 10 + w * (h + 8);
+        T(svg, 0, y + h * .65, `wave ${w + 1}`, { 'font-size': 14, class: 'lbl' });
+        R(svg, 90, y, 480, h, { fill: '#F2F2F2', rx: 3 });
+        R(svg, 90, y, 480 * f, h, { class: isLast && rest ? 'bar2' : 'bar', rx: 3 });
+        T(svg, 98, y + h * .65, `${isLast && rest ? rest : c} blocks`, { 'font-size': 13, fill: '#fff' });
+      }
+      if (nw > shown) T(svg, 90, 10 + shown * (h + 8) + 14, `… ${nw - shown} more waves`, { 'font-size': 13, class: 'lbl' });
+      const util = nb / (nw * c);
+      out.innerHTML = `waves = ${fmt(nb)} / ${fmt(c)} = <b>${waves.toFixed(2)}</b>\n`.replace('\n', '<br>') +
+        `full waves: ${full}, last wave: ${rest ? `${rest} of ${c} blocks (<b>${pct(rest / c)}</b> of the GPU)` : 'full'}<br>` +
+        `GPU busy over the whole run: <b>${pct(util)}</b>` +
+        `<div class="cfg-msg ${rest && waves < 4 ? 'bad' : 'ok'}">${rest ? (waves < 4 ? 'Few waves and a partial last wave: a visible tail effect.' : 'The partial wave matters less as the number of waves grows.') : 'A whole number of waves: no tail effect.'}</div>`;
+    }
+    Object.values(inp).forEach(i => i.addEventListener('input', update));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [x, y] = b.dataset.p.split(','); inp.blocks.value = x; inp.cap.value = y; update(); }));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ 12. warps
+  ANIM.warps = (root) => {
+    const inp = { bs: root.querySelector('[data-in=bs]'), nb: root.querySelector('[data-in=nb]') }, out = root.querySelector('[data-out]');
+    let boxes = [], wpb = 8, bs = 256;
+    function build() {
+      bs = Math.min(1024, Math.max(1, +inp.bs.value | 0)); const nb = Math.min(32, Math.max(1, +inp.nb.value | 0));
+      wpb = Math.ceil(bs / 32); const pad = wpb * 32 - bs;
+      const shownB = Math.min(nb, 8), rh = Math.min(84, 380 / shownB), x0 = 80, ww = (600 - x0) / wpb;
+      const svg = newSvg(root, `0 0 600 ${shownB * rh + 40}`, `${nb} blocks of ${bs} threads, ${wpb} warps each`);
+      R(svg, 0, 0, 600, shownB * rh + 40, { fill: 'none', stroke: '#9a9a9a', 'stroke-width': 1.5, rx: 4 });
+      T(svg, 300, shownB * rh + 30, `SM: ${nb} resident block${nb > 1 ? 's' : ''} × ${wpb} warp${wpb > 1 ? 's' : ''}` + (nb > shownB ? ` (first ${shownB} blocks shown)` : ''), { ...mid, 'font-size': 14, class: 'lbl' });
+      boxes = [];
+      for (let b = 0; b < shownB; b++) {
+        const y = 10 + b * rh;
+        T(svg, 8, y + rh * .5, `block ${b}`, { 'font-size': 14 });
+        for (let w = 0; w < wpb; w++) {
+          const x = x0 + w * ww, real = Math.min(32, bs - w * 32);
+          const g = el('g'); svg.appendChild(g);
+          const lane = (ww - 6) / 32;
+          R(g, x + 3, y + 4, lane * real, rh - 26, { class: 'sp' });
+          if (real < 32) R(g, x + 3 + lane * real, y + 4, lane * (32 - real), rh - 26, { class: 'hatch' });
+          const fr = R(g, x + 2, y + 3, ww - 4, rh - 24, { class: 'frame', rx: 2 });
+          if (ww > 34) T(g, x + ww / 2, y + rh - 8, ww > 90 ? `warp ${w}` : `w${w}`, { ...mid, 'font-size': Math.min(13, ww * .3) });
+          if (b === 0) boxes.push(fr);
+        }
+      }
+      out.innerHTML = `warps per block = ⌈${bs} / 32⌉ = <b>${wpb}</b><br>` + (pad ? `last warp padded with <b>${pad}</b> inactive lanes (hatched)<br>` : 'no padding: a multiple of 32<br>') +
+        `warp w holds threads 32·w … 32·w + 31 of its block<br>` +
+        `${nb} blocks in the SM → <b>${nb * wpb}</b> warps resident (${fmt(nb * bs)} threads)`;
+    }
+    Object.values(inp).forEach(i => i.addEventListener('input', () => { build(); st.reset(); }));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { const [x, y] = b.dataset.p.split(','); inp.bs.value = x; inp.nb.value = y; build(); st.reset(); }));
+    build();
+    const st = stepper(root, () => wpb, (k) => boxes.forEach((b, i) => b.classList.toggle('on', i === k)), 800);
+    return st;
+  };
+
+  // ------------------------------------------------------------ 13. 2D -> linear
+  ANIM.linear = (root) => {
+    const host = root.querySelector('[data-flat]'), cap = root.querySelector('[data-cap]');
+    let n = 4, cells = [], S = 30;
+    const shades = ['#FFFFFF', '#D8D8D8', '#A6A6A6', '#1F1F1F', '#F2E3C4', '#D9B46A', '#A97B2C', '#5C3F0E'];
+    const ink = (r) => (r === 3 || r >= 6) ? '#fff' : '#1A1A1A';
+    function build() {
+      host.innerHTML = ''; cells = [];
+      const W = host.clientWidth || 900; S = Math.max(14, Math.min(34, Math.floor((W - 20) / 32)));
+      const rowsLin = Math.ceil(n * n / 32);
+      host.style.height = (n * S + 40 + rowsLin * (S + 26)) + 'px';
+      const top0 = n * S + 40;
+      for (let w = 0; w < rowsLin; w++) {
+        for (let p = 0; p < 32; p++) { const d = document.createElement('div'); d.className = 'pad'; Object.assign(d.style, { left: p * S + 'px', top: top0 + w * (S + 26) + 'px', width: S + 'px', height: S + 'px' }); host.appendChild(d); }
+        const lab = document.createElement('div'); lab.className = 'wl'; lab.textContent = `warp ${w}: linear positions ${w * 32}–${w * 32 + 31}` + (n * n < 32 ? ` (only ${n * n} real threads, ${32 - n * n} lanes padded)` : '');
+        Object.assign(lab.style, { left: 0, top: top0 + w * (S + 26) + S + 3 + 'px' }); host.appendChild(lab);
+      }
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+        const d = document.createElement('div'); d.className = 'fc';
+        Object.assign(d.style, { width: S + 'px', height: S + 'px', background: shades[y], color: ink(y), fontSize: Math.max(8, S * .34) + 'px', border: '1px solid #8a8a8a' });
+        d.textContent = `${y},${x}`; host.appendChild(d); cells.push({ d, y, x });
+      }
+    }
+    const place = (k) => cells.forEach(c => {
+      const lin = c.y * n + c.x, moved = c.y < k;
+      c.d.style.left = (moved ? (lin % 32) * S : c.x * S) + 'px';
+      c.d.style.top = (moved ? n * S + 40 + Math.floor(lin / 32) * (S + 26) : c.y * S) + 'px';
+    });
+    const st = stepper(root, () => n + 2, (k) => {
+      const kk = Math.min(k, n); place(kk);
+      cap.innerHTML = kk === 0 ? `A ${n} × ${n} block: thread (y, x) has threadIdx.y = y and threadIdx.x = x.` :
+        kk <= n && k <= n ? `Row threadIdx.y = <b>${kk - 1}</b> goes to linear positions ${(kk - 1) * n}–${kk * n - 1}: all threads with a smaller y come first, then increasing x.` :
+        (n * n < 32 ? `All ${n * n} threads fit in <b>one warp</b>, which is padded with ${32 - n * n} inactive lanes.` : `${n * n} threads → <b>${n * n / 32} warps</b>. Warp 0 = rows 0–3 (thread 0,0 to 3,7), warp 1 = rows 4–7 (4,0 to 7,7).`) +
+          '\nlinear = threadIdx.y · blockDim.x + threadIdx.x   (3D: + threadIdx.z · blockDim.y · blockDim.x)' + (k > n ? '\n3D example: a block of 4 (x) × 8 (y) × 2 (z) = 64 threads → warp 0 = all z = 0 threads, warp 1 = all z = 1 threads.' : '');
+    }, 1400);
+    modeButtons(root, 'size', (v) => { n = +v; build(); st.reset(); });
+    return { enter() { build(); st.enter(); }, leave: st.leave };
+  };
+
+  // ------------------------------------------------------------ 14. processing blocks / SIMD
+  ANIM.simd = (root) => {
+    const svg = newSvg(root, '0 0 1000 400', 'An SM with two processing blocks; each fetches one instruction and broadcasts it to eight lanes holding different data');
+    T(svg, 8, 26, 'resident warps', { class: 'lbl', 'font-size': 14 });
+    const wBox = [];
+    for (let w = 0; w < 4; w++) { const r = R(svg, 8, 40 + w * 58, 150, 46, { class: 'chip', rx: 4 }); T(svg, 83, 69 + w * 58, `W${w} → PB${w % 2}`, { ...mid, 'font-size': 15 }); wBox.push(r); }
+    R(svg, 180, 6, 816, 388, { class: 'frame', rx: 5 }); T(svg, 196, 30, 'SM', { 'font-size': 17, 'font-weight': 600 });
+    const pbs = [];
+    for (let p = 0; p < 2; p++) {
+      const x0 = 200 + p * 400;
+      R(svg, x0, 40, 380, 344, { class: 'frame', rx: 4 }); T(svg, x0 + 190, 60, `processing block ${p}`, { ...mid, 'font-size': 13, class: 'lbl' });
+      const disp = R(svg, x0 + 20, 68, 340, 62, { class: 'mem', rx: 3 });
+      T(svg, x0 + 190, 90, 'instruction fetch / dispatch', { ...mid, 'font-size': 14 });
+      const instr = T(svg, x0 + 190, 118, '', { ...mid, 'font-size': 15, 'font-weight': 600 });
+      const lanes = [], wires = [];
+      for (let j = 0; j < 8; j++) {
+        const lx = x0 + 18 + (j % 4) * 88, ly = 158 + Math.floor(j / 4) * 112;
+        wires.push(L(svg, x0 + 190, 130, lx + 40, ly, { class: 'wire blue' }));
+        const r = R(svg, lx, ly, 80, 100, { class: 'sp', rx: 3 });
+        T(svg, lx + 40, ly + 18, `lane ${j}`, { ...mid, 'font-size': 12 });
+        const a = T(svg, lx + 40, ly + 44, '', { ...mid, 'font-size': 12 }), b = T(svg, lx + 40, ly + 64, '', { ...mid, 'font-size': 12 }), c = T(svg, lx + 40, ly + 88, '', { ...mid, 'font-size': 13, 'font-weight': 600 });
+        lanes.push({ r, a, b, c });
+      }
+      pbs.push({ disp, instr, lanes, wires });
+    }
+    const prog = [['r1 = r2 + r3', (x, y) => x + y], ['r1 = r2 * r3', (x, y) => x * y], ['r1 = r2 - r3', (x, y) => x - y], ['r1 = max(r2, r3)', (x, y) => Math.max(x, y)]];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 8, (k) => {
+      const w = k % 4, p = w % 2, [txt, f] = prog[k % 4];
+      wBox.forEach((b, i) => b.setAttribute('class', i === w ? 'chip run' : 'chip'));
+      pbs.forEach((P, q) => {
+        const act = q === p;
+        P.disp.classList.toggle('on', act); P.wires.forEach(x => x.classList.toggle('on', act));
+        if (act) {
+          P.instr.textContent = `W${w}: ${txt}`;
+          P.lanes.forEach((L2, j) => { const r2 = 3 * j + w + 1, r3 = j + 2; L2.r.classList.add('on'); L2.a.textContent = `r2 = ${r2}`; L2.b.textContent = `r3 = ${r3}`; L2.c.textContent = `r1 = ${f(r2, r3)}`; [L2.a, L2.b, L2.c].forEach(t => t.setAttribute('fill', '#fff')); });
+        } else {
+          P.lanes.forEach(L2 => { L2.r.classList.remove('on'); [L2.a, L2.b, L2.c].forEach(t => t.setAttribute('fill', '#6F6F6F')); });
+        }
+      });
+      cap.innerHTML = `Processing block ${p} fetches <b>one</b> instruction of warp W${w} (${txt}) and sends it to all 8 lanes.\n` +
+        `Every lane runs the same instruction on its own thread's registers: <b>single instruction, multiple data</b>.\n` +
+        `You write scalar code for one thread; the hardware groups threads into warps. CUDA calls this <b>SIMT</b>.`;
+    }, 2000);
+  };
+
+  // ------------------------------------------------------------ 15. von Neumann
+  ANIM.vonneumann = (root) => {
+    let mode = 'cpu';
+    const svg = newSvg(root, '0 0 1000 410', 'The von Neumann model: memory, I/O, and a processor with a processing unit and a control unit; the GPU version shares one control unit among several processing units');
+    const mem = R(svg, 190, 10, 770, 72, { class: 'mem', rx: 3 });
+    T(svg, 575, 36, 'Memory', { ...mid, 'font-size': 17, 'font-weight': 600 });
+    T(svg, 575, 64, '100: add r1, r2, r3     101: mul r4, r1, r1', { ...mid, 'font-size': 14 });
+    R(svg, 20, 10, 140, 72, { class: 'mem', rx: 3 }); T(svg, 90, 52, 'I/O', { ...mid, 'font-size': 17 });
+    L(svg, 160, 46, 190, 46, { class: 'wire' });
+    R(svg, 20, 100, 960, 300, { class: 'frame', rx: 5 }); const procT = T(svg, 500, 392, 'Processor', { ...mid, 'font-size': 16, 'font-weight': 600 });
+    const cpu = el('g'), gpu = el('g'); svg.appendChild(cpu); svg.appendChild(gpu);
+    const pu = (g, x, y, w, regs, label) => {
+      R(g, x, y, w, 128, { fill: '#fff', stroke: '#6f6f6f', 'stroke-width': 1.5, rx: 3 });
+      T(g, x + w / 2, y + 20, label, { ...mid, 'font-size': 13 });
+      const aw = w * .38;
+      g.appendChild(el('path', { d: `M${x + 10} ${y + 40} L${x + 10 + aw} ${y + 40} L${x + aw - aw * .12} ${y + 104} L${x + 10 + aw * .2} ${y + 104} Z`, fill: '#F2F2F2', stroke: '#6f6f6f' }));
+      T(g, x + 10 + aw / 2, y + 78, 'ALU', { ...mid, 'font-size': 14 });
+      const rx0 = x + aw + 18, rw = w - aw - 26;
+      const rf = R(g, rx0, y + 34, rw, 80, { class: 'sp', rx: 3 });
+      const tx = [0, 1, 2].map(i => T(g, rx0 + rw / 2, y + 56 + i * 22, '', { ...mid, 'font-size': 13 }));
+      return { rf, tx, regs };
+    };
+    const cpuPU = pu(cpu, 330, 128, 340, [5, 7], 'Processing unit');
+    const gpuPUs = [0, 1, 2, 3].map(i => pu(gpu, 210 + i * 186, 128, 176, [5 + 2 * i, 7 + i], `processing unit ${i}`));
+    R(gpu, 34, 130, 116, 80, { class: 'mem', rx: 3 }); T(gpu, 92, 165, 'Shared', { ...mid, 'font-size': 14 }); T(gpu, 92, 185, 'memory', { ...mid, 'font-size': 14 });
+    const both = el('g'); svg.appendChild(both);
+    R(both, 40, 290, 930, 82, { fill: '#fff', stroke: '#6f6f6f', 'stroke-width': 1.5, rx: 3 });
+    T(both, 505, 310, 'Control unit', { ...mid, 'font-size': 14 });
+    const pcR = R(both, 110, 322, 170, 40, { class: 'mem', rx: 3 }), pcT = T(both, 195, 348, '', { ...mid, 'font-size': 15 });
+    const irR = R(both, 700, 322, 256, 40, { class: 'mem', rx: 3 }), irT = T(both, 828, 348, '', { ...mid, 'font-size': 15 });
+    const wFetch = L(both, 197, 322, 197, 82, { class: 'wire' }), wInstr = L(both, 950, 82, 950, 322, { class: 'wire' });
+    const ctlCpu = [L(cpu, 500, 290, 500, 256, { class: 'wire blue' })];
+    const ctlGpu = [0, 1, 2, 3].map(i => L(gpu, 298 + i * 186, 290, 298 + i * 186, 256, { class: 'wire blue' }));
+    const caps = {
+      cpu: ['<b>The von Neumann model.</b> Program and data live in memory; the control unit keeps a program counter (PC)\nand an instruction register (IR); the processing unit has an ALU and a register file.',
+        '<b>Fetch:</b> the PC holds address 100; the control unit reads that instruction from memory.',
+        '<b>Into the IR:</b> “add r1, r2, r3” now sits in the instruction register and is decoded.',
+        '<b>Execute:</b> control signals tell the ALU to add r2 and r3 and write r1. One control unit, one processing unit.',
+        '<b>Next:</b> the PC advances to 101 and the cycle repeats. Changing the program in memory changes what the machine does: the stored-program idea.'],
+      gpu: ['<b>The GPU version:</b> one processing block = one control unit shared by several processing units,\neach with its own register file (and access to the SM\'s shared memory).',
+        '<b>Fetch</b> once: the control unit reads the instruction at the PC, as before.',
+        '<b>Decode</b> once: the instruction goes into the single IR.',
+        '<b>Execute</b> four times at once: the same control signals reach every processing unit, and each uses its own registers.\nSame instruction, different data: SIMD. Each processing unit runs one thread of the warp.',
+        '<b>Why it pays:</b> fetch and decode are paid once and shared, so more of the chip can be arithmetic units.\nThe price: the threads of a warp must follow the same instructions.']
+    };
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => 5, (k) => {
+      cpu.classList.toggle('hidden', mode !== 'cpu'); gpu.classList.toggle('hidden', mode === 'cpu');
+      procT.textContent = mode === 'cpu' ? 'Processor' : 'Processor = one processing block of an SM';
+      pcT.textContent = `PC = ${k >= 4 ? 101 : 100}`;
+      irT.textContent = k >= 2 ? 'IR = add r1, r2, r3' : 'IR = —';
+      wFetch.classList.toggle('on', k === 1); mem.classList.toggle('on', k === 1); pcR.classList.toggle('on', k === 1 || k === 4);
+      wInstr.classList.toggle('on', k === 2); irR.classList.toggle('on', k === 2);
+      [...ctlCpu, ...ctlGpu].forEach(w => w.classList.toggle('on', k === 3));
+      (mode === 'cpu' ? [cpuPU] : gpuPUs).forEach(u => {
+        const done = k >= 3, [a, b] = u.regs, col = k === 3 ? '#fff' : '#1A1A1A';
+        u.rf.classList.toggle('on', k === 3);
+        u.tx[0].textContent = `r1 = ${done ? a + b : '?'}`; u.tx[1].textContent = `r2 = ${a}`; u.tx[2].textContent = `r3 = ${b}`;
+        u.tx.forEach(t => t.setAttribute('fill', col));
+      });
+      cap.innerHTML = caps[mode][k];
+    }, 2600);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ 16. if/else divergence
+  ANIM.diverge = (root) => {
+    const conds = [['threadIdx.x < 24', t => t < 24], ['threadIdx.x % 2 == 0', t => t % 2 === 0], ['threadIdx.x > 2', t => t > 2], ['blockIdx.x == 0', () => true]];
+    let ci = 0;
+    const svg = newSvg(root, '0 0 1000 330', 'A warp of 32 threads reaching an if-else: one pass for the then-path, one for the else-path, then all reconverge');
+    const x0 = 226, lw = 24;
+    for (let t = 0; t < 32; t++) T(svg, x0 + t * lw + lw / 2, 22, String(t), { ...mid, 'font-size': 10, class: 'lbl' });
+    const codeIf = T(svg, 4, 56, '', { 'font-size': 13 });
+    T(svg, 30, 120, 'A', { 'font-size': 22, fill: '#2E7D4F', 'font-weight': 700 });
+    T(svg, 4, 165, '} else {', { 'font-size': 13 });
+    T(svg, 30, 210, 'B', { 'font-size': 22, fill: '#C98A1B', 'font-weight': 700 });
+    T(svg, 4, 262, '}', { 'font-size': 13 });
+    T(svg, 30, 295, 'C', { 'font-size': 22, fill: '#B8890B', 'font-weight': 700 });
+    const rows = { i: [], a: [], b: [], c: [] }, ys = { i: [38, 26], a: [82, 64], b: [176, 50], c: [272, 34] };
+    for (const key of Object.keys(rows)) for (let t = 0; t < 32; t++) rows[key].push(R(svg, x0 + t * lw + 1, ys[key][0], lw - 2, ys[key][1], { class: 'cell', rx: 2 }));
+    const skipA = T(svg, 610, 120, '', { ...mid, 'font-size': 15, class: 'lbl' }), skipB = T(svg, 610, 206, '', { ...mid, 'font-size': 15, class: 'lbl' });
+    const cap = root.querySelector('[data-cap]');
+    const st = stepper(root, () => 4, (k) => {
+      const [name, f] = conds[ci], yes = [...Array(32).keys()].filter(f), no = 32 - yes.length;
+      codeIf.textContent = `if (${name}) {`;
+      rows.i.forEach(r => r.setAttribute('class', 'on-c'));
+      rows.a.forEach((r, t) => r.setAttribute('class', k >= 1 ? (f(t) ? 'on-a' : 'faint') : 'cell'));
+      rows.b.forEach((r, t) => r.setAttribute('class', k >= 2 && no ? (!f(t) ? 'on-b' : 'faint') : 'cell'));
+      rows.c.forEach(r => r.setAttribute('class', k >= 3 ? 'on-y' : 'cell'));
+      skipA.textContent = ''; skipB.textContent = k >= 2 && !no ? 'no thread takes the else-path: no second pass' : '';
+      const passes = no && yes.length ? 2 : 1, eff = passes === 2 ? (yes.length + no) / 64 : 1;
+      const msgs = [
+        `The warp (threads 0–31) reaches <b>if (${name})</b>. All 32 lanes evaluate the condition.`,
+        `Pass 1: the then-path <b>A</b> runs on ${yes.length} lanes; the other ${32 - yes.length} lanes are inactive.`,
+        no ? `Pass 2: the else-path <b>B</b> runs on ${no} lanes; the ${yes.length} lanes that did A wait.` : 'All lanes took the then-path: the else-path costs nothing.',
+        `The paths rejoin and <b>C</b> runs on all 32 lanes.\n` + (passes === 2 ? `<i>Divergent:</i> 2 passes; lanes did useful work in ${yes.length + no} of 64 lane-slots → SIMD efficiency over the if-else ${pct(eff)}.` :
+          `<b>Not divergent:</b> the condition is the same for the whole warp (it does not depend on threadIdx), one pass.`)
+      ];
+      cap.innerHTML = msgs[k];
+    }, 2200);
+    modeButtons(root, 'cond', (v) => { ci = +v; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ 17. loop divergence
+  ANIM.loopdiv = (root) => {
+    const N = [8, 6, 7, 4, 5, 6, 8, 7], LANE = [0, 1, 2, 4, 5, 6, 7, 31], mx = Math.max(...N), sum = N.reduce((a, b) => a + b, 0);
+    const svg = newSvg(root, '0 0 640 380', 'Eight threads run a loop with different trip counts; finished lanes stay idle until the longest finishes');
+    T(svg, 6, 24, 'n = a[threadIdx.x];', { 'font-size': 13 });
+    T(svg, 6, 44, 'for (i = 0; i < n; ++i) A', { 'font-size': 13 });
+    const x0 = 100, w = 64;
+    N.forEach((v, t) => { T(svg, x0 + t * w + w / 2, 72, `t${LANE[t]}`, { ...mid, 'font-size': 12, class: 'lbl' }); T(svg, x0 + t * w + w / 2, 92, `n=${v}`, { ...mid, 'font-size': 13, fill: '#C98A1B' }); });
+    const cells = [];
+    for (let i = 0; i < mx; i++) {
+      T(svg, 20, 120 + i * 32, `i = ${i}`, { 'font-size': 12, class: 'lbl' });
+      cells.push(N.map((v, t) => R(svg, x0 + t * w + 3, 104 + i * 32, w - 6, 26, { class: 'cell', rx: 2 })));
+    }
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => mx + 2, (k) => {
+      const kk = Math.min(k, mx);
+      cells.forEach((row, i) => row.forEach((r, t) => r.setAttribute('class', i < kk ? (i < N[t] ? 'on-c' : 'faint') : 'cell')));
+      if (kk === 0) { cap.innerHTML = 'Each lane loads its own trip count n (8 of the 32 lanes shown, as in Fig. 4.10).'; return; }
+      const act = N.filter(v => v > kk - 1).length;
+      cap.innerHTML = k <= mx ? `Iteration i = <b>${kk - 1}</b>: ${act} of 8 lanes active` + (act < 8 ? ` → <i>divergent</i>` : ' (no divergence yet)') :
+        `The warp loops <b>${mx}</b> times (its longest thread). Useful work: ${sum} of ${8 * mx} lane-slots = <b>${pct(sum / (8 * mx))}</b>.`;
+    }, 1100);
+  };
+
+  // ------------------------------------------------------------ 18. 1D boundary
+  ANIM.boundary1d = (root) => {
+    const inp = { n: root.querySelector('[data-in=n]'), b: root.querySelector('[data-in=b]') }, out = root.querySelector('[data-out]');
+    function update() {
+      const n = Math.max(1, +inp.n.value | 0), b = Math.max(32, Math.round((+inp.b.value | 0) / 32) * 32);
+      const blocks = Math.ceil(n / b), threads = blocks * b, warps = threads / 32;
+      const kinds = [...Array(warps).keys()].map(w => { const lo = w * 32, act = Math.max(0, Math.min(32, n - lo)); return act === 32 ? 0 : act === 0 ? 2 : 1; });
+      const div = kinds.filter(k => k === 1).length, idle = kinds.filter(k => k === 2).length;
+      const cols = Math.min(warps <= 64 ? 16 : 32, warps), rows = Math.ceil(warps / cols), cw = 600 / cols, chh = Math.min(44, 360 / rows);
+      const svg = newSvg(root, `0 0 600 ${rows * chh + 4}`, `${warps} warps, ${div} divergent`);
+      const fill = ['#C9DBF4', '#E7B467', '#F4F4F4'];
+      kinds.forEach((k, w) => R(svg, (w % cols) * cw + 1, Math.floor(w / cols) * chh + 1, cw - 2, chh - 2, { fill: fill[k], stroke: '#d0d0d0' }));
+      out.innerHTML = `blocks = ⌈${fmt(n)} / ${b}⌉ = <b>${blocks}</b>, threads = <b>${fmt(threads)}</b>, warps = <b>${fmt(warps)}</b><br>` +
+        `threads with no element: ${fmt(threads - n)} · idle warps: ${idle}<br>` +
+        `divergent warps: <b>${div}</b> of ${fmt(warps)} = <b>${pct(div / warps)}</b>` +
+        `<div class="cfg-msg ok">Only the warp that straddles i = n can diverge. As n grows, its share of the work shrinks.</div>`;
+    }
+    Object.values(inp).forEach(i => i.addEventListener('input', update));
+    root.querySelectorAll('[data-p]').forEach(bt => bt.addEventListener('click', () => { const [x, y] = bt.dataset.p.split(','); inp.n.value = x; inp.b.value = y; update(); }));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ 19. 2D boundary
+  ANIM.boundary2d = (root) => {
+    const inp = { w: root.querySelector('[data-in=w]'), h: root.querySelector('[data-in=h]') }, out = root.querySelector('[data-out]');
+    const cv = root.querySelector('[data-canvas]'), ctx = cv.getContext('2d'), B = 16;
+    function update() {
+      const W = Math.max(1, +inp.w.value | 0), H = Math.max(1, +inp.h.value | 0), gx = Math.ceil(W / B), gy = Math.ceil(H / B);
+      const s = Math.min((cv.width - 4) / (gx * B), (cv.height - 4) / (gy * B));
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      let total = 0, div = 0, idle = 0;
+      for (let by = 0; by < gy; by++) for (let bx = 0; bx < gx; bx++) for (let w = 0; w < B * B / 32; w++) {
+        const r0 = by * B + 2 * w, c0 = bx * B, rowsIn = Math.max(0, Math.min(2, H - r0)), colsIn = Math.max(0, Math.min(B, W - c0)), act = rowsIn * colsIn;
+        total++; const k = act === 32 ? 0 : act === 0 ? 2 : 1; if (k === 1) div++; if (k === 2) idle++;
+        ctx.fillStyle = ['#C9DBF4', '#E7B467', '#EDEDED'][k];
+        ctx.fillRect(2 + c0 * s, 2 + r0 * s, B * s - (s > 1.5 ? .6 : 0), 2 * s - (s > 2.5 ? .6 : 0));
+      }
+      ctx.strokeStyle = '#6f6f6f'; ctx.lineWidth = 1;
+      if (gx * gy <= 400) for (let by = 0; by < gy; by++) for (let bx = 0; bx < gx; bx++) ctx.strokeRect(2 + bx * B * s, 2 + by * B * s, B * s, B * s);
+      ctx.strokeStyle = '#B03A3A'; ctx.lineWidth = 2.5; ctx.strokeRect(2 + .5, 2 + .5, W * s, H * s);
+      const reg = [[0, 0], [0, 0], [0, 0], [0, 0]];
+      for (let by = 0; by < gy; by++) for (let bx = 0; bx < gx; bx++) {
+        const r = ((bx + 1) * B > W ? 1 : 0) + ((by + 1) * B > H ? 2 : 0), kind = [0, 1, 2, 3][r];
+        reg[kind][0] += 8;
+        for (let w = 0; w < 8; w++) { const r0 = by * B + 2 * w, act = Math.max(0, Math.min(2, H - r0)) * Math.max(0, Math.min(B, W - bx * B)); if (act > 0 && act < 32) reg[kind][1]++; }
+      }
+      const names = ['1 inside', '2 right column', '3 bottom row', '4 corner'];
+      out.innerHTML = `grid = ${gx} × ${gy} = <b>${fmt(gx * gy)}</b> blocks, <b>${fmt(total)}</b> warps (8 per block)<br>` +
+        `divergent warps: <b>${fmt(div)}</b> = <b>${pct(div / total)}</b>; entirely outside: ${fmt(idle)}<br>` +
+        names.map((nm, k) => reg[k][0] ? `region ${nm}: ${fmt(reg[k][0])} warps, <b>${reg[k][1]}</b> divergent` : '').filter(Boolean).join('<br>');
+    }
+    Object.values(inp).forEach(i => i.addEventListener('input', update));
+    root.querySelectorAll('[data-p]').forEach(bt => bt.addEventListener('click', () => { const [x, y] = bt.dataset.p.split(','); inp.w.value = x; inp.h.value = y; update(); }));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ 20. latency tolerance
+  ANIM.latency = (root) => {
+    const prog = ['C', 'C', 'L', 'C', 'C', 'L', 'C', 'C'], LAT = 5;
+    function simulate(W) {
+      const pc = Array(W).fill(0), readyAt = Array(W).fill(0), grid = [...Array(W)].map(() => []), unit = [];
+      let rr = 0, c = 0;
+      while (pc.some(p => p < prog.length) && c < 80) {
+        let pick = -1;
+        for (let j = 0; j < W; j++) { const w = (rr + j) % W; if (pc[w] < prog.length && readyAt[w] <= c) { pick = w; break; } }
+        for (let w = 0; w < W; w++) grid[w][c] = pc[w] >= prog.length ? 'fin' : w === pick ? prog[pc[w]] : readyAt[w] > c ? 'wait' : 'ready';
+        unit[c] = pick >= 0 ? 'busy' : 'idle';
+        if (pick >= 0) { const op = prog[pc[pick]]; pc[pick]++; readyAt[pick] = c + 1 + (op === 'L' ? LAT : 0); rr = (pick + 1) % W; }
+        c++;
+      }
+      return { grid, unit, cycles: c };
+    }
+    const sims = { 1: simulate(1), 2: simulate(2), 4: simulate(4), 6: simulate(6) }, maxC = Math.max(...Object.values(sims).map(s => s.cycles));
+    let W = 4, cellsW = [], cellsU = [];
+    const cap = root.querySelector('[data-cap]');
+    function build() {
+      const S = sims[W], h = W > 4 ? 28 : 34, x0 = 70, cw = (990 - x0) / maxC;
+      const svg = newSvg(root, `0 0 1000 ${(W + 1) * (h + 6) + 34}`, `Timeline of ${W} warps sharing one execution unit`);
+      for (let c = 0; c < maxC; c += 2) T(svg, x0 + c * cw + cw / 2, 14, String(c), { ...mid, 'font-size': 10, class: 'lbl' });
+      cellsW = []; cellsU = [];
+      for (let w = 0; w < W; w++) {
+        T(svg, 6, 22 + w * (h + 6) + h * .7, `W${w}`, { 'font-size': 14 });
+        cellsW.push(S.grid[w].map((g, c) => {
+          const x = x0 + c * cw, y = 22 + w * (h + 6), r = R(svg, x + .5, y, cw - 1, h, { class: 'cell' });
+          const t = T(svg, x + cw / 2, y + h * .68, g === 'C' || g === 'L' ? g : '', { ...mid, 'font-size': Math.min(13, cw * .6), fill: '#fff', opacity: 0 });
+          return { r, t, g };
+        }));
+      }
+      const yu = 22 + W * (h + 6) + 4;
+      T(svg, 6, yu + h * .7, 'unit', { 'font-size': 14, 'font-weight': 600 });
+      cellsU = S.unit.map((u, c) => ({ r: R(svg, x0 + c * cw + .5, yu, cw - 1, h, { class: 'cell' }), u }));
+    }
+    const cls = { C: 'bar', L: 'bar2', wait: 'hatch', ready: 'ready', fin: 'cell' };
+    const st = stepper(root, () => sims[W].cycles + 3, (k) => {
+      const S = sims[W], kk = Math.min(k, S.cycles);
+      cellsW.forEach(row => row.forEach((c, i) => { c.r.setAttribute('class', i < kk ? cls[c.g] : 'cell'); c.t.setAttribute('opacity', i < kk ? 1 : 0); }));
+      cellsU.forEach((c, i) => c.r.setAttribute('class', i < kk ? c.u : 'cell'));
+      const busy = S.unit.slice(0, kk).filter(u => u === 'busy').length;
+      if (k < S.cycles) {
+        const c = kk - 1, who = c >= 0 ? S.grid.map((r, w) => [w, r[c]]) : [];
+        const iss = who.find(([, g]) => g === 'C' || g === 'L'), waits = who.filter(([, g]) => g === 'wait').map(([w]) => 'W' + w);
+        cap.innerHTML = c < 0 ? `${W} warp${W > 1 ? 's' : ''} resident, one execution unit. Blue C = compute, orange L = global load; hatched = waiting for memory.` :
+          `cycle <b>${c}</b>: ` + (iss ? `W${iss[0]} issues ${iss[1] === 'L' ? '<i>a load</i>' : 'a compute instruction'}` : '<i>nobody is ready: the unit idles</i>') + (waits.length ? `   waiting for memory: ${waits.join(', ')}` : '');
+      } else {
+        cap.innerHTML = `${W} warp${W > 1 ? 's' : ''}: unit busy <b>${busy}</b> of ${S.cycles} cycles = <b>${pct(busy / S.cycles)}</b>.\n` +
+          (W === 1 ? 'With one warp, every load stalls the whole unit.' : W === 2 ? 'A second warp fills part of each stall.' : busy < S.cycles ? 'Most of the load latency is already hidden; a few more warps close the remaining gaps.' : 'Some warp is <b>always</b> ready: the load latency is completely <b>hidden</b> (latency tolerance).');
+      }
+    }, 330);
+    modeButtons(root, 'w', (v) => { W = +v; build(); st.reset(); });
+    build();
+    return st;
+  };
+
+  // ------------------------------------------------------------ 21. context switch
+  ANIM.ctxswitch = (root) => {
+    const svg = newSvg(root, '0 0 1000 380', 'A CPU saves and restores registers to switch threads; a GPU keeps every warp\'s registers resident and switches for free');
+    R(svg, 4, 4, 488, 372, { class: 'frame', rx: 4 }); T(svg, 18, 28, 'CPU core: one register set', { 'font-size': 16, 'font-weight': 600 });
+    const reg = R(svg, 30, 56, 190, 120, { class: 'sp', rx: 3 }); T(svg, 125, 80, 'registers', { ...mid, 'font-size': 14 }); const regT = T(svg, 125, 130, '', { ...mid, 'font-size': 18, 'font-weight': 600 });
+    R(svg, 280, 56, 190, 160, { class: 'mem', rx: 3 }); T(svg, 375, 80, 'memory', { ...mid, 'font-size': 14 });
+    const slotA = R(svg, 295, 100, 160, 40, { fill: '#fff', stroke: '#bdbdbd', rx: 3 }); T(svg, 375, 126, 'saved state of A', { ...mid, 'font-size': 12 });
+    const slotB = R(svg, 295, 156, 160, 40, { fill: '#fff', stroke: '#bdbdbd', rx: 3 }); T(svg, 375, 182, 'saved state of B', { ...mid, 'font-size': 12 });
+    const save = L(svg, 220, 100, 295, 120, { class: 'wire' }), load = L(svg, 295, 176, 220, 150, { class: 'wire' });
+    T(svg, 20, 268, 'time', { 'font-size': 13, class: 'lbl' });
+    const cpuBars = [['run A', 'bar'], ['save A', 'idle'], ['load B', 'idle'], ['run B', 'bar']].map(([l, c], i) => { const r = R(svg, 70 + i * 100, 250, 96, 32, { class: c, rx: 2, opacity: 0 }); const t = T(svg, 118 + i * 100, 271, l, { ...mid, 'font-size': 12, fill: c === 'bar' ? '#fff' : '#B03A3A', opacity: 0 }); return [r, t]; });
+    T(svg, 20, 320, 'switch overhead: saving and loading registers', { 'font-size': 13, fill: '#B03A3A' });
+
+    R(svg, 508, 4, 488, 372, { class: 'frame', rx: 4 }); T(svg, 522, 28, 'GPU SM: every warp\'s registers stay resident', { 'font-size': 16, 'font-weight': 600 });
+    const parts = [];
+    for (let w = 0; w < 8; w++) { const x = 530 + (w % 4) * 112, y = 56 + Math.floor(w / 4) * 72; parts.push(R(svg, x, y, 104, 62, { class: 'sp', rx: 3 })); T(svg, x + 52, y + 37, `W${w} regs`, { ...mid, 'font-size': 14 }); }
+    const ptr = T(svg, 0, 0, '▼ scheduler', { 'font-size': 13, fill: '#2F6FD0', 'font-weight': 600 });
+    const gpuBars = [['run W2', 0], ['run W5', 1], ['run W1', 2], ['run W5', 3]].map(([l], i) => { const r = R(svg, 574 + i * 100, 250, 96, 32, { class: 'bar', rx: 2, opacity: 0 }); const t = T(svg, 622 + i * 100, 271, l, { ...mid, 'font-size': 12, fill: '#fff', opacity: 0 }); return [r, t]; });
+    T(svg, 524, 268, 'time', { 'font-size': 13, class: 'lbl' });
+    T(svg, 524, 320, 'switch overhead: none (pick another resident warp)', { 'font-size': 13, fill: '#2E7D4F' });
+    const seq = [2, 5, 1, 5];
+    const caps = ['<b>Both run a first thread.</b> The CPU core holds thread A\'s state in its registers; the SM runs warp W2.',
+      '<b>Switch.</b> CPU: A\'s registers must be <i>saved</i> to memory first. GPU: W2 waits for memory, so the scheduler simply picks W5.\nW2\'s registers stay where they are.',
+      'CPU: B\'s registers are <i>loaded</i> back from memory before B can run. GPU: already on to W1, still no overhead.',
+      '<b>CPU</b>: two time slots lost to the switch. <b>GPU</b>: all warps keep their state in the large register file,\nso switching every cycle is free: <b>zero-overhead scheduling</b>. That is why the register file is so big.'];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 4, (k) => {
+      regT.textContent = k === 0 ? 'thread A' : k === 1 ? 'A → memory' : k === 2 ? 'memory → B' : 'thread B';
+      save.classList.toggle('on', k === 1); slotA.setAttribute('stroke', k === 1 ? '#C98A1B' : '#bdbdbd');
+      load.classList.toggle('on', k === 2); slotB.setAttribute('stroke', k === 2 ? '#C98A1B' : '#bdbdbd');
+      reg.classList.toggle('on', k === 0 || k === 3);
+      cpuBars.forEach(([r, t], i) => { r.setAttribute('opacity', i <= k ? 1 : 0); t.setAttribute('opacity', i <= k ? 1 : 0); });
+      gpuBars.forEach(([r, t], i) => { r.setAttribute('opacity', i <= k ? 1 : 0); t.setAttribute('opacity', i <= k ? 1 : 0); });
+      const w = seq[k]; parts.forEach((p, i) => p.classList.toggle('on', i === w));
+      ptr.setAttribute('x', 530 + (w % 4) * 112 + 6); ptr.setAttribute('y', 52 + Math.floor(w / 4) * 72 - 2);
+      cap.innerHTML = caps[k];
+    }, 2600);
+  };
+
+  // ------------------------------------------------------------ 22. occupancy
+  ANIM.occupancy = (root) => {
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const inp = { bs: q('bs'), rg: q('rg'), mt: q('mt'), mb: q('mb'), mr: q('mr') };
+    function update() {
+      const bs = Math.max(1, +inp.bs.value | 0), rg = Math.max(1, +inp.rg.value | 0), mt = Math.max(32, +inp.mt.value | 0), mb = Math.max(1, +inp.mb.value | 0), mr = Math.max(1, +inp.mr.value | 0);
+      const svg = newSvg(root, '0 0 600 330', 'Warp slots of an SM filled by resident blocks');
+      const slots = mt / 32, cols = 16, sz = 600 / cols;
+      if (bs > 1024) { out.innerHTML = `<div class="cfg-msg bad">${bs} threads per block is over the 1024 limit: the launch fails.</div>`; return; }
+      const lim = { 'threads per SM': Math.floor(mt / bs), 'block slots': mb, 'registers': Math.floor(mr / (bs * rg)) };
+      const res = Math.min(...Object.values(lim)), thr = res * bs, wpb = Math.ceil(bs / 32), usedW = res * wpb, occ = Math.min(1, usedW * 32 / mt);
+      const limiters = Object.entries(lim).filter(([, v]) => v === res).map(([k]) => k);
+      for (let s = 0; s < slots; s++) {
+        const b = Math.floor(s / wpb), used = s < usedW;
+        R(svg, (s % cols) * sz + 2, Math.floor(s / cols) * (sz + 4) + 2, sz - 4, sz, { fill: used ? (b % 2 ? '#2F6FD0' : '#8FB3E8') : '#EDEDED', rx: 3 });
+      }
+      out.innerHTML = `blocks allowed by threads: ⌊${fmt(mt)} / ${bs}⌋ = ${lim['threads per SM']}<br>` +
+        `blocks allowed by block slots: ${mb}<br>` +
+        `blocks allowed by registers: ⌊${fmt(mr)} / (${bs} × ${rg})⌋ = ${lim['registers']}<br>` +
+        `resident: <b>${res}</b> blocks, <b>${fmt(thr)}</b> threads, ${usedW} of ${slots} warps (${fmt(thr * rg)} registers)` +
+        `<div class="cfg-big" style="margin-top:.4em">${pct(occ)} <small>occupancy</small></div>` +
+        `<div class="gauge"><i style="width:${occ * 100}%"></i></div>` +
+        `<div class="cfg-msg ${occ >= 1 ? 'ok' : 'bad'}">${occ >= 1 ? 'Full occupancy.' : 'Limited by ' + limiters.join(' and ') + '.'}${res === 0 ? ' Not even one block fits.' : ''}</div>`;
+    }
+    Object.values(inp).forEach(i => i.addEventListener('input', update));
+    root.querySelectorAll('[data-p]').forEach(bt => bt.addEventListener('click', () => { const [x, y] = bt.dataset.p.split(','); inp.bs.value = x; inp.rg.value = y; inp.mt.value = 2048; inp.mb.value = 32; inp.mr.value = 65536; update(); }));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ deck navigation
+  const slides = [...document.querySelectorAll('.slide')];
+  const counter = document.getElementById('counter');
+  document.querySelectorAll('[data-ref]').forEach(e => { const t = document.getElementById(e.dataset.ref); e.textContent = t ? slides.indexOf(t) + 1 : '?'; });
+  const inst = new Map();
+  slides.forEach(s => s.querySelectorAll('[data-anim]').forEach(d => { if (ANIM[d.dataset.anim]) inst.set(s, ANIM[d.dataset.anim](d)); }));
+  let i = Math.max(0, Math.min(slides.length - 1, (parseInt(location.hash.slice(1), 10) || 1) - 1)), current = null;
+  function show(n) {
+    if (current) current.leave();
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    history.replaceState(null, '', '#' + (i + 1));
+    current = inst.get(slides[i]) || null;
+    if (current) current.enter();
+  }
+  const typing = (t) => t && t.closest && t.closest('input, select, textarea');
+  document.addEventListener('keydown', e => {
+    if (typing(e.target)) return;
+    if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { if (e.target.closest && e.target.closest('button')) return; e.preventDefault(); show(i + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'p') { if (current) current.leave(); slides.forEach(s => s.classList.add('active')); inst.forEach(a => a.enter && a.enter()); inst.forEach(a => a.leave && a.leave()); window.print(); }
+  });
+  document.addEventListener('click', e => {
+    if (e.target.closest('a, pre, code, button, input, label, select, canvas, svg, .diagram, .cfg, table, .flat')) return;
+    show(e.clientX > innerWidth / 2 ? i + 1 : i - 1);
+  });
+  show(i);
+})();
+</script>
+</body>
+</html>

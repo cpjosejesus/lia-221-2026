@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11 · Intro to the GPU: grids, images, matrices</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:6vh 8vw;display:none;flex-direction:column;justify-content:center;gap:1.2rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.6em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:60ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.45em}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2.5vw;align-items:start}
+.cols:has(> pre:first-child){grid-template-columns:minmax(0,1.45fr) minmax(0,1fr)}
+.cols:has(> pre:first-child + pre){grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+@media (max-width:820px){.cols{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.56em;line-height:1.45;background:var(--code);padding:.9em 1.1em;border-radius:3px;margin:0;overflow:auto;max-height:72vh;white-space:pre-wrap;overflow-wrap:break-word}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.7em;width:100%}th{text-align:left;font-size:.75em;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.4em .8em .4em 0}td{border-bottom:1px solid var(--line);padding:.5em .8em .5em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 8vw;font-size:.55em;color:var(--muted);font-family:var(--mono)}
+.note{border-left:3px solid var(--ink);padding-left:1em;color:var(--ink);max-width:60ch}
+.big{font-size:1.25em}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+:root{--acc:#2F6FD0;--acc-soft:#DCE7F8;--acc2:#C98A1B;--acc2-soft:#F6EAD2;--line-strong:#BDBDBD;--bad-soft:#F6DADA}
+.diagram{width:100%;max-width:1150px}
+.svgwrap svg{width:100%;height:auto;max-height:56vh;display:block}
+.cols.wide-left{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}
+.dctl{display:flex;gap:.5em;align-items:center;flex-wrap:wrap;font-size:.58em;margin-top:.5em}
+.dctl button{font:inherit;border:1px solid var(--line-strong);background:#fff;color:var(--ink);border-radius:3px;padding:.2em .75em;cursor:pointer}
+.dctl button:hover{border-color:var(--ink)}
+.dctl button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dctl button:focus-visible,.cfg input:focus-visible,.cfg button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.cap{font-family:var(--mono);font-size:.56em;line-height:1.55;min-height:3.2em;margin-top:.4em;white-space:pre-wrap}
+.cap b{color:var(--acc)}
+svg text{font-family:var(--mono);fill:var(--ink)}
+svg .lbl{font-family:var(--body);fill:var(--muted)}
+svg rect.cell{fill:#fff;stroke:#9a9a9a;stroke-width:1}
+svg rect.box{fill:none;stroke:var(--ink);stroke-width:1.5}
+svg .hl{fill:var(--acc)!important}
+svg text.hl-t{fill:#fff}
+svg .soft{fill:var(--acc-soft)!important}
+svg .soft2{fill:var(--acc2-soft)!important}
+svg .out{fill:#fff!important;stroke:#c9c9c9!important;stroke-dasharray:4 3}
+svg .outhit{fill:var(--bad-soft)!important;stroke:#c98a8a!important;stroke-dasharray:4 3}
+/* configurator */
+.cfg{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:2.5vw;align-items:start;font-size:.7em}
+@media (max-width:820px){.cfg{grid-template-columns:1fr}}
+.cfg-row{display:flex;gap:.8em;align-items:center;flex-wrap:wrap;margin-bottom:.8em}
+.cfg-lbl{font-family:var(--mono);min-width:6.5em;color:var(--muted)}
+.cfg input{font:inherit;font-family:var(--mono);width:5.2em;padding:.2em .4em;border:1px solid var(--line-strong);border-radius:3px}
+.cfg .presets button{font:inherit;font-size:.85em;border:1px solid var(--line-strong);background:#fff;border-radius:3px;padding:.15em .6em;cursor:pointer}
+.cfg .presets button:hover{border-color:var(--ink)}
+.cfg-big{font-size:2.2em;font-weight:600;font-family:var(--mono);line-height:1}
+.cfg-big small{font-size:.35em;font-weight:400;color:var(--muted);font-family:var(--body)}
+.gauge{position:relative;height:.9em;background:var(--code);border-radius:3px;margin:.7em 0;overflow:hidden}
+.gauge i{position:absolute;left:0;top:0;bottom:0;background:var(--acc);transition:width .4s ease, background .3s}
+.gauge i.over{background:var(--bad)}
+.gauge-max{position:absolute;right:.3em;top:0;font-size:.6em;font-family:var(--mono);color:var(--muted);line-height:1.5}
+.cfg-line{font-family:var(--mono);font-size:.85em}
+.cfg-msg{margin-top:.7em;font-size:.9em}
+.cfg-msg.ok{color:var(--ok)} .cfg-msg.bad{color:var(--bad)}
+/* coverage */
+canvas[data-canvas]{display:block;max-width:100%;cursor:crosshair}
+.legend{list-style:none;padding:0;margin:.4em 0 0;font-size:.6em;display:grid;gap:.25em}
+.legend li{display:flex;gap:.5em;align-items:center}
+.legend i{display:inline-block;width:1em;height:1em;border:1px solid #aaa;flex:none}
+/* flatten */
+.flat{position:relative;width:100%}
+.flat .fc{position:absolute;display:flex;align-items:center;justify-content:center;font-family:var(--mono);border:1px solid #fff;box-sizing:border-box;transition:left .55s ease, top .55s ease, background .3s, box-shadow .3s}
+.flat .fc.target{box-shadow:0 0 0 3px var(--acc2) inset}
+.flat .ix{position:absolute;font-family:var(--mono);color:var(--muted);text-align:center;transition:opacity .4s}
+.flat .ix.target{color:var(--acc2);font-weight:600}
+@media (prefers-reduced-motion:reduce){.flat .fc,.gauge i{transition:none}}
+
+</style>
+</head>
+<body>
+<div class="deck">
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 11</div>
+  <h1>Intro to the GPU: grids, images and matrices</h1>
+  <p class="muted">Session 10 cut a picture into ten strips for ten CPU cores. A GPU gives every pixel its own thread. This session is about how those threads are organised, how each one finds its data, and three kernels built on that: grayscale, blur and matrix multiplication.</p>
+  <p class="muted" style="font-size:.7em">Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>. Diagrams have their own Play and Step buttons. Press <kbd>p</kbd> to print all slides.</p>
+</section>
+
+<section class="slide">
+  <h2>From strips to one thread per element</h2>
+  <table>
+    <tr><th></th><th>CPU, session 10</th><th>GPU, this session</th></tr>
+    <tr><td>Unit of work</td><td>a strip of rows</td><td>one pixel, one matrix element</td></tr>
+    <tr><td>Threads for a 76 × 62 picture</td><td>10, one per core</td><td>5120 launched, 4712 do work</td></tr>
+    <tr><td>Who decides the split</td><td>you, with <code>hardware_concurrency()</code></td><td>you choose block and grid sizes; the hardware schedules</td></tr>
+    <tr><td>How a thread finds its data</td><td>a loop over its range</td><td>its own coordinates: <code>blockIdx</code>, <code>threadIdx</code></td></tr>
+    <tr><td>Threads past the edge</td><td>none: ranges are clipped</td><td>launched anyway, stopped by an <code>if</code></td></tr>
+  </table>
+  <p class="note">Everything today is index arithmetic: turn a thread’s coordinates into the position of the data it owns, and check that position exists.</p>
+</section>
+
+<section class="slide">
+  <h2>The thread hierarchy: grid → blocks → threads</h2>
+  <div class="diagram" data-anim="hierarchy">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">gridDim (2, 2, 1) · blockDim (4, 2, 2) · 64 threads · x varies fastest</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2><code>dim3</code>: describing the grid and the blocks</h2>
+  <div class="cols">
+<pre><code>__global__ void vecAddKernel(const float* A, const float* B, float* C, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i &lt; n) C[i] = A[i] + B[i];
+}
+
+void vecAdd(const float* A_d, const float* B_d, float* C_d, int n) {
+  dim3 block(256);                     // y and z default to 1
+  dim3 grid((n + 255) / 256);          // enough blocks to cover n
+  vecAddKernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(A_d, B_d, C_d, n);
+}</code></pre>
+    <ul>
+      <li><code>dim3</code> holds three sizes. Unused ones default to 1: <code>dim3 block(256)</code> is 256 × 1 × 1.</li>
+      <li>First launch parameter: the grid, in <b>blocks</b>. Second: each block, in <b>threads</b>.</li>
+      <li>In the kernel, the sizes are the built-ins <code>gridDim</code> and <code>blockDim</code>; positions are <code>blockIdx</code> and <code>threadIdx</code>.</li>
+      <li>1D shorthand: <code>kernel&lt;&lt;&lt;(n + 255) / 256, 256&gt;&gt;&gt;(…)</code>.</li>
+      <li>The grid follows the data: n = 1000 gives 4 blocks, n = 4000 gives 16.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Try a launch configuration</h2>
+  <div class="diagram" data-anim="config">
+    <div class="cfg">
+      <div class="cfg-in">
+        <div class="cfg-row"><span class="cfg-lbl">gridDim</span>
+          <label>x <input type="number" id="cfg-gx" min="1" value="32"></label>
+          <label>y <input type="number" id="cfg-gy" min="1" value="1"></label>
+          <label>z <input type="number" id="cfg-gz" min="1" value="1"></label></div>
+        <div class="cfg-row"><span class="cfg-lbl">blockDim</span>
+          <label>x <input type="number" id="cfg-bx" min="1" value="128"></label>
+          <label>y <input type="number" id="cfg-by" min="1" value="1"></label>
+          <label>z <input type="number" id="cfg-bz" min="1" value="1"></label></div>
+        <div class="cfg-row presets"><span class="cfg-lbl">blocks</span>
+          <button data-b="512,1,1">512 × 1 × 1</button><button data-b="8,16,4">8 × 16 × 4</button><button data-b="32,16,2">32 × 16 × 2</button><button data-b="32,32,2">32 × 32 × 2</button><button data-b="16,16,1">16 × 16</button></div>
+      </div>
+      <div class="cfg-out">
+        <div class="cfg-big"><span data-o="tpb"></span> <small>threads per block</small></div>
+        <div class="gauge"><i data-o="gauge"></i><span class="gauge-max">1024</span></div>
+        <div class="cfg-line"><span data-o="blocks"></span> blocks · <span data-o="total"></span> threads in the grid</div>
+        <div class="cfg-msg" data-o="msg"></div>
+      </div>
+    </div>
+  </div>
+  <p class="muted" style="font-size:.62em;margin-top:.6em">Limits on current GPUs: at most 1024 threads per block; <code>blockDim</code> up to 1024 × 1024 × 64; <code>gridDim.x</code> up to 2³¹ − 1; <code>gridDim.y</code> and <code>.z</code> up to 65 535.</p>
+</section>
+
+<section class="slide">
+  <h2>Mapping a 2D grid onto a picture</h2>
+  <div class="diagram cols wide-left" data-anim="coverage">
+    <div><canvas data-canvas aria-label="Threads of a 2D grid covering a picture; threads outside the picture are idle"></canvas></div>
+    <div>
+      <div class="cap" data-cap></div>
+      <ul class="legend" data-legend></ul>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button>
+        <span class="muted">block</span><button data-bs="8">8</button><button data-bs="16" class="on">16</button><button data-bs="32">32</button></div>
+      <div class="dctl"><span class="muted">picture</span><button data-pic="76,62" class="on">76 × 62</button><button data-pic="100,40">100 × 40</button><button data-pic="64,64">64 × 64</button></div>
+      <p class="muted" style="font-size:.58em">Hover a cell: its block, thread, row and column.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Launching a 2D grid</h2>
+  <div class="cols">
+<pre><code>void toGray(unsigned char* gray_d, const unsigned char* rgb_d, int width, int height) {
+  dim3 block(16, 16);
+  dim3 grid((width + 15) / 16, (height + 15) / 16);
+  colorToGray&lt;&lt;&lt;grid, block&gt;&gt;&gt;(gray_d, rgb_d, width, height);
+}
+
+// inside the kernel, every thread computes
+int col = blockIdx.x * blockDim.x + threadIdx.x;
+int row = blockIdx.y * blockDim.y + threadIdx.y;
+if (col &lt; width &amp;&amp; row &lt; height) { /* this pixel exists */ }</code></pre>
+    <ul>
+      <li>x is the horizontal direction, columns; y is vertical, rows.</li>
+      <li>Blocks of 16 × 16 = 256 threads, a multiple of 32 as the hardware prefers.</li>
+      <li>Grid sized by rounding up: <code>(width + 15) / 16</code> is <code>ceil(width / 16.0)</code> in integers.</li>
+      <li>A 1920 × 1080 frame: 120 × 68 = <b>8160 blocks</b>, 2 088 960 threads for 2 073 600 pixels.</li>
+      <li>The guard stops the extra threads: 1080 is not a multiple of 16, so the last row of blocks has 8 working rows out of 16.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Memory is flat: row-major order</h2>
+  <div class="diagram" data-anim="flatten">
+    <div class="flat" data-flat></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-mode="row" class="on">Row-major (C, C++, CUDA)</button><button data-mode="col">Column-major (Fortran)</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Flattening by hand</h2>
+  <div class="cols">
+<pre><code>// 2D: row j, column i, width elements per row
+M[j][i]            →  M[j * width + i]
+
+// 3D: plane z of height rows of width elements
+P[z][y][x]         →  P[(z * height + y) * width + x]
+int plane = blockIdx.z * blockDim.z + threadIdx.z;
+int row   = blockIdx.y * blockDim.y + threadIdx.y;
+int col   = blockIdx.x * blockDim.x + threadIdx.x;
+if (plane &lt; depth &amp;&amp; row &lt; height &amp;&amp; col &lt; width)
+  P[(plane * height + row) * width + col] = …;</code></pre>
+    <ul>
+      <li>Every location in memory has one address. A 2D array is stored as one long line, row after row.</li>
+      <li>For arrays with sizes known at compile time, <code>M[j][i]</code> works: the compiler does this arithmetic.</li>
+      <li>A picture loaded at run time has a size known only at run time, so you flatten it yourself.</li>
+      <li><code>j * width</code> skips the rows before row j; <code>+ i</code> moves along the row.</li>
+      <li>3D adds one more term: skip the planes before, then the rows, then the columns.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Colour to grayscale: who reads which bytes</h2>
+  <div class="diagram" data-anim="rgb">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><span class="muted">On a GPU all eight threads run at once; the animation goes one by one so the indices can be followed.</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The grayscale kernel</h2>
+  <div class="cols">
+<pre><code>#define CHANNELS 3                     // r, g, b: one byte each
+
+__global__ void colorToGray(unsigned char* gray, const unsigned char* rgb,
+                            int width, int height) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  if (col &lt; width &amp;&amp; row &lt; height) {
+    int grayOffset = row * width + col;          // 1 byte per output pixel
+    int rgbOffset  = grayOffset * CHANNELS;      // 3 bytes per input pixel
+    unsigned char r = rgb[rgbOffset];
+    unsigned char g = rgb[rgbOffset + 1];
+    unsigned char b = rgb[rgbOffset + 2];
+    gray[grayOffset] = (unsigned char)(0.299f * r + 0.587f * g + 0.114f * b);
+  }
+}</code></pre>
+    <ul>
+      <li>Lines 1–2 of the body: the thread’s column and row, as on slide 7.</li>
+      <li>The guard: only threads over a real pixel continue.</li>
+      <li><code>grayOffset</code>: the output pixel, one byte each.</li>
+      <li><code>rgbOffset</code>: the same pixel in the input, three bytes each, so the index is multiplied by 3.</li>
+      <li>Each thread reads 3 bytes and writes 1. No thread touches another thread’s pixel: a pure map.</li>
+      <li>Weights: green counts most because the eye is most sensitive to it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Blur: every output pixel averages a patch</h2>
+  <div class="diagram" data-anim="blur">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><span class="muted">3 × 3 patch, <code>BLUR_SIZE</code> = 1. Dashed cells are outside the picture and are skipped.</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The blur kernel</h2>
+  <div class="cols">
+<pre><code>#define BLUR_SIZE 1                    // patch radius: 1 gives 3x3, 3 gives 7x7
+
+__global__ void blurKernel(const unsigned char* in, unsigned char* out, int w, int h) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  if (col &lt; w &amp;&amp; row &lt; h) {
+    int sum = 0, pixels = 0;
+    for (int dr = -BLUR_SIZE; dr &lt;= BLUR_SIZE; ++dr)
+      for (int dc = -BLUR_SIZE; dc &lt;= BLUR_SIZE; ++dc) {
+        int r = row + dr, c = col + dc;
+        if (r &gt;= 0 &amp;&amp; r &lt; h &amp;&amp; c &gt;= 0 &amp;&amp; c &lt; w) {   // skip pixels outside the image
+          sum += in[r * w + c];
+          ++pixels;                                  // corners: 4, edges: 6, inside: 9
+        }
+      }
+    out[row * w + col] = (unsigned char)(sum / pixels);
+  }
+}</code></pre>
+    <ul>
+      <li>Same first lines and guard as grayscale: one thread per output pixel.</li>
+      <li>Two nested loops visit the patch, from <code>-BLUR_SIZE</code> to <code>+BLUR_SIZE</code> around the pixel.</li>
+      <li>The inner <code>if</code> skips neighbours outside the picture.</li>
+      <li><code>pixels</code> counts how many were really added: 4 at a corner, 6 on an edge, 9 inside. Dividing by 9 everywhere would darken the borders.</li>
+      <li>Threads now do real work, and neighbouring threads read overlapping inputs. Later chapters exploit that overlap.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Matrix multiplication: one thread, one dot product</h2>
+  <div class="diagram" data-anim="matmul">
+    <div class="svgwrap" data-svg></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><span class="muted">Click any cell of P to follow that thread.</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Tiling P: each block owns a tile</h2>
+  <div class="diagram cols" data-anim="tiles">
+    <div class="svgwrap" data-svg></div>
+    <div>
+      <div class="cap" data-cap></div>
+      <ul style="font-size:.85em">
+        <li>4 × 4 matrix, <code>BLOCK_WIDTH</code> = 2: four blocks, four threads each.</li>
+        <li>row = <code>blockIdx.y * 2 + threadIdx.y</code>, col = <code>blockIdx.x * 2 + threadIdx.x</code>.</li>
+        <li>Width 1000, blocks of 16 × 16: 63 × 63 = 3969 blocks, 1 016 064 threads, 1 000 000 of them compute an element.</li>
+      </ul>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The matrix multiplication kernel and its host code</h2>
+  <div class="cols">
+<pre><code>__global__ void matMulKernel(const float* M, const float* N, float* P, int width) {
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  if (row &lt; width &amp;&amp; col &lt; width) {
+    float sum = 0;
+    for (int k = 0; k &lt; width; ++k)
+      sum += M[row * width + k] * N[k * width + col];   // row of M, column of N
+    P[row * width + col] = sum;
+  }
+}</code></pre>
+<pre><code>void matMul(const float* M, const float* N, float* P, int width) {
+  size_t bytes = (size_t)width * width * sizeof(float);
+  float *M_d, *N_d, *P_d;
+  cudaMalloc((void**)&amp;M_d, bytes);
+  cudaMalloc((void**)&amp;N_d, bytes);
+  cudaMalloc((void**)&amp;P_d, bytes);
+  cudaMemcpy(M_d, M, bytes, cudaMemcpyHostToDevice);
+  cudaMemcpy(N_d, N, bytes, cudaMemcpyHostToDevice);
+
+  dim3 block(16, 16);
+  dim3 grid((width + 15) / 16, (width + 15) / 16);
+  matMulKernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(M_d, N_d, P_d, width);
+
+  cudaMemcpy(P, P_d, bytes, cudaMemcpyDeviceToHost);
+  cudaFree(M_d); cudaFree(N_d); cudaFree(P_d);
+}</code></pre>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Walking through one thread</h2>
+  <div class="cols">
+    <div>
+      <p>Width 4, thread (0, 0) of block (0, 0): row 0, col 0.</p>
+      <table>
+        <tr><th>k</th><th><code>row*W + k</code></th><th>M element</th><th><code>k*W + col</code></th><th>N element</th></tr>
+        <tr><td>0</td><td>0</td><td>M[0][0]</td><td>0</td><td>N[0][0]</td></tr>
+        <tr><td>1</td><td>1</td><td>M[0][1]</td><td>4</td><td>N[1][0]</td></tr>
+        <tr><td>2</td><td>2</td><td>M[0][2]</td><td>8</td><td>N[2][0]</td></tr>
+        <tr><td>3</td><td>3</td><td>M[0][3]</td><td>12</td><td>N[3][0]</td></tr>
+      </table>
+      <p style="margin-top:.6em">It writes <code>P[0 * 4 + 0]</code> = P[0][0].</p>
+    </div>
+    <ul>
+      <li>Along a row of M the index grows by 1: consecutive memory.</li>
+      <li>Down a column of N it grows by <code>width</code>: one full row is skipped each step.</li>
+      <li>Thread (1, 0) of block (0, 0) has row 1: it reads M[4..7], the second row, and the same column of N.</li>
+      <li>The kernel has no outer loops over rows and columns: the grid is those loops.</li>
+      <li>Largest matrix one launch can cover is limited by grid and block sizes; past that, launch several grids or give each thread several elements.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Session 10 on the CPU, session 11 on the GPU</h2>
+  <div class="cols">
+<pre><code>// CPU, session 10: a task per strip of rows
+void smoothRows(const Grid&amp; in, Grid&amp; out, int r,
+                int y0, int y1) {
+  for (int y = y0; y &lt; y1; ++y)
+    for (int x = 0; x &lt; in.w; ++x)
+      out.at(x, y) = meanAround(in, x, y, r);
+}
+// 10 tasks via std::async, one per core</code></pre>
+<pre><code>// GPU, session 11: a thread per pixel
+__global__ void blurKernel(const unsigned char* in,
+                           unsigned char* out, int w, int h) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  if (col &lt; w &amp;&amp; row &lt; h) {
+    /* the patch average, as before */
+  }
+}
+// (w+15)/16 × (h+15)/16 blocks of 16 × 16</code></pre>
+  </div>
+  <p class="note">The two loops over <code>y</code> and <code>x</code> became <code>row</code> and <code>col</code>. Splitting the work moved from your code into the launch configuration.</p>
+</section>
+
+<section class="slide">
+  <h2>Exercises (1/2): other ways to split matrix work</h2>
+  <ul>
+    <li><b>11.1</b> Write a matrix multiplication kernel in which each thread computes <b>one whole row</b> of P, and another in which each thread computes <b>one whole column</b>. Give the launch configuration for each. Compare the two with the one-element-per-thread kernel: how many threads does each launch for width 1000, and which reads memory in the friendlier pattern?</li>
+    <li><b>11.2</b> Matrix-vector product: <code>a[i]</code> is the dot product of row i of an N × N matrix B with a vector c. Write the kernel, one thread per output element, and the host function <code>matVec(a, B, c, N)</code> that allocates, copies, launches and copies back.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises (2/2): count the threads, find the index</h2>
+  <div class="cols">
+<pre><code>__global__ void scaleKernel(const float* in, float* out, unsigned rows, unsigned cols) {
+  unsigned row = blockIdx.y * blockDim.y + threadIdx.y;
+  unsigned col = blockIdx.x * blockDim.x + threadIdx.x;
+  if (row &lt; rows &amp;&amp; col &lt; cols)
+    out[row * cols + col] = in[row * cols + col] * 1.5f;   // line A
+}
+
+void scale(const float* in_d, float* out_d) {
+  unsigned rows = 200, cols = 120;
+  dim3 block(32, 8);
+  dim3 grid((cols - 1) / 32 + 1, (rows - 1) / 8 + 1);
+  scaleKernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(in_d, out_d, rows, cols);
+}</code></pre>
+    <ul>
+      <li><b>11.3</b> For <code>scale()</code>: (a) threads per block? (b) blocks in the grid? (c) threads in the grid? (d) how many threads execute line A?</li>
+      <li><b>11.4</b> A delivery heat map has width 300 and height 200, stored as one array. Index of row 15, column 40 (a) in row-major order, (b) in column-major order?</li>
+      <li><b>11.5</b> A stack of 50 such maps, one per day, row-major. Index of x = 40, y = 15, z = 3?</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="eyebrow">Solutions · show after the exercise block</div>
+  <h1>Solutions to exercises 11.1 to 11.5</h1>
+  <p class="muted">Every kernel here was run through a CPU emulation of the CUDA launch, which visits every block and thread, and checked against a plain CPU result.</p>
+</section>
+
+<section class="slide">
+  <div class="eyebrow">Solution 11.1 · a row or a column per thread</div>
+  <div class="cols">
+<pre><code>// one thread computes one whole ROW of P
+__global__ void matMulRowKernel(const float* M, const float* N,
+                                float* P, int width) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
+  if (row &lt; width)
+    for (int col = 0; col &lt; width; ++col) {
+      float sum = 0;
+      for (int k = 0; k &lt; width; ++k)
+        sum += M[row * width + k] * N[k * width + col];
+      P[row * width + col] = sum;
+    }
+}</code></pre>
+<pre><code>// one thread computes one whole COLUMN of P
+__global__ void matMulColKernel(const float* M, const float* N,
+                                float* P, int width) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  if (col &lt; width)
+    for (int row = 0; row &lt; width; ++row) {
+      float sum = 0;
+      for (int k = 0; k &lt; width; ++k)
+        sum += M[row * width + k] * N[k * width + col];
+      P[row * width + col] = sum;
+    }
+}</code></pre>
+  </div>
+  <ul style="font-size:.85em">
+    <li><b>Launch:</b> one thread per row or per column, <code>&lt;&lt;&lt;(width + 255) / 256, 256&gt;&gt;&gt;</code>. For width 1000 that is <b>1000 threads</b>, against 1 000 000 for one element per thread: too few to fill a GPU, each doing a million multiply-adds.</li>
+    <li><b>Row per thread:</b> neighbouring threads read <code>M[row*W+k]</code> a whole row apart: scattered reads.</li>
+    <li><b>Column per thread:</b> neighbouring threads read neighbouring <code>N[k*W+col]</code> and write neighbouring P: the friendlier pattern.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <div class="eyebrow">Solution 11.2 · matrix-vector product</div>
+  <div class="cols">
+<pre><code>// a[i] = dot(row i of B, c)
+// B is N x N, row-major
+__global__ void matVecKernel(float* a, const float* B,
+                             const float* c, int N) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i &lt; N) {
+    float sum = 0;
+    for (int j = 0; j &lt; N; ++j)
+      sum += B[i * N + j] * c[j];
+    a[i] = sum;
+  }
+}</code></pre>
+<pre><code>void matVec(float* a, const float* B, const float* c, int N) {
+  size_t vec = N * sizeof(float);
+  size_t mat = (size_t)N * N * sizeof(float);
+  float *a_d, *B_d, *c_d;
+  cudaMalloc((void**)&amp;a_d, vec);
+  cudaMalloc((void**)&amp;B_d, mat);
+  cudaMalloc((void**)&amp;c_d, vec);
+  cudaMemcpy(B_d, B, mat, cudaMemcpyHostToDevice);
+  cudaMemcpy(c_d, c, vec, cudaMemcpyHostToDevice);
+  dim3 block(256);
+  dim3 grid((N + 255) / 256);
+  matVecKernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(a_d, B_d, c_d, N);
+  cudaMemcpy(a, a_d, vec, cudaMemcpyDeviceToHost);
+  cudaFree(a_d); cudaFree(B_d); cudaFree(c_d);
+}</code></pre>
+  </div>
+  <ul style="font-size:.85em">
+    <li>One thread per output element: thread i owns <code>a[i]</code> and walks row i of B, which starts at <code>B[i * N]</code>.</li>
+    <li>Every thread reads all of c; B is read once in total. Host side: allocate, copy B and c over, launch, copy a back, free.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <div class="eyebrow">Solutions 11.3 to 11.5 · counting and indexing</div>
+  <div class="cols">
+    <table>
+      <tr><th>Question</th><th>Working</th><th>Answer</th></tr>
+      <tr><td>11.3 a, threads per block</td><td>32 × 8</td><td><b>256</b></td></tr>
+      <tr><td>11.3 b, blocks</td><td>(119/32 + 1) × (199/8 + 1) = 4 × 25</td><td><b>100</b></td></tr>
+      <tr><td>11.3 c, threads in the grid</td><td>100 × 256</td><td><b>25 600</b></td></tr>
+      <tr><td>11.3 d, threads running line A</td><td>200 × 120, the rest fail the guard</td><td><b>24 000</b></td></tr>
+      <tr><td>11.4 a, row-major</td><td>15 × 300 + 40</td><td><b>4540</b></td></tr>
+      <tr><td>11.4 b, column-major</td><td>40 × 200 + 15</td><td><b>8015</b></td></tr>
+      <tr><td>11.5, 3D row-major</td><td>3 × 200 × 300 + 15 × 300 + 40</td><td><b>184 540</b></td></tr>
+    </table>
+    <ul>
+      <li><code>(cols − 1) / 32 + 1</code> is another way to write a rounded-up division.</li>
+      <li>The emulation launched exactly 25 600 threads, and 24 000 of them wrote an element.</li>
+      <li>Column-major: skip <code>col</code> full columns of <code>height</code> elements, then move down.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Summary, and where this goes next</h2>
+  <ul>
+    <li>Grids and blocks have up to three dimensions; choose them to match the data.</li>
+    <li>Each thread turns <code>blockIdx</code>, <code>blockDim</code> and <code>threadIdx</code> into the position of its data, and checks that position exists.</li>
+    <li>Multidimensional data is stored flat, row after row; the kernel flattens indices itself.</li>
+    <li>Grayscale is a map; blur adds neighbours and borders; matrix multiplication gives each thread a dot product.</li>
+    <li>Next: how the GPU actually runs blocks, and why memory access patterns decide performance.</li>
+    <li>Reading: Kirk &amp; Hwu, <i>Programming Massively Parallel Processors</i>, chapter 3. To run the kernels, Google Colab offers a free GPU with <code>nvcc</code> installed.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>11 · Intro to the GPU: grids, images and matrices</span><span id="counter"></span></div>
+<script>
+(function () {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+
+  // Play/Pause/Step/Reset wiring shared by the stepping diagrams.
+  function stepper(root, steps, render, ms) {
+    let k = 0, timer = null;
+    const play = root.querySelector('[data-act=play]');
+    const draw = () => render(k);
+    const tick = () => { k = (k + 1) % steps(); draw(); };
+    const start = () => { if (timer || reduce) return; timer = setInterval(tick, ms); if (play) play.textContent = 'Pause'; };
+    const stop = () => { clearInterval(timer); timer = null; if (play) play.textContent = 'Play'; };
+    if (play) play.addEventListener('click', () => timer ? stop() : start());
+    root.querySelector('[data-act=step]')?.addEventListener('click', () => { stop(); tick(); });
+    root.querySelector('[data-act=reset]')?.addEventListener('click', () => { stop(); k = 0; draw(); });
+    return { enter() { draw(); start(); }, leave: stop, goto(n) { stop(); k = n; draw(); }, get k() { return k; } };
+  }
+
+  const ANIM = {};
+
+  // 1. grid -> blocks -> threads
+  ANIM.hierarchy = (root) => {
+    const svg = el('svg', { viewBox: '0 0 1000 370', role: 'img', 'aria-label': 'A host launches a kernel as a grid of 2 by 2 blocks; one block is expanded into 4 by 2 by 2 threads' });
+    root.querySelector('[data-svg]').appendChild(svg);
+    svg.appendChild(el('rect', { class: 'box', x: 10, y: 20, width: 190, height: 330, rx: 4 }));
+    svg.appendChild(el('text', { class: 'lbl', x: 24, y: 46, 'font-size': 18 }, 'host (CPU)'));
+    svg.appendChild(el('rect', { x: 24, y: 140, width: 162, height: 64, rx: 3, fill: '#F5F5F5', stroke: '#9a9a9a' }));
+    svg.appendChild(el('text', { x: 105, y: 166, 'text-anchor': 'middle', 'font-size': 15 }, 'kernel'));
+    svg.appendChild(el('text', { x: 105, y: 190, 'text-anchor': 'middle', 'font-size': 13 }, '<<<grid, block>>>'));
+    svg.appendChild(el('line', { x1: 186, y1: 172, x2: 246, y2: 172, stroke: '#1A1A1A', 'stroke-width': 2 }));
+    svg.appendChild(el('path', { d: 'M238 166 L248 172 L238 178', fill: 'none', stroke: '#1A1A1A', 'stroke-width': 2 }));
+    svg.appendChild(el('rect', { class: 'box', x: 250, y: 20, width: 280, height: 330, rx: 4 }));
+    svg.appendChild(el('text', { class: 'lbl', x: 264, y: 46, 'font-size': 18 }, 'device: the grid'));
+    const blocks = [];
+    for (let by = 0; by < 2; ++by) for (let bx = 0; bx < 2; ++bx) {
+      const x = 275 + bx * 125, y = 75 + by * 130;
+      const r = el('rect', { x, y, width: 105, height: 105, rx: 4, fill: '#E9E9E9', stroke: '#6f6f6f' });
+      svg.appendChild(r);
+      const t = el('text', { x: x + 52, y: y + 58, 'text-anchor': 'middle', 'font-size': 14 }, `Block (${bx},${by})`);
+      svg.appendChild(t);
+      blocks.push({ r, t, x, y });
+    }
+    svg.appendChild(el('rect', { class: 'box', x: 570, y: 20, width: 420, height: 330, rx: 4 }));
+    const zoomTitle = el('text', { class: 'lbl', x: 584, y: 46, 'font-size': 18 }, '');
+    svg.appendChild(zoomTitle);
+    const guide1 = el('line', { stroke: '#2F6FD0', 'stroke-width': 1.5, 'stroke-dasharray': '5 4' });
+    const guide2 = el('line', { stroke: '#2F6FD0', 'stroke-width': 1.5, 'stroke-dasharray': '5 4' });
+    svg.appendChild(guide1); svg.appendChild(guide2);
+    const threads = [];
+    for (let tz = 0; tz < 2; ++tz) {
+      svg.appendChild(el('text', { class: 'lbl', x: 584, y: 82 + tz * 140, 'font-size': 14 }, `z = ${tz}`));
+      for (let ty = 0; ty < 2; ++ty) for (let tx = 0; tx < 4; ++tx) {
+        const x = 590 + tx * 98, y = 92 + tz * 140 + ty * 56;
+        const r = el('rect', { class: 'cell', x, y, width: 90, height: 48, rx: 3 });
+        const t = el('text', { x: x + 45, y: y + 30, 'text-anchor': 'middle', 'font-size': 14 }, `(${tx},${ty},${tz})`);
+        svg.appendChild(r); svg.appendChild(t);
+        threads.push({ r, t });
+      }
+    }
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 64, (k) => {
+      const b = Math.floor(k / 16), t = k % 16;
+      const bx = b % 2, by = Math.floor(b / 2), tx = t % 4, ty = Math.floor(t / 4) % 2, tz = Math.floor(t / 8);
+      blocks.forEach((B, i) => { B.r.classList.toggle('hl', i === b); B.t.classList.toggle('hl-t', i === b); });
+      threads.forEach((T, i) => { T.r.classList.toggle('hl', i === t); T.t.classList.toggle('hl-t', i === t); });
+      const B = blocks[b];
+      guide1.setAttribute('x1', B.x + 105); guide1.setAttribute('y1', B.y); guide1.setAttribute('x2', 570); guide1.setAttribute('y2', 20);
+      guide2.setAttribute('x1', B.x + 105); guide2.setAttribute('y1', B.y + 105); guide2.setAttribute('x2', 570); guide2.setAttribute('y2', 350);
+      zoomTitle.textContent = `Block (${bx},${by}) · blockDim (4, 2, 2)`;
+      cap.innerHTML = `thread ${k + 1} of 64   blockIdx = (<b>${bx}</b>, <b>${by}</b>, 0)   threadIdx = (<b>${tx}</b>, <b>${ty}</b>, <b>${tz}</b>)\n` +
+        `x = blockIdx.x·blockDim.x + threadIdx.x = ${bx}·4 + ${tx} = <b>${bx * 4 + tx}</b>    y = ${by}·2 + ${ty} = <b>${by * 2 + ty}</b>    z = <b>${tz}</b>`;
+    }, 650);
+  };
+
+  // 2. launch configurator
+  ANIM.config = (root) => {
+    const ids = ['gx', 'gy', 'gz', 'bx', 'by', 'bz'];
+    const inp = Object.fromEntries(ids.map(i => [i, root.querySelector('#cfg-' + i)]));
+    const o = (n) => root.querySelector(`[data-o=${n}]`);
+    const fmt = (n) => n.toLocaleString('en-US');
+    function update() {
+      const v = Object.fromEntries(ids.map(i => [i, Math.max(1, Math.floor(+inp[i].value || 1))]));
+      const tpb = v.bx * v.by * v.bz, blocks = v.gx * v.gy * v.gz;
+      o('tpb').textContent = fmt(tpb);
+      o('blocks').textContent = fmt(blocks);
+      o('total').textContent = fmt(tpb * blocks);
+      const g = o('gauge'); g.style.width = Math.min(100, tpb / 1024 * 100) + '%'; g.classList.toggle('over', tpb > 1024);
+      const errs = [];
+      if (tpb > 1024) errs.push(`${fmt(tpb)} threads per block is over the 1024 limit`);
+      if (v.bx > 1024 || v.by > 1024) errs.push('blockDim.x and .y can be at most 1024');
+      if (v.bz > 64) errs.push('blockDim.z can be at most 64');
+      if (v.gx > 2147483647) errs.push('gridDim.x can be at most 2³¹ − 1');
+      if (v.gy > 65535 || v.gz > 65535) errs.push('gridDim.y and .z can be at most 65 535');
+      const m = o('msg');
+      m.className = 'cfg-msg ' + (errs.length ? 'bad' : 'ok');
+      m.textContent = errs.length ? 'Not allowed: ' + errs.join('; ') + '.' : (tpb % 32 ? `Allowed. ${tpb} is not a multiple of 32: some hardware lanes stay idle.` : 'Allowed, and a multiple of 32 threads per block.');
+    }
+    ids.forEach(i => inp[i].addEventListener('input', update));
+    root.querySelectorAll('[data-b]').forEach(b => b.addEventListener('click', () => {
+      const [x, y, z] = b.dataset.b.split(',');
+      inp.bx.value = x; inp.by.value = y; inp.bz.value = z; update();
+    }));
+    return { enter: update, leave() {} };
+  };
+
+  // 3. a 2D grid of 16x16 blocks covering a picture
+  ANIM.coverage = (root) => {
+    const cv = root.querySelector('[data-canvas]'), ctx = cv.getContext('2d');
+    const cap = root.querySelector('[data-cap]'), legend = root.querySelector('[data-legend]');
+    let W = 76, H = 62, B = 16, cell = 5, gx, gy, hover = null;
+    const COL = { full: '#B9CDEB', right: '#EBCF9C', bottom: '#BFDDBF', corner: '#E6B3B3', idle: '#F2F2F2' };
+    const kind = (bx, by) => {
+      const rightCut = (bx + 1) * B > W, bottomCut = (by + 1) * B > H;
+      return rightCut && bottomCut ? 'corner' : rightCut ? 'right' : bottomCut ? 'bottom' : 'full';
+    };
+    const active = (bx, by) => Math.min(B, W - bx * B) * Math.min(B, H - by * B);
+    function layout() {
+      gx = Math.ceil(W / B); gy = Math.ceil(H / B);
+      const box = cv.parentElement.getBoundingClientRect();
+      const availW = Math.max(200, box.width), availH = window.innerHeight * 0.52;
+      cell = Math.max(2, Math.floor(Math.min(availW / (gx * B), availH / (gy * B))));
+      const dpr = window.devicePixelRatio || 1;
+      cv.width = gx * B * cell * dpr; cv.height = gy * B * cell * dpr;
+      cv.style.width = gx * B * cell + 'px'; cv.style.height = gy * B * cell + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const kinds = {};
+      for (let by = 0; by < gy; ++by) for (let bx = 0; bx < gx; ++bx) { const k = kind(bx, by); (kinds[k] = kinds[k] || { n: 0, a: active(bx, by) }).n++; }
+      const names = { full: 'inside the picture', right: 'cut by the right edge', bottom: 'cut by the bottom edge', corner: 'cut by both edges' };
+      legend.innerHTML = ['full', 'right', 'bottom', 'corner'].filter(k => kinds[k]).map(k =>
+        `<li><i style="background:${COL[k]}"></i>${kinds[k].n} block${kinds[k].n > 1 ? 's' : ''} ${names[k]}: ${kinds[k].a} of ${B * B} threads work</li>`).join('') +
+        `<li><i style="background:${COL.idle}"></i>idle threads: ${gx * gy * B * B - W * H} of ${gx * gy * B * B} launched</li>`;
+    }
+    function draw(hb) {
+      const S = cell;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      for (let r = 0; r < gy * B; ++r) for (let c = 0; c < gx * B; ++c) {
+        const on = r < H && c < W;
+        ctx.fillStyle = on ? COL[kind(Math.floor(c / B), Math.floor(r / B))] : COL.idle;
+        ctx.fillRect(c * S, r * S, S, S);
+      }
+      if (S >= 6) { ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.lineWidth = 1; ctx.beginPath();
+        for (let c = 0; c <= gx * B; ++c) { ctx.moveTo(c * S + .5, 0); ctx.lineTo(c * S + .5, gy * B * S); }
+        for (let r = 0; r <= gy * B; ++r) { ctx.moveTo(0, r * S + .5); ctx.lineTo(gx * B * S, r * S + .5); } ctx.stroke(); }
+      ctx.strokeStyle = '#1A1A1A'; ctx.lineWidth = 1.5; ctx.beginPath();
+      for (let bx = 0; bx <= gx; ++bx) { ctx.moveTo(bx * B * S, 0); ctx.lineTo(bx * B * S, gy * B * S); }
+      for (let by = 0; by <= gy; ++by) { ctx.moveTo(0, by * B * S); ctx.lineTo(gx * B * S, by * B * S); } ctx.stroke();
+      ctx.setLineDash([6, 4]); ctx.strokeStyle = '#B03A3A'; ctx.lineWidth = 2; ctx.strokeRect(1, 1, W * S - 1, H * S - 1); ctx.setLineDash([]);
+      if (hb != null) { const bx = hb % gx, by = Math.floor(hb / gx);
+        ctx.fillStyle = 'rgba(47,111,208,.25)'; ctx.fillRect(bx * B * S, by * B * S, B * S, B * S);
+        ctx.strokeStyle = '#2F6FD0'; ctx.lineWidth = 3; ctx.strokeRect(bx * B * S + 1.5, by * B * S + 1.5, B * S - 3, B * S - 3); }
+      if (hover) { ctx.strokeStyle = '#1A1A1A'; ctx.lineWidth = 2; ctx.strokeRect(hover.c * S, hover.r * S, S, S); }
+    }
+    const st = stepper(root, () => gx * gy, (k) => {
+      draw(k); if (hover) return;
+      const bx = k % gx, by = Math.floor(k / gx);
+      cap.innerHTML = `picture ${W} × ${H}, blocks ${B} × ${B}: grid ${gx} × ${gy} = ${gx * gy} blocks\n` +
+        `Block (<b>${bx}</b>, <b>${by}</b>): <b>${active(bx, by)}</b> of ${B * B} threads pass the guard`;
+    }, 900);
+    cv.addEventListener('mousemove', (e) => {
+      const rect = cv.getBoundingClientRect(), c = Math.floor((e.clientX - rect.left) / cell), r = Math.floor((e.clientY - rect.top) / cell);
+      if (c < 0 || r < 0 || c >= gx * B || r >= gy * B) return;
+      hover = { r, c }; const bx = Math.floor(c / B), by = Math.floor(r / B), tx = c % B, ty = r % B, on = r < H && c < W;
+      cap.innerHTML = `blockIdx = (${bx}, ${by})  threadIdx = (${tx}, ${ty})\n` +
+        `col = ${bx}·${B} + ${tx} = <b>${c}</b>   row = ${by}·${B} + ${ty} = <b>${r}</b>   ` + (on ? 'works on a pixel' : `<span style="color:#B03A3A">idle: ${c >= W ? 'col ≥ width' : 'row ≥ height'}</span>`);
+      draw(st.k);
+    });
+    cv.addEventListener('mouseleave', () => { hover = null; st.goto(st.k); });
+    root.querySelectorAll('[data-bs]').forEach(b => b.addEventListener('click', () => {
+      B = +b.dataset.bs; root.querySelectorAll('[data-bs]').forEach(x => x.classList.toggle('on', x === b)); layout(); st.goto(0);
+    }));
+    root.querySelectorAll('[data-pic]').forEach(b => b.addEventListener('click', () => {
+      [W, H] = b.dataset.pic.split(',').map(Number); root.querySelectorAll('[data-pic]').forEach(x => x.classList.toggle('on', x === b)); layout(); st.goto(0);
+    }));
+    window.addEventListener('resize', () => { if (root.closest('.slide').classList.contains('active')) { layout(); draw(st.k); } });
+    return { enter() { layout(); st.enter(); }, leave: st.leave };
+  };
+
+  // 4. row-major flattening
+  ANIM.flatten = (root) => {
+    const box = root.querySelector('[data-flat]'), cap = root.querySelector('[data-cap]');
+    const shade = ['#E8EEF7', '#B7C8E3', '#6F8FBF', '#2B4A7D'];
+    const cells = [], idx = [];
+    for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) {
+      const d = document.createElement('div'); d.className = 'fc'; d.style.background = shade[r]; d.style.color = r >= 2 ? '#fff' : '#1A1A1A';
+      d.innerHTML = `M<sub>${r},${c}</sub>`; box.appendChild(d); cells.push({ d, r, c });
+    }
+    for (let i = 0; i < 16; ++i) { const s = document.createElement('div'); s.className = 'ix'; s.textContent = i; box.appendChild(s); idx.push(s); }
+    let mode = 'row', timers = [], s = 40, flat = false, running = false;
+    const order = (r, c) => mode === 'row' ? r * 4 + c : c * 4 + r;
+    function place() {
+      s = Math.max(26, Math.min(56, Math.floor(box.getBoundingClientRect().width / 16.5)));
+      box.style.height = (4 * s + 70 + s + 30) + 'px';
+      cells.forEach(({ d }) => { d.style.width = d.style.height = s + 'px'; d.style.fontSize = Math.round(s * .32) + 'px'; });
+      idx.forEach((e, i) => { e.style.left = i * s + 'px'; e.style.top = (4 * s + 70 + s + 4) + 'px'; e.style.width = s + 'px'; e.style.fontSize = Math.round(s * .3) + 'px'; });
+      setFlat(flat, false);
+    }
+    function setFlat(f, stagger) {
+      flat = f;
+      cells.forEach(({ d, r, c }) => {
+        const k = order(r, c);
+        d.style.transitionDelay = stagger && !reduce ? (f ? k * 60 : (15 - k) * 25) + 'ms' : '0ms';
+        d.style.left = (f ? k * s : c * s) + 'px';
+        d.style.top = (f ? 4 * s + 70 : 0) + 'px';
+      });
+      idx.forEach(e => e.style.opacity = f ? 1 : 0);
+    }
+    function mark(on) {
+      const t = order(2, 1);
+      cells.forEach(({ d, r, c }) => d.classList.toggle('target', on && r === 2 && c === 1));
+      idx.forEach((e, i) => e.classList.toggle('target', on && i === t));
+      cap.innerHTML = on ? (mode === 'row'
+        ? `row-major: rows one after another\nM[2][1] → row · width + col = 2 · 4 + 1 = <b>9</b>`
+        : `column-major: columns one after another\nM[2][1] → col · height + row = 1 · 4 + 2 = <b>6</b>`) : `a 4 × 4 matrix in two dimensions\n…but memory is one long line of addresses`;
+    }
+    const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+    function cycle() {
+      timers.forEach(clearTimeout); timers = [];
+      mark(false); setFlat(false, false);
+      later(() => setFlat(true, true), 900);
+      later(() => mark(true), 900 + 16 * 60 + 600);
+      later(() => { if (running) { mark(false); setFlat(false, true); later(cycle, 1200); } }, 900 + 16 * 60 + 600 + 3200);
+    }
+    const play = root.querySelector('[data-act=play]');
+    function start() { if (reduce) { setFlat(true, false); mark(true); return; } running = true; play.textContent = 'Pause'; cycle(); }
+    function stop() { running = false; play.textContent = 'Play'; timers.forEach(clearTimeout); timers = []; }
+    play.addEventListener('click', () => running ? stop() : start());
+    root.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+      mode = b.dataset.mode; root.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('on', x === b));
+      stop(); setFlat(true, false); mark(true);
+    }));
+    window.addEventListener('resize', () => { if (root.closest('.slide').classList.contains('active')) place(); });
+    return { enter() { place(); start(); }, leave: stop };
+  };
+
+  // 5. colour to grayscale: which bytes each thread reads
+  ANIM.rgb = (root) => {
+    const svg = el('svg', { viewBox: '0 0 1000 330', role: 'img', 'aria-label': 'A 4 by 2 colour picture, its 24 interleaved r g b bytes, and the 8 gray bytes; each thread reads three bytes and writes one' });
+    root.querySelector('[data-svg]').appendChild(svg);
+    const W = 4, H = 2;
+    const px = [[220, 60, 50], [240, 160, 40], [250, 220, 70], [90, 170, 80], [60, 130, 200], [120, 90, 190], [200, 80, 150], [70, 70, 70]];
+    const grayOf = ([r, g, b]) => Math.floor(0.299 * r + 0.587 * g + 0.114 * b);
+    svg.appendChild(el('text', { class: 'lbl', x: 20, y: 24, 'font-size': 16 }, 'colour picture, width 4, height 2'));
+    svg.appendChild(el('text', { class: 'lbl', x: 560, y: 24, 'font-size': 16 }, 'grayscale output'));
+    const pix = [], outs = [], bytes = [], gbytes = [];
+    for (let i = 0; i < 8; ++i) {
+      const r = Math.floor(i / W), c = i % W;
+      const p = el('rect', { x: 20 + c * 66, y: 36 + r * 66, width: 60, height: 60, rx: 3, fill: `rgb(${px[i]})`, stroke: '#fff', 'stroke-width': 3 });
+      svg.appendChild(p); pix.push(p);
+      const o = el('rect', { x: 560 + c * 66, y: 36 + r * 66, width: 60, height: 60, rx: 3, fill: '#fff', stroke: '#c9c9c9', 'stroke-width': 1.5 });
+      svg.appendChild(o); outs.push(o);
+    }
+    svg.appendChild(el('text', { class: 'lbl', x: 20, y: 192, 'font-size': 16 }, 'rgb array: 3 bytes per pixel, rows one after another'));
+    for (let b = 0; b < 24; ++b) {
+      const x = 20 + b * 40, ch = 'rgb'[b % 3], v = px[Math.floor(b / 3)][b % 3];
+      const r = el('rect', { class: 'cell', x, y: 202, width: 38, height: 34 });
+      const t = el('text', { x: x + 19, y: 224, 'text-anchor': 'middle', 'font-size': 12 }, v);
+      const l = el('text', { class: 'lbl', x: x + 19, y: 250, 'text-anchor': 'middle', 'font-size': 11 }, `${ch}${b}`);
+      svg.appendChild(r); svg.appendChild(t); svg.appendChild(l); bytes.push({ r, t });
+    }
+    svg.appendChild(el('text', { class: 'lbl', x: 20, y: 282, 'font-size': 16 }, 'gray array: 1 byte per pixel'));
+    for (let i = 0; i < 8; ++i) {
+      const x = 260 + i * 60;
+      const r = el('rect', { class: 'cell', x, y: 268, width: 56, height: 34 });
+      const t = el('text', { x: x + 28, y: 290, 'text-anchor': 'middle', 'font-size': 13 }, '');
+      svg.appendChild(r); svg.appendChild(t);
+      svg.appendChild(el('text', { class: 'lbl', x: x + 28, y: 318, 'text-anchor': 'middle', 'font-size': 11 }, i));
+      gbytes.push({ r, t });
+    }
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 8, (k) => {
+      const row = Math.floor(k / W), col = k % W, gOff = row * W + col, rgbOff = gOff * 3;
+      pix.forEach((p, i) => p.setAttribute('stroke', i === k ? '#2F6FD0' : '#fff'));
+      outs.forEach((o, i) => { const g = grayOf(px[i]); o.setAttribute('fill', i <= k ? `rgb(${g},${g},${g})` : '#fff'); o.setAttribute('stroke', i === k ? '#2F6FD0' : '#c9c9c9'); o.setAttribute('stroke-width', i === k ? 4 : 1.5); });
+      bytes.forEach((b, i) => { const on = i >= rgbOff && i < rgbOff + 3; b.r.classList.toggle('hl', on); b.t.classList.toggle('hl-t', on); });
+      gbytes.forEach((b, i) => { b.r.classList.toggle('hl', i === k); b.t.classList.toggle('hl-t', i === k); b.t.textContent = i <= k ? grayOf(px[i]) : ''; });
+      const [r, g, b] = px[k];
+      cap.innerHTML = `thread for row ${row}, col ${col}:  grayOffset = row·width + col = ${row}·4 + ${col} = <b>${gOff}</b>   rgbOffset = ${gOff}·3 = <b>${rgbOff}</b>\n` +
+        `reads bytes ${rgbOff}, ${rgbOff + 1}, ${rgbOff + 2} = (${r}, ${g}, ${b})   writes gray[${gOff}] = 0.299·${r} + 0.587·${g} + 0.114·${b} = <b>${grayOf(px[k])}</b>`;
+    }, 1300);
+  };
+
+  // 6. blur: a 3x3 patch, with the borders
+  ANIM.blur = (root) => {
+    const svg = el('svg', { viewBox: '0 0 1000 400', role: 'img', 'aria-label': 'A 3 by 3 patch moves over an 8 by 6 picture; at the borders some patch cells fall outside and are skipped' });
+    root.querySelector('[data-svg]').appendChild(svg);
+    const W = 8, H = 6, S = 40, ox = 30, oy = 50, px2 = 590;
+    const val = (r, c) => (r * 7 + c * 3) % 10;
+    svg.appendChild(el('text', { class: 'lbl', x: ox, y: 24, 'font-size': 16 }, 'input, with the cells around it that do not exist'));
+    svg.appendChild(el('text', { class: 'lbl', x: px2, y: 24, 'font-size': 16 }, 'output'));
+    const inCells = {};
+    for (let r = -1; r <= H; ++r) for (let c = -1; c <= W; ++c) {
+      const inside = r >= 0 && r < H && c >= 0 && c < W;
+      const rect = el('rect', { class: inside ? 'cell' : 'cell out', x: ox + (c + 1) * S, y: oy + (r + 1) * S, width: S - 2, height: S - 2, rx: 2 });
+      svg.appendChild(rect);
+      let t = null;
+      if (inside) { t = el('text', { x: ox + (c + 1) * S + S / 2 - 1, y: oy + (r + 1) * S + S / 2 + 4, 'text-anchor': 'middle', 'font-size': 14 }, val(r, c)); svg.appendChild(t); }
+      inCells[r + ',' + c] = { rect, t, inside };
+    }
+    const outCells = [];
+    for (let r = 0; r < H; ++r) for (let c = 0; c < W; ++c) {
+      const rect = el('rect', { class: 'cell', x: px2 + c * S, y: oy + S + r * S, width: S - 2, height: S - 2, rx: 2 });
+      const t = el('text', { x: px2 + c * S + S / 2 - 1, y: oy + S + r * S + S / 2 + 4, 'text-anchor': 'middle', 'font-size': 14 }, '');
+      svg.appendChild(rect); svg.appendChild(t); outCells.push({ rect, t });
+    }
+    const frame = el('rect', { width: 3 * S, height: 3 * S, fill: 'none', stroke: '#2F6FD0', 'stroke-width': 3, rx: 4 });
+    svg.appendChild(frame);
+    const avg = (r, c) => { let s = 0, n = 0; for (let dr = -1; dr <= 1; ++dr) for (let dc = -1; dc <= 1; ++dc) { const rr = r + dr, cc = c + dc; if (rr >= 0 && rr < H && cc >= 0 && cc < W) { s += val(rr, cc); ++n; } } return { s, n, v: Math.floor(s / n) }; };
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => W * H, (k) => {
+      const row = Math.floor(k / W), col = k % W;
+      for (const key in inCells) { const C = inCells[key], [r, c] = key.split(',').map(Number), inPatch = Math.abs(r - row) <= 1 && Math.abs(c - col) <= 1;
+        C.rect.classList.toggle('soft', inPatch && C.inside); C.rect.classList.toggle('outhit', inPatch && !C.inside); C.rect.classList.toggle('out', !C.inside && !inPatch); }
+      frame.setAttribute('x', ox + col * S - 1); frame.setAttribute('y', oy + row * S - 1);
+      outCells.forEach((O, i) => { O.rect.classList.toggle('hl', i === k); O.t.classList.toggle('hl-t', i === k); O.t.textContent = i <= k ? avg(Math.floor(i / W), i % W).v : ''; });
+      const { s, n, v } = avg(row, col);
+      const where = n === 4 ? 'a corner' : n === 6 ? 'an edge' : 'inside';
+      cap.innerHTML = `out[${row}][${col}]: ${where}, <b>${n}</b> pixels in the patch   sum = ${s}   ${s} / ${n} = <b>${v}</b>\n` +
+        `thread (col ${col}, row ${row}) visits 9 positions, keeps the ${n} inside the picture`;
+    }, 700);
+  };
+
+  // 7. matrix multiplication: the k loop of one thread
+  ANIM.matmul = (root) => {
+    const svg = el('svg', { viewBox: '0 0 1000 420', role: 'img', 'aria-label': 'Matrix multiplication: an element of P is the dot product of a row of M and a column of N, accumulated over k' });
+    root.querySelector('[data-svg]').appendChild(svg);
+    const S = 46, Mx = 150, My = 228, Nx = 360, Ny = 16, Px = 360, Py = 228;
+    const M = [[1, 2, 0, 1], [0, 1, 3, 2], [2, 0, 1, 1], [1, 3, 2, 0]];
+    const N = [[2, 1, 0, 1], [1, 0, 2, 1], [0, 2, 1, 3], [1, 1, 1, 0]];
+    const P = M.map((row, r) => N[0].map((_, c) => row.reduce((s, _, k) => s + M[r][k] * N[k][c], 0)));
+    function grid(x0, y0, vals, label, clickable) {
+      svg.appendChild(el('text', { x: x0 - 26, y: y0 + 24, 'font-size': 20, 'font-weight': 600 }, label));
+      const out = [];
+      for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) {
+        const rect = el('rect', { class: 'cell', x: x0 + c * S, y: y0 + r * S, width: S - 3, height: S - 3, rx: 3 });
+        const t = el('text', { x: x0 + c * S + S / 2 - 1.5, y: y0 + r * S + S / 2 + 4, 'text-anchor': 'middle', 'font-size': 15 }, vals ? vals[r][c] : '');
+        if (clickable) { rect.style.cursor = 'pointer'; rect.addEventListener('click', () => st.goto((r * 4 + c) * 5)); }
+        svg.appendChild(rect); svg.appendChild(t); out.push({ rect, t });
+      }
+      return out;
+    }
+    const gM = grid(Mx, My, M, 'M'), gN = grid(Nx, Ny, N, 'N'), gP = grid(Px, Py, null, 'P', true);
+    const info = [];
+    for (let i = 0; i < 6; ++i) { const t = el('text', { x: 590, y: 250 + i * 28, 'font-size': 16 }, ''); svg.appendChild(t); info.push(t); }
+    svg.appendChild(el('text', { class: 'lbl', x: 590, y: 40, 'font-size': 15 }, 'P[row][col] = Σk M[row][k] · N[k][col]'));
+    svg.appendChild(el('text', { class: 'lbl', x: 590, y: 66, 'font-size': 15 }, 'one thread per element of P'));
+    let st;
+    st = stepper(root, () => 80, (s) => {
+      const e = Math.floor(s / 5), k = s % 5, row = Math.floor(e / 4), col = e % 4, kk = Math.min(k, 3);
+      gM.forEach((C, i) => { const r = Math.floor(i / 4), c = i % 4; C.rect.classList.toggle('soft', r === row); C.rect.classList.toggle('hl', r === row && c === kk && k < 4); C.t.classList.toggle('hl-t', r === row && c === kk && k < 4); });
+      gN.forEach((C, i) => { const r = Math.floor(i / 4), c = i % 4; C.rect.classList.toggle('soft', c === col); C.rect.classList.toggle('hl', c === col && r === kk && k < 4); C.t.classList.toggle('hl-t', c === col && r === kk && k < 4); });
+      let partial = 0; for (let j = 0; j < Math.min(k + 1, 4); ++j) partial += M[row][j] * N[j][col];
+      gP.forEach((C, i) => { const done = i < e || (i === e && k === 4); C.rect.classList.toggle('hl', i === e); C.t.classList.toggle('hl-t', i === e);
+        C.t.textContent = i === e ? (k === 4 ? P[row][col] : partial) : done ? P[Math.floor(i / 4)][i % 4] : ''; });
+      const lines = k < 4 ? [
+        `row = ${row}, col = ${col}, k = ${k}`,
+        `sum += M[${row}][${k}] · N[${k}][${col}]`,
+        `     = ${M[row][k]} · ${N[k][col]}  →  sum = ${partial}`,
+        `M[row·4 + k] = M[${row * 4 + k}]`,
+        `N[k·4 + col] = N[${k * 4 + col}]`,
+        ''] : [`row = ${row}, col = ${col}: loop done`, `P[row·4 + col] = P[${row * 4 + col}]`, `             = ${P[row][col]}`, '', 'next thread…', ''];
+      info.forEach((t, i) => t.textContent = lines[i]);
+    }, 750);
+    return st;
+  };
+
+  // 8. tiling P with 2x2 blocks
+  ANIM.tiles = (root) => {
+    const svg = el('svg', { viewBox: '0 0 330 330', role: 'img', 'aria-label': 'A 4 by 4 matrix P split into four 2 by 2 tiles, one per block' });
+    root.querySelector('[data-svg]').appendChild(svg);
+    const tint = ['#DCE7F8', '#F6EAD2', '#DCEFDC', '#F3DCDC'], S = 74, o = 18;
+    const cells = [];
+    for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) {
+      const b = Math.floor(r / 2) * 2 + Math.floor(c / 2);
+      const rect = el('rect', { x: o + c * S, y: o + r * S, width: S - 3, height: S - 3, rx: 3, fill: tint[b], stroke: '#9a9a9a' });
+      const t = el('text', { x: o + c * S + S / 2 - 1.5, y: o + r * S + S / 2 + 5, 'text-anchor': 'middle', 'font-size': 15 }, `P${r},${c}`);
+      svg.appendChild(rect); svg.appendChild(t); cells.push({ rect, t, r, c });
+    }
+    svg.appendChild(el('line', { x1: o + 2 * S - 1.5, y1: o - 4, x2: o + 2 * S - 1.5, y2: o + 4 * S, stroke: '#1A1A1A', 'stroke-width': 3 }));
+    svg.appendChild(el('line', { x1: o - 4, y1: o + 2 * S - 1.5, x2: o + 4 * S, y2: o + 2 * S - 1.5, stroke: '#1A1A1A', 'stroke-width': 3 }));
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => 16, (k) => {
+      const b = Math.floor(k / 4), t = k % 4, bx = b % 2, by = Math.floor(b / 2), tx = t % 2, ty = Math.floor(t / 2);
+      const row = by * 2 + ty, col = bx * 2 + tx;
+      cells.forEach(C => { const on = C.r === row && C.c === col; C.rect.classList.toggle('hl', on); C.t.classList.toggle('hl-t', on); });
+      cap.innerHTML = `Block (<b>${bx}</b>, <b>${by}</b>)  Thread (<b>${tx}</b>, <b>${ty}</b>)\nrow = ${by}·2 + ${ty} = <b>${row}</b>   col = ${bx}·2 + ${tx} = <b>${col}</b>   → P[${row}][${col}]`;
+    }, 900);
+  };
+
+  // ---------------------------------------------------------------- deck navigation
+  const slides = [...document.querySelectorAll('.slide')];
+  const counter = document.getElementById('counter');
+  const inst = new Map();
+  slides.forEach(s => { const d = s.querySelector('[data-anim]'); if (d && ANIM[d.dataset.anim]) inst.set(s, ANIM[d.dataset.anim](d)); });
+  let i = Math.max(0, Math.min(slides.length - 1, (parseInt(location.hash.slice(1), 10) || 1) - 1)), current = null;
+  function show(n) {
+    if (current) current.leave();
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    history.replaceState(null, '', '#' + (i + 1));
+    current = inst.get(slides[i]) || null;
+    if (current) current.enter();
+  }
+  const typing = (t) => t && t.closest && t.closest('input, select, textarea');
+  document.addEventListener('keydown', e => {
+    if (typing(e.target)) return;
+    if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { if (e.target.closest && e.target.closest('button')) return; e.preventDefault(); show(i + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'p') { if (current) current.leave(); slides.forEach(s => s.classList.add('active')); inst.forEach(a => a.enter && a.enter()); inst.forEach(a => a.leave && a.leave()); window.print(); }
+  });
+  document.addEventListener('click', e => {
+    if (e.target.closest('a, pre, code, button, input, label, select, canvas, svg, .diagram, table')) return;
+    show(e.clientX > innerWidth / 2 ? i + 1 : i - 1);
+  });
+  show(i);
+})();
+</script>
+</body>
+</html>

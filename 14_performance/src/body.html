@@ -1,0 +1,642 @@
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 14</div>
+  <h1>Performance considerations</h1>
+  <p class="muted">Sessions 12 and 13 covered how the GPU runs threads and which memories it offers. This session is about the interaction between a kernel's demands and the hardware's limits: how DRAM really works, how to <b>coalesce</b> accesses, hide memory latency, avoid shared memory bank conflicts, and when to <b>coarsen</b>, <b>unroll</b> or <b>double-buffer</b>. It ends with a checklist and a strategy for optimizing any kernel.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 6 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Diagrams are animated or interactive: use Play, Step and Reset, or type your own numbers. Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>Demands versus constraints</h2>
+  <div class="cols">
+    <ul>
+      <li>A kernel's speed depends on how its <b>resource demands</b> meet the hardware's <b>resource constraints</b>.</li>
+      <li>The constraint that dominates is the <b>bottleneck</b>. Different kernels, and the same kernel on different GPUs, have different bottlenecks.</li>
+      <li>Most optimizations <b>trade one resource for another</b>. That helps only if the relieved resource was the bottleneck and the one used more does not become a new one.</li>
+      <li>Without this understanding, tuning is guesswork.</li>
+    </ul>
+    <table>
+      <tr><th>Part</th><th>Question</th></tr>
+      <tr><td>Coalescing</td><td>How do a warp's loads become few DRAM transfers?</td></tr>
+      <tr><td>Hiding latency</td><td>How do channels and banks keep DRAM busy?</td></tr>
+      <tr><td>Vector loads</td><td>Fewer instructions for the same bytes?</td></tr>
+      <tr><td>Bank conflicts</td><td>When do shared memory accesses serialize?</td></tr>
+      <tr><td>Coarsening, unrolling</td><td>Less overhead per unit of work?</td></tr>
+      <tr><td>Double buffering</td><td>Fewer barriers?</td></tr>
+      <tr><td>Checklist, strategy</td><td>Which optimization, and when?</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Why is DRAM so slow?</h2>
+  <div class="diagram" data-anim="dram">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">one DRAM cell array: decoder, horizontal lines, vertical lines, sense amplifiers</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>DRAM delivers bursts, caches deliver lines</h2>
+  <div class="diagram" data-anim="burst">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="seq" class="on">consecutive requests</button><button data-mode="scat">scattered requests</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy burst of 8 locations</span></div>
+  </div>
+  <p class="small muted">Each access also reads the consecutive locations around it, in parallel, and sends them together: a <b>DRAM burst</b>. The on-chip L1 and L2 caches (SRAM) move data in <b>cache lines</b> for the same reason. Using every byte of a burst or a line is far faster than touching scattered locations.</p>
+</section>
+
+<section class="slide">
+  <h2>Coalescing: one request for a whole warp</h2>
+  <div class="diagram" data-anim="coalesce">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="cfg-out" data-out style="font-size:.56em;margin-top:.2em"></div>
+    <div class="dctl"><button data-p="1,0" class="on">a[t], aligned</button><button data-p="1,8">a[8 + t], not aligned</button><button data-p="2,0">a[2t]</button><button data-p="4,0">a[4t]</button><button data-p="32,0">a[32t]</button><span class="muted">simplified: memory moved in aligned 128-byte segments (32 floats)</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>When does the hardware coalesce?</h2>
+  <div class="cols">
+    <ul>
+      <li>All threads of a warp execute the same load instruction at the same time.</li>
+      <li>The hardware checks whether their addresses are <b>consecutive</b>: thread 0 reads X, thread 1 reads X + 1, thread 2 reads X + 2, …</li>
+      <li>If they fall in the same burst or cache line, it <b>combines</b> them into one request for consecutive locations.</li>
+      <li><b>Alignment</b> matters too: if the first address is not at the start of a burst or line, the same 32 values span one more transfer.</li>
+      <li>Coalescing and tiling work together: tiling cuts how much data goes through global memory, coalescing makes each transfer efficient.</li>
+    </ul>
+    <div class="note small">
+      <p><b>Stores count too.</b> An uncoalesced store can cost more than an uncoalesced load: a partial write may force a read-modify-write of the whole unit, which uses even more bandwidth on GPUs with error-correcting code (ECC) memory.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Row-major layout, again</h2>
+  <div class="diagram" data-anim="rowmajor">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">a 2D array in C and CUDA is one linear array</span></div>
+  </div>
+</section>
+
+<section class="slide" id="s-pattern">
+  <h2>The matrix product's loop: coalesced or not?</h2>
+  <div class="diagram" data-anim="pattern">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="row" class="on">N in row-major</button><button data-mode="col">N in column-major</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">4 consecutive threads, iterations k = 0 … 3</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the same loop, two layouts</h2>
+  <div class="cols wl">
+<pre><code>unsigned row = blockIdx.y * blockDim.y + threadIdx.y;
+unsigned col = blockIdx.x * blockDim.x + threadIdx.x;
+if (row &lt; Width &amp;&amp; col &lt; Width) {
+  float Pvalue = 0.0f;
+  for (unsigned k = 0; k &lt; Width; ++k)
+    // N row-major: N[k][col]
+    Pvalue += M[row*Width + k] * N[k*Width + col];
+  P[row*Width + col] = Pvalue;
+}
+
+// N stored column-major (for example, the transpose
+// of a row-major matrix): N[k][col] is at col*Width + k
+    Pvalue += M[row*Width + k] * N[col*Width + k];</code></pre>
+    <ul class="small">
+      <li>Read the index from the warp's point of view: which parts are the <b>same</b> for all its threads, and which part changes with <code>threadIdx.x</code>?</li>
+      <li><code>k*Width + col</code>: only <code>col</code> changes, by 1 per thread → consecutive addresses, <b>coalesced</b>. All our kernels so far were coalesced this way.</li>
+      <li><code>col*Width + k</code>: consecutive threads are <b>Width</b> elements apart → one transfer per thread.</li>
+      <li>The access to M (<code>row*Width + k</code>) is the same address for threads with the same row: one value broadcast, not a problem.</li>
+      <li>Fixes: remap threads to data, change the data layout, or load coalesced into shared memory and do the awkward access there.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" id="s-corner">
+  <h2>Corner turning: load a column of a column-major tile</h2>
+  <div class="diagram" data-anim="corner">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="no" class="on">without corner turning</button><button data-mode="yes">with corner turning</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy 4 × 4 tile; one load instruction of 4 consecutive threads per step</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: corner turning in the tiled kernel</h2>
+  <div class="cols wl">
+<pre><code>// M row-major, N column-major: N[r][c] is at c*Width + r
+__shared__ float Mds[TILE][TILE];
+__shared__ float Nds[TILE][TILE];
+int tx = threadIdx.x, ty = threadIdx.y;
+int Row = blockIdx.y*TILE + ty, Col = blockIdx.x*TILE + tx;
+float Pvalue = 0;
+for (int ph = 0; ph &lt; Width/TILE; ++ph) {
+  // M: consecutive tx read consecutive elements of a row
+  Mds[ty][tx] = M[Row*Width + ph*TILE + tx];
+  // N, naive: N[ph*TILE+ty][Col] → stride Width, slow
+  //   Nds[ty][tx] = N[Col*Width + ph*TILE + ty];
+  // N, corner turning: tx walks down a column
+  int c = blockIdx.x*TILE + ty, r = ph*TILE + tx;
+  Nds[tx][ty] = N[c*Width + r];      // coalesced load
+  __syncthreads();
+  for (int k = 0; k &lt; TILE; ++k)
+    Pvalue += Mds[ty][k] * Nds[k][tx];
+  __syncthreads();
+}
+P[Row*Width + Col] = Pvalue;</code></pre>
+    <ul class="small">
+      <li>The thread at (ty, tx) now loads element (row <code>ph*TILE + tx</code>, column <code>bx*TILE + ty</code>): the roles of <code>threadIdx.x</code> and <code>threadIdx.y</code> are <b>swapped</b> in the load.</li>
+      <li>Its address <code>c*Width + r</code> changes by 1 with tx: the warp reads 32 consecutive elements of one column. Coalesced.</li>
+      <li>It stores into <code>Nds[tx][ty]</code>, so the tile in shared memory has the usual orientation and the inner loop is unchanged.</li>
+      <li>Shared memory is SRAM: it needs no coalescing. But the store <code>Nds[tx][ty]</code> is strided, which causes <b>bank conflicts</b> (slide <span data-ref="s-pad"></span>).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Coalescing is carpooling</h2>
+  <div class="diagram" data-anim="carpool">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">data = commuters, DRAM requests = vehicles</span></div>
+  </div>
+  <p class="small muted">CPUs know bursts too: a CPU cache line maps to part of, one, or several DRAM bursts. Code that uses every byte of each line it touches runs much faster than code that jumps around (code example later in this session).</p>
+</section>
+
+<section class="slide">
+  <h2>Hiding memory latency: channels and banks</h2>
+  <div class="diagram" data-anim="channels">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">4 channels × 4 banks; real systems: 1–8 channels, many banks each</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>How many buses does a processor need?</h2>
+  <div class="cfg" data-anim="buscalc">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">bus width (bits)</span><input type="number" min="1" value="64" data-in="w"></div>
+      <div class="cfg-row"><span class="cfg-lbl">clock (GHz)</span><input type="number" min="0" step="0.1" value="3.2" data-in="f"></div>
+      <div class="cfg-row"><span class="cfg-lbl">needed (GB/s)</span><input type="number" min="0" value="1000" data-in="n"></div>
+      <div class="presets"><button data-p="64,3.2,200">DDR5-6400, CPU 200 GB/s</button><button data-p="64,3.2,1000">DDR5-6400, GPU 1000 GB/s</button><button data-p="64,4.9,1000">HBM3E bus, 1 TB/s</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <ul class="small">
+      <li>A bus's bandwidth = width in bytes × 2 (double data rate: a transfer on the rising and on the falling edge) × clock.</li>
+      <li>A modern CPU may need at least 200 GB/s (about 4 DDR5 buses), a GPU more than 1000 GB/s (about 20).</li>
+      <li>Driving that many wires across a circuit board costs too much power. <b>High Bandwidth Memory</b> (HBM) packages the DRAM next to the processor, with shorter, faster and more numerous buses.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" id="s-banking">
+  <h2>Banks overlap the latency</h2>
+  <div class="diagram" data-anim="banking">
+    <div class="svgwrap" data-svg></div>
+    <div class="cfg-out" data-out style="font-size:.56em"></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><label style="font-family:var(--mono)">latency : transfer R <input data-in="r" type="number" min="1" max="40" value="3" style="font:inherit;width:3.5em"></label><label style="font-family:var(--mono)">banks <input data-in="b" type="number" min="1" max="64" value="1" style="font:inherit;width:3.5em"></label><button data-p="1,1">R 1, 1 bank</button><button data-p="1,2">R 1, 2 banks</button><button data-p="20,1">R 20, 1 bank</button><button data-p="20,21">R 20, 21 banks</button><button data-act="play">Pause</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Interleaved data distribution</h2>
+  <div class="diagram" data-anim="interleave">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy system: 4 channels, 2 banks each, bursts of 2 elements</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Parallel threads, parallel DRAM</h2>
+  <div class="diagram" data-anim="tilebanks">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">4 × 4 tiled product, 2 × 2 blocks and tiles, distribution of the previous slide</span></div>
+  </div>
+  <p class="small muted">The relation goes both ways: using DRAM's bandwidth needs many threads accessing memory at once, and the threads' speed needs those accesses spread over channels and banks. If all simultaneous accesses hit the same channel, throughput drops sharply.</p>
+</section>
+
+<section class="slide">
+  <h2>Vector loads and stores</h2>
+  <div class="diagram" data-anim="vecload">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="scalar" class="on">4-byte loads</button><button data-mode="vec">float4 loads</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">z = x + y on 16 elements</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: vector addition with float4</h2>
+  <div class="cols wl">
+<pre><code>__global__ void vecAdd4(const float* x, const float* y,
+                        float* z, int N) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;  // chunk
+  int n4 = N / 4;                    // whole chunks of 4
+  if (i &lt; n4) {
+    float4 a = reinterpret_cast&lt;const float4*&gt;(x)[i];
+    float4 b = reinterpret_cast&lt;const float4*&gt;(y)[i];
+    float4 c;                         // one 16 B load each
+    c.x = a.x + b.x;  c.y = a.y + b.y;
+    c.z = a.z + b.z;  c.w = a.w + b.w;
+    reinterpret_cast&lt;float4*&gt;(z)[i] = c;  // one 16 B store
+  }
+  if (i == n4)                        // one thread: the tail
+    for (int j = 4 * n4; j &lt; N; ++j) z[j] = x[j] + y[j];
+}
+
+// host: one thread per chunk, plus one for the tail
+int threads = N / 4 + 1;
+vecAdd4&lt;&lt;&lt;(threads + 255) / 256, 256&gt;&gt;&gt;(x_d, y_d, z_d, N);</code></pre>
+    <ul class="small">
+      <li>Casting to <code>float4*</code> makes the compiler emit <b>vector</b> loads and stores of 16 bytes.</li>
+      <li>Two vector loads replace eight scalar ones: 75 % less instruction overhead for the same bytes, and neighbouring threads still read neighbouring chunks (coalesced).</li>
+      <li>Only a quarter as many threads: useful when the kernel cannot run at full occupancy but still needs many bytes in flight.</li>
+      <li>Boundary: when N is not a multiple of 4, the last elements are handled with scalar accesses, and extra threads do nothing.</li>
+      <li>The address of a <code>float4</code> must be a multiple of 16. <code>cudaMalloc</code> returns aligned memory; an offset like <code>x + 1</code> would not be.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide" id="s-banks">
+  <h2>Shared memory banks</h2>
+  <div class="diagram" data-anim="banks">
+    <div class="svgwrap" data-svg></div>
+    <div class="cfg-out" data-out style="font-size:.56em"></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><label style="font-family:var(--mono)">stride <input data-in="s" type="number" min="1" max="64" value="1" style="font:inherit;width:3.5em"></label><button data-p="1">1</button><button data-p="2">2</button><button data-p="4">4</button><button data-p="16">16</button><button data-p="31">31</button><button data-p="32">32</button><button data-p="33">33</button><span class="muted">32 banks of 4 bytes, consecutive words in consecutive banks</span></div>
+  </div>
+  <p class="small muted">Shared memory is SRAM with a latency of a few cycles, so it needs no bursts and its banks are narrow. When threads of a warp hit <b>different banks</b> they are served in parallel; several threads on one bank (different addresses) are a <b>bank conflict</b> and get served one at a time.</p>
+</section>
+
+<section class="slide" id="s-pad">
+  <h2>Padding removes the conflict of a column access</h2>
+  <div class="diagram" data-anim="padding">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="nopad" class="on">a[TILE][TILE]</button><button data-mode="pad">a[TILE][TILE + 1]</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy: 8 banks, 8 × 8 tile</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: padding the corner-turning tile</h2>
+  <div class="cols wl">
+<pre><code>// 32 x 32 blocks: a warp = 32 consecutive threadIdx.x,
+// same threadIdx.y
+__shared__ float a[TILE_DIM][TILE_DIM];     // TILE_DIM 32
+a[threadIdx.x][threadIdx.y] = ...;
+// index = x*32 + y  → bank y for every thread:
+// a 32-way conflict, 32 passes
+
+__shared__ float a[TILE_DIM][TILE_DIM + 1]; // one extra column
+a[threadIdx.x][threadIdx.y] = ...;
+// index = x*33 + y  → bank (x + y) % 32: all different</code></pre>
+    <ul class="small">
+      <li>The padding column is never used: it only shifts each row by one bank.</li>
+      <li><b>Cost 1</b>: more shared memory (here 32 more floats per tile), which can matter for occupancy.</li>
+      <li><b>Cost 2</b>: index arithmetic. <code>i*32</code> is a shift (<code>i &lt;&lt; 5</code>); <code>i*33</code> needs <code>(i &lt;&lt; 5) + i</code>.</li>
+      <li>The benefit depends on the original stride: with 16 columns the warp would hit 2 banks (16-way conflicts), so padding gains less.</li>
+      <li>The other fix is to remap threads to data so that a warp walks along a row.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread coarsening</h2>
+  <div class="diagram" data-anim="coarsen">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="fine4" class="on">1 unit per thread, 4 slots</button><button data-mode="coarse4">4 units per thread, 4 slots</button><button data-mode="fine16">1 unit, 16 slots</button><button data-mode="coarse16">4 units, 16 slots</button><button data-act="play">Pause</button><button data-act="reset">Reset</button></div>
+  </div>
+  <p class="small muted">Finest granularity (one output per thread) gives transparent scalability, but parallelizing has an <b>overhead</b>: redundant loads by different blocks, redundant work, synchronization, extra instructions. If the hardware runs everything in parallel the overhead is worth it; if it serializes the threads anyway, the overhead was paid for nothing.</p>
+</section>
+
+<section class="slide">
+  <h2>Code: a coarsening loop</h2>
+  <div class="cols wl">
+<pre><code>// one unit of work per thread
+unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+foo(i);
+
+// coarsening factor 4: four consecutive units per thread
+unsigned iStart = 4 * (blockIdx.x * blockDim.x + threadIdx.x);
+for (unsigned c = 0; c &lt; 4; ++c) {   // the coarsening loop
+  unsigned i = iStart + c;
+  foo(i);
+}
+// launch a quarter as many threads</code></pre>
+    <ul class="small">
+      <li>Thread 0 handles units 0–3, thread 1 units 4–7, and so on. The number of units per thread is the <b>coarsening factor</b>.</li>
+      <li>The float4 vector addition is coarsening: one thread adds four pairs to use vector loads.</li>
+      <li>The tiled matrix product is another candidate: every block reloads the same input tiles, so fewer blocks with larger output tiles load each input tile fewer times (developed in later chapters).</li>
+      <li>Coarsening matters when it removes real overhead. Fully independent computations gain little from it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>How much coarsening? Count the waves</h2>
+  <div class="cfg" data-anim="waves">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">blocks</span><input type="number" min="1" value="1056" data-in="b"></div>
+      <div class="cfg-row"><span class="cfg-lbl">blocks at once</span><input type="number" min="1" value="264" data-in="c"></div>
+      <div class="cfg-row"><span class="cfg-lbl">coarsening factor</span><input type="number" min="1" value="8" data-in="f"></div>
+      <div class="presets"><button data-p="1056,8">1056 blocks, × 8</button><button data-p="1584,4">1584 blocks, × 4</button><button data-p="1584,2">1584 blocks, × 2</button><button data-p="1584,3">1584 blocks, × 3</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <ul class="small">
+        <li><b>Pitfall 1</b>: coarsening where there is no overhead to remove.</li>
+        <li><b>Pitfall 2</b>: too much coarsening leaves the GPU partly empty, or creates a partial last wave (tail effect). The best factor depends on the device and the data: scalability is less transparent.</li>
+        <li><b>Pitfall 3</b>: more work per thread can need more registers or shared memory, lowering occupancy.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Loop unrolling</h2>
+  <div class="diagram" data-anim="unroll">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="rolled" class="on">for (i) { A(i); B(i); }</button><button data-mode="unrolled">unrolled × 4</button><button data-mode="sched">unrolled and reordered</button><button data-act="play">Pause</button><button data-act="reset">Reset</button></div>
+  </div>
+  <p class="small muted">GPUs are throughput-oriented: they tolerate latency mainly through occupancy (many warps). Unrolling is a second tool inside one thread: fewer branch instructions (GPUs have no sophisticated branch prediction, so a branch stalls the thread) and more independent instructions to fill the waits.</p>
+</section>
+
+<section class="slide">
+  <h2>Code: unrolling and coarsening loops</h2>
+  <div class="cols wl">
+<pre><code>// ask the compiler for a factor of 4 (1 = do not unroll)
+#pragma unroll 4
+for (unsigned i = 0; i &lt; 16; ++i) {
+  A(i);
+  B(i);
+}
+
+// coarsening: each thread handles 4 values of x
+int x[4];
+for (unsigned c = 0; c &lt; 4; ++c)
+  foo(x[c]);          // x[c]: index known only at run time
+                      // → x lives in local memory (DRAM)
+
+// fully unrolled (the compiler does it: small constant bound)
+foo(x[0]);  foo(x[1]);  foo(x[2]);  foo(x[3]);
+// constant indices → x can be promoted to registers</code></pre>
+    <ul class="small">
+      <li>The compiler unrolls and schedules aggressively by itself, especially loops with small constant bounds. <code>#pragma unroll N</code> lets the programmer choose.</li>
+      <li>Coarsening loops are the typical case: small and constant, so they unroll completely.</li>
+      <li>Unrolling turns <code>x[c]</code> into <code>x[0]</code> … <code>x[3]</code>: constant indices, so the local array moves from memory to <b>registers</b> (session 13, local memory).</li>
+      <li>So unrolling also enables constant propagation and register promotion: it is what makes coarsening efficient.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Double buffering</h2>
+  <div class="diagram" data-anim="dbuf">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="one" class="on">one buffer, two barriers</button><button data-mode="two">two buffers, one barrier</button><button data-act="play">Pause</button><button data-act="reset">Reset</button><span class="muted">4 threads of different speed, 3 iterations</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: double buffering</h2>
+  <div class="cols wl">
+<pre><code>// one buffer: two barriers per iteration
+for (unsigned i = 0; i &lt; N; ++i) {
+  float v = buffer[anotherThreadID];
+  __syncthreads();        // write-after-read (false dependence)
+  buffer[myThreadID] = f(v);
+  __syncthreads();        // read-after-write (true dependence)
+}
+
+// two buffers that trade places: one barrier
+for (unsigned i = 0; i &lt; N; ++i) {
+  float v = inBuffer[anotherThreadID];
+  outBuffer[myThreadID] = f(v);
+  __syncthreads();        // read-after-write only
+  swap(inBuffer, outBuffer);   // pointers to shared arrays
+}</code></pre>
+    <ul class="small">
+      <li>The first barrier only exists because the read and the write use the <b>same location</b>: a false dependence.</li>
+      <li>With separate buffers, a write can never overwrite something another thread is still reading in this iteration.</li>
+      <li>Why is one barrier still enough? A fast thread writes into the old input buffer only in the next iteration, after the barrier, which every thread reaches only after its reads.</li>
+      <li>The cost is a second buffer; one buffer per iteration would waste much more memory.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>A checklist of optimizations</h2>
+  <div data-anim="checklist">
+    <div class="dctl" style="font-size:.6em;margin:0 0 .5em"><button data-cat="compute" class="on">Compute utilization</button><button data-cat="memory">Memory utilization</button><button data-cat="sync">Synchronization latency</button><button data-cat="general">General</button></div>
+    <div data-out style="font-size:.95em"></div>
+  </div>
+  <p class="small muted">Not exhaustive, but these optimizations recur in almost every parallel pattern of the book. Each is filed under the aspect it mainly targets.</p>
+</section>
+
+<section class="slide">
+  <h2>Where the checklist comes back</h2>
+  <table>
+    <tr><th>Optimization</th><th>Where we saw it</th><th>Where it returns</th></tr>
+    <tr><td>Occupancy tuning</td><td>session 12 (threads, blocks, registers), session 13 (shared memory)</td><td>matrix product with more resources per thread</td></tr>
+    <tr><td>Loop unrolling</td><td>this session</td><td>prefix sum, register tiling after coarsening</td></tr>
+    <tr><td>Less divergence</td><td>session 12 (boundary checks)</td><td>reduction, graph traversal, sparse matrices</td></tr>
+    <tr><td>Coalescing</td><td>this session (corner turning)</td><td>filtering, sorting, merge (packing), sparse formats</td></tr>
+    <tr><td>Shared memory tiling</td><td>session 13</td><td>convolution, stencil, matrix product, dynamic programming</td></tr>
+    <tr><td>Register tiling</td><td>sessions 11 and 13 (Pvalue)</td><td>stencil, prefix sum, matrix product</td></tr>
+    <tr><td>Bank conflicts</td><td>this session (padding)</td><td>prefix sum, matrix product</td></tr>
+    <tr><td>Privatization</td><td>session 10 (histograms, per-thread combiners)</td><td>histogram, filtering, graph traversal</td></tr>
+    <tr><td>Warp primitives, double buffering</td><td>this session</td><td>reduction, prefix sum, filtering, matrix product</td></tr>
+    <tr><td>Thread coarsening</td><td>this session (float4)</td><td>stencil, histogram, reduction, prefix sum, sorting</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>An optimization strategy</h2>
+  <div class="diagram" data-anim="strategy">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-bn="bw" class="on">bandwidth-bound</button><button data-bn="occ">occupancy-bound</button><button data-bn="ins">instruction overhead</button><button data-bn="sync">barrier waits</button><button data-bn="div">divergence</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: measuring before optimizing</h2>
+  <div class="cols wl">
+<pre><code>cudaEvent_t start, stop;
+cudaEventCreate(&amp;start);  cudaEventCreate(&amp;stop);
+cudaEventRecord(start);
+vecAdd4&lt;&lt;&lt;grid, block&gt;&gt;&gt;(x_d, y_d, z_d, N);
+cudaEventRecord(stop);
+cudaEventSynchronize(stop);
+float ms = 0;
+cudaEventElapsedTime(&amp;ms, start, stop);
+
+double bytes = 3.0 * N * sizeof(float);   // 2 reads + 1 write
+double gbps = bytes / (ms * 1e6);
+double peak = 3350;                        // H100: 3.35 TB/s
+printf("%.3f ms, %.0f GB/s = %.0f %% of peak\n",
+       ms, gbps, 100 * gbps / peak);</code></pre>
+<pre><code># where does the time go? (NVIDIA Nsight Compute)
+ncu --set full -o report ./vecadd
+ncu --import report.ncu-rep --page details</code></pre>
+    <ul class="small">
+      <li>Events time the kernel on the GPU itself, without host overhead.</li>
+      <li><b>Effective bandwidth</b> = bytes the kernel must move / time. Compared with the peak, it is the speed-of-light analysis of session 13.</li>
+      <li>A memory-bound kernel near 90 % of peak bandwidth has little left to gain; one at 20 % probably has a coalescing or occupancy problem.</li>
+      <li>The profiler reports which unit is the bottleneck (memory throughput, issue stalls, occupancy limiters, bank conflicts), so the next optimization is chosen on evidence.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: array of structures versus structure of arrays</h2>
+  <div class="cols wl">
+<pre><code>struct Particle { float x, y, z, m; };       // 16 B
+
+// array of structures (AoS)
+__global__ void sumX(const Particle* p, float* out, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i &lt; n) out[i] = p[i].x * 2.0f;  // stride of 16 B
+}
+
+// structure of arrays (SoA)
+struct Particles { float *x, *y, *z, *m; };
+__global__ void sumX(Particles p, float* out, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i &lt; n) out[i] = p.x[i] * 2.0f;  // consecutive
+}</code></pre>
+    <ul class="small">
+      <li>AoS: thread i reads <code>p[i].x</code>; consecutive threads are 16 bytes apart. A warp touches 512 bytes to use 128: <b>25 %</b> of the moved bytes are useful.</li>
+      <li>SoA: all x values are contiguous, the warp reads 128 consecutive bytes, <b>100 %</b> useful.</li>
+      <li>If every field is used by the same thread, AoS can still be fine, especially with vector loads (one <code>float4</code> per particle).</li>
+      <li>Converting AoS to SoA is one of the layout changes on the checklist.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the CPU twin of coalescing</h2>
+  <div class="cols wl">
+<pre><code>// 14_performance/example_64.cpp (excerpt)
+// sum all n values, visiting them in stride order
+for (size_t off = 0; off &lt; stride; ++off)
+  for (size_t i = off; i &lt; n; i += stride)
+    s += a[i];
+
+// one field of an array of structures vs its own array
+for (size_t i = 0; i &lt; p; ++i) s += aos[i].x;   // AoS
+for (size_t i = 0; i &lt; p; ++i) s += x[i];       // SoA</code></pre>
+    <div>
+      <table>
+        <tr><th>stride</th><th>time (128 MB)</th><th>vs 1</th></tr>
+        <tr><td>1, 2, 4</td><td>≈ 17 ms</td><td>1.0 ×</td></tr>
+        <tr><td>8</td><td>≈ 20 ms</td><td>1.2 ×</td></tr>
+        <tr><td>16 (one line)</td><td>≈ 38 ms</td><td>2.3 ×</td></tr>
+        <tr><td>32, 64</td><td>≈ 105 ms</td><td>≈ 6 ×</td></tr>
+      </table>
+      <p class="small">AoS ≈ 2.7 ms, SoA ≈ 0.7 ms: about <b>4 ×</b>. Apple M1 Pro, <code>g++ -O2</code>, best of 5 runs.</p>
+      <p class="small muted">Same data, same arithmetic. From stride 16 on, every value read drags in a whole 64-byte line that is evicted before its neighbours are used. Run it: <code>g++ -std=c++17 -O2 example_64.cpp &amp;&amp; ./a.out</code></p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>DRAM is slow per access (tens of ns) and fast in bulk: it delivers <b>bursts</b> of consecutive locations, and caches move <b>lines</b>.</li>
+    <li><b>Coalescing</b>: when the threads of a warp access consecutive, aligned addresses, their accesses combine into one request. Read each index from the warp's point of view; fix bad patterns by remapping threads, changing the layout, or corner turning through shared memory.</li>
+    <li>DRAM hides its latency with <b>channels and banks</b>, interleaving data across them. Using them needs many simultaneous, well-spread accesses: occupancy again.</li>
+    <li><b>Vector loads</b> move 16 B per instruction. <b>Bank conflicts</b> serialize shared memory; padding or remapping removes them.</li>
+    <li><b>Coarsening</b> removes parallelization overhead when the hardware would serialize anyway; <b>unrolling</b> cuts branches and enables scheduling and register promotion; <b>double buffering</b> removes barriers that only guard false dependences.</li>
+    <li>Optimize iteratively: measure, find the bottleneck, relieve it without overloading another resource, and stop near the roofline.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 14.1–14.5</h2>
+  <div class="cols wl">
+<pre><code>__global__ void foo_kernel(float* a, float* b, float* c,
+                           float* d, float* e) {
+  unsigned i = blockIdx.x*blockDim.x + threadIdx.x;
+  __shared__ float a_s[256];
+  __shared__ float bc_s[4*256];
+  a_s[threadIdx.x] = a[i];                           // L5
+  for (unsigned j = 0; j &lt; 4; ++j)
+    bc_s[j*256 + threadIdx.x] =
+        b[j*blockDim.x*gridDim.x + i] + c[i*4 + j];  // L7
+  __syncthreads();
+  d[i + 8] = a_s[threadIdx.x];                       // L10
+  e[i*8] = bc_s[threadIdx.x*4];                      // L11
+}</code></pre>
+    <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.4em">
+      <li>For the kernel on the left (blocks of 256 threads), say whether each access is coalesced, uncoalesced or not applicable: a and a_s in L5; b, c and bc_s in L7; a_s and d in L10; bc_s and e in L11.</li>
+      <li>Write the tiled matrix product with corner turning for M row-major and N column-major, with boundary checks.</li>
+      <li>In the tiled kernel of session 13, for which square tile sizes are all global memory accesses fully coalesced?</li>
+      <li>Complete a float4 vector addition that is correct for any N, including the tail and the threads past the end.</li>
+      <li>A block of one warp runs <code>__shared__ float a[1024]; a[threadIdx.x*stride] = …;</code> with a[0] in bank 0. For stride = 32, 31, 24, 16, 12, 8 and 7, which banks are used and how many ways is each conflict?</li>
+    </ol>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Exercises 14.6–14.10</h2>
+  <ol class="small" start="6" style="margin:0;padding-left:1.4em;display:grid;gap:.45em">
+    <li>A 64-bit DDR5-4800 bus runs at 2.4 GHz. What is its bandwidth, and how many such buses does a GPU that needs 1 TB/s require?</li>
+    <li>The cell-array access latency of a DRAM bank is 15 times its burst transfer time. What fraction of a channel's bandwidth does one bank use? How many banks fill the channel? What fraction do 8 banks reach?</li>
+    <li>A kernel has 2112 blocks and the GPU runs 264 at a time. How many waves does it take with coarsening factors 1, 2, 3 and 16, and which choices leave hardware idle?</li>
+    <li>Threads of a warp read <code>p[i].x</code> from an array of <code>struct {float x, y, z, w;}</code>. Assuming whole 128-byte segments are moved, what fraction of the moved bytes is used? And with a structure of arrays?</li>
+    <li>In the one-buffer loop of the double-buffering slide, what can go wrong if we drop the first barrier? And the second? Why can the double-buffered version not drop its only barrier?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 14.1–14.5</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>14.1</td><td>L5: <b>a</b> coalesced, <b>a_s</b> not applicable (shared). L7: <b>b</b> coalesced (consecutive i), <b>c</b> uncoalesced (c[i*4 + j]: threads 16 B apart), <b>bc_s</b> not applicable. L10: <b>a_s</b> n/a, <b>d</b> coalesced (consecutive, shifted by 8 floats: may touch one extra segment). L11: <b>bc_s</b> n/a (but stride 4 in shared memory: a 4-way bank conflict), <b>e</b> uncoalesced (stride 8).</td></tr>
+    <tr><td>14.2</td><td>The kernel of the corner-turning code slide, with <code>ceil(Width / TILE)</code> phases and the three tests of session 13: load M if <code>Row &lt; Width &amp;&amp; ph*TILE + tx &lt; Width</code>, load N if <code>c &lt; Width &amp;&amp; r &lt; Width</code> (otherwise store 0), store P if <code>Row &lt; Width &amp;&amp; Col &lt; Width</code>. Use <code>Nds[TILE][TILE + 1]</code> to avoid the bank conflict of the transposed store.</td></tr>
+    <tr><td>14.3</td><td><b>32 × 32</b>. A warp is 32 consecutive threads in row-major order: with TILE = 32 it is one row of the block, so its M, N and P accesses are 32 consecutive elements. With TILE = 16 a warp spans 2 rows (two separate runs of 16), with 8 it spans 4 rows: partly coalesced only.</td></tr>
+    <tr><td>14.4</td><td>See the float4 code slide: <code>n4 = N / 4</code> vector chunks, one extra thread for the tail with scalar accesses, all others guarded by <code>if (i &lt; n4)</code>. Launch <code>ceil((n4 + 1) / blockDim)</code> blocks.</td></tr>
+    <tr><td>14.5</td><td>Bank = (t × stride) mod 32; conflict degree = gcd(stride, 32). 32: bank 0 only, <b>32-way</b>. 31: all 32 banks, <b>none</b>. 24: banks 0, 8, 16, 24, <b>8-way</b>. 16: banks 0 and 16, <b>16-way</b>. 12: banks 0, 4, …, 28, <b>4-way</b>. 8: banks 0, 8, 16, 24, <b>8-way</b>. 7: all banks, <b>none</b>. Check with the calculator on slide <span data-ref="s-banks"></span>.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Solutions 14.6–14.10</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>14.6</td><td>8 B × 2 × 2.4 GHz = <b>38.4 GB/s</b>. 1000 / 38.4 = 26.04 → <b>27 buses</b>.</td></tr>
+    <tr><td>14.7</td><td>One bank: 1 / (15 + 1) = <b>6.25 %</b>. Full use needs R + 1 = <b>16 banks</b> (more, to make bank conflicts rare). 8 banks: 8 / 16 = <b>50 %</b>.</td></tr>
+    <tr><td>14.8</td><td>Factor 1: 2112 / 264 = <b>8 waves</b>. Factor 2: 1056 blocks = 4 waves. Factor 3: 704 blocks = 2.67 waves, the third wave only 2/3 full (<b>tail effect</b>). Factor 16: 132 blocks = 0.5 wave: <b>half the GPU idle</b> for the whole run.</td></tr>
+    <tr><td>14.9</td><td>AoS: 32 threads × 16 B = 512 B in 4 segments, 128 B used → <b>25 %</b>. SoA: 128 consecutive bytes in 1 segment → <b>100 %</b>.</td></tr>
+    <tr><td>14.10</td><td>Without the first barrier, a fast thread may overwrite <code>buffer[myThreadID]</code> while a slower one still has to read it (<b>write-after-read</b>). Without the second, a thread may read a neighbour's value before it is written (<b>read-after-write</b>). The double-buffered barrier guards that true dependence: without it, the next iteration could read the other buffer before its values are written.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study: where this continues</h2>
+  <ul>
+    <li><b>Chapter 7</b>: convolution, where tiling meets input and output tiles of different sizes, and constant memory.</li>
+    <li><b>Chapters 10–11</b>: reduction and prefix sum, where divergence, bank conflicts, warp-level primitives and coarsening all appear.</li>
+    <li><b>Chapter 15</b>: an optimized matrix product: coarsening, register tiling, double buffering.</li>
+    <li><b>Try it</b>: run <code>14_performance/example_64.cpp</code> with a larger structure (8 floats). Does the AoS/SoA ratio grow as expected?</li>
+    <li><b>Try it</b>: in the bank calculator (slide <span data-ref="s-banks"></span>), find all strides from 1 to 64 that are conflict-free. What do they have in common?</li>
+    <li><b>Reference</b>: NVIDIA Nsight Compute documentation, <code>docs.nvidia.com/nsight-compute</code>.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>14 · Performance considerations</span><span id="counter"></span></div>

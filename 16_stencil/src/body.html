@@ -1,0 +1,412 @@
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 16</div>
+  <h1>Stencil computation on the GPU</h1>
+  <p class="muted">A stencil looks like a convolution with a sparse filter. But stencils come from <b>differential equations</b> on <b>3D grids</b>, and that changes which optimizations pay off. This session: where stencils come from, the basic kernel, why shared-memory tiling buys much less than for convolution, and the two fixes, <b>thread coarsening</b> along z and <b>register tiling</b>.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 8 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/stencil</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>Same shape as convolution, different problem</h2>
+  <div class="cols">
+    <ul>
+      <li>Both compute each output from the input element at the same position and its neighbours, so both have halo cells and tiles. What you learned in session 15 still applies.</li>
+      <li>But a stencil <b>approximates derivatives</b>: its weights come from the equation being solved, and it is applied <b>sweep after sweep</b>.</li>
+      <li>The neighbourhood is a <b>star</b> along the axes, not a dense box: far fewer FLOP per loaded element, so far less reuse.</li>
+      <li>The grids are usually <b>3D</b>, where halos are huge and 1024 threads make a tiny tile.</li>
+      <li>Numerical accuracy pushes towards <b>double precision</b>: more bytes per point, more on-chip memory per tile.</li>
+    </ul>
+    <table>
+      <tr><th></th><th>convolution</th><th>stencil</th></tr>
+      <tr><td>typical data</td><td>2D images</td><td>3D grids</td></tr>
+      <tr><td>neighbourhood</td><td>(2r + 1)<sup>d</sup> box</td><td>2·d·r + 1 points on the axes</td></tr>
+      <tr><td>weights</td><td>designed filter</td><td>from the PDE and the grid spacing</td></tr>
+      <tr><td>edges</td><td>ghost cells = 0</td><td>boundary cells, fixed values</td></tr>
+      <tr><td>repetition</td><td>one pass</td><td>many sweeps, output → input</td></tr>
+      <tr><td>new optimizations</td><td>constant memory, tiling</td><td>+ coarsening in z, register tiling</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Discretization: a function becomes an array</h2>
+  <div class="cfg" data-anim="sine">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">grid points n</span><input type="number" min="3" max="81" value="7" data-in="n"></div>
+      <div class="presets"><button data-p="7" class="on">7 (h = π/6)</button><button data-p="13">13</button><button data-p="25">25</button><button data-p="49">49</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>A <b>structured grid</b> samples sin(x) on 0 ≤ x ≤ π at constant spacing h; the array F stores F[i] = sin(i·h).</li>
+        <li>The central difference gives the derivative at every grid point from its two neighbours.</li>
+        <li>Smaller h: more accurate, but more storage and more work per sweep.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>From a finite difference to a stencil</h2>
+  <div class="cols">
+    <div style="display:grid;gap:.5em">
+      <div class="formula">f′(x) = (f(x+h) − f(x−h)) / 2h + O(h²)</div>
+      <p class="small">The error is proportional to h²: halve the spacing and it drops by 4. On the grid, x = i·h, so</p>
+      <div class="formula">FD[i] = (F[i+1] − F[i−1]) / 2h</div>
+      <p class="small">Coefficients −1/2h, 0, +1/2h on F[i−1], F[i], F[i+1], the same at every grid point: a <b>1D 3-point stencil</b>. A second derivative needs</p>
+      <div class="formula">f″(x) ≈ (f(x−h) − 2f(x) + f(x+h)) / h²</div>
+    </div>
+    <ul class="small">
+      <li>A <b>stencil</b> is a geometric pattern of weights applied at every point of a structured grid.</li>
+      <li>The <b>order</b> of a stencil is the number of grid points on each side of the centre. Higher-order differences give more accurate derivatives: order 1 is a 3-point stencil, order 2 a 5-point one, order 3 a 7-point one.</li>
+      <li>A PDE in x and y with derivatives along each axis only (no mixed ∂²/∂x∂y terms) uses points along the axes: the 2D 5-point stencil (order 1) or 9-point stencil (order 2).</li>
+      <li>In 3D the order-1 stencil has 7 points: the centre and its six face neighbours. That is the stencil of this whole session.</li>
+      <li>Example, heat equation: u ← u + s·(sum of the 6 neighbours − 6u), so c0 = 1 − 6s and c1…c6 = s.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Stencil shapes by dimension and order</h2>
+  <div class="cfg" data-anim="shapes">
+    <div>
+      <div class="presets"><span class="plbl">dimension</span><button data-dim="1">1D</button><button data-dim="2">2D</button><button data-dim="3" class="on">3D</button></div>
+      <div class="presets"><span class="plbl">order</span><button data-ord="1" class="on">1</button><button data-ord="2">2</button><button data-ord="3">3</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>Blue: the stencil points. Gray dots: the box a convolution of the same radius would read.</li>
+        <li>The star touches 2·d·r + 1 points; the box touches (2r + 1)<sup>d</sup>. In 3D, order 3, that is 19 against 343.</li>
+        <li>Each point costs one multiplication, and all but one an addition: 2P − 1 FLOP per output.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>A stencil sweep, with fixed boundary cells</h2>
+  <div class="diagram" data-anim="sweep">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">12 × 12 grid, 2D 5-point stencil, 4 × 4 output tiles</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Sweep after sweep: an iterative solver</h2>
+  <div class="cols wr">
+    <div style="display:grid;gap:.6em">
+<pre><code>// both buffers hold the boundary values
+for (int s = 0; s &lt; sweeps; ++s) {
+  launch(stencil_kernel, grid, block,
+         d_in, d_out, N);
+  std::swap(d_in, d_out);  // no copy
+}</code></pre>
+      <ul class="small">
+        <li>Each sweep reads only the previous sweep's values, so all points of a sweep are <b>independent</b>.</li>
+        <li>Updating in place would be a race: a thread could read a neighbour already updated in this sweep.</li>
+        <li>Swapping pointers costs nothing. Boundary cells are never written, so both buffers keep them.</li>
+      </ul>
+    </div>
+    <div class="diagram" data-anim="heat">
+      <div class="svgwrap" data-svg></div>
+      <div class="cap" data-cap></div>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">Jacobi, c0 = 0, c1…c4 = 1/4</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the basic 3D 7-point kernel</h2>
+  <div class="cols wl">
+<pre><code>__global__ void stencil_kernel(const float* in, float* out,
+                               unsigned int N) {
+  unsigned int i = blockIdx.z*blockDim.z + threadIdx.z;
+  unsigned int j = blockIdx.y*blockDim.y + threadIdx.y;
+  unsigned int k = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i &gt;= 1 &amp;&amp; i &lt; N - 1 &amp;&amp; j &gt;= 1 &amp;&amp; j &lt; N - 1 &amp;&amp;
+      k &gt;= 1 &amp;&amp; k &lt; N - 1) {
+    out[i*N*N + j*N + k] = c0*in[i*N*N + j*N + k]
+                         + c1*in[i*N*N + j*N + (k - 1)]
+                         + c2*in[i*N*N + j*N + (k + 1)]
+                         + c3*in[i*N*N + (j - 1)*N + k]
+                         + c4*in[i*N*N + (j + 1)*N + k]
+                         + c5*in[(i - 1)*N*N + j*N + k]
+                         + c6*in[(i + 1)*N*N + j*N + k];
+  }
+}</code></pre>
+    <ul class="small">
+      <li>One thread per grid point, the familiar 3D mapping: i = z (plane), j = y (row), k = x (column).</li>
+      <li>Threads on the boundary do nothing: those cells keep their boundary values. There are no ghost cells to test inside the sum.</li>
+      <li>c0…c6 come from the equation: hard-coded, or in constant memory like the filter of session 15.</li>
+      <li>Per output: 7 multiplications + 6 additions = <b>13 FLOP</b>, 7 loads, 1 store.</li>
+      <li>Launch: 8 × 8 × 8 blocks, ⌈N/8⌉³ of them.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Where the seven neighbours live, and what they cost</h2>
+  <div class="diagram" data-anim="neigh">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy grid N = 8, so a plane is 64 floats</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Stencils reuse much less than convolutions</h2>
+  <div class="cfg" data-anim="aicalc">
+    <div>
+      <div class="presets"><span class="plbl">dimension</span><button data-dim="1">1D</button><button data-dim="2" class="on">2D</button><button data-dim="3">3D</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>Ideal intensity: every input loaded once, every output stored once, 8 B per point. Stencil: (2P − 1)/8. Convolution, counted as in session 15: 2·m<sup>d</sup>/8.</li>
+        <li>A 2D 5-point stencil: 1.125 FLOP/B, half of the 3 × 3 convolution's 2.25. The input tile does not even need its corners.</li>
+        <li>In 3D the gap explodes: loading a point into shared memory pays off far less for a stencil.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: shared-memory tiled kernel</h2>
+  <div class="cols wc">
+<pre class="tight"><code>#define IN_TILE_DIM 8
+#define OUT_TILE_DIM (IN_TILE_DIM - 2)
+__global__ void stencil_tiled_kernel(const float* in, float* out, int N) {
+  int i = blockIdx.z*OUT_TILE_DIM + threadIdx.z - 1;
+  int j = blockIdx.y*OUT_TILE_DIM + threadIdx.y - 1;
+  int k = blockIdx.x*OUT_TILE_DIM + threadIdx.x - 1;
+  int tz = threadIdx.z, ty = threadIdx.y, tx = threadIdx.x;
+  __shared__ float in_s[IN_TILE_DIM][IN_TILE_DIM][IN_TILE_DIM];
+  if (i &gt;= 0 &amp;&amp; i &lt; N &amp;&amp; j &gt;= 0 &amp;&amp; j &lt; N &amp;&amp; k &gt;= 0 &amp;&amp; k &lt; N)
+    in_s[tz][ty][tx] = in[i*N*N + j*N + k];
+  __syncthreads();
+  if (i &gt;= 1 &amp;&amp; i &lt; N-1 &amp;&amp; j &gt;= 1 &amp;&amp; j &lt; N-1 &amp;&amp; k &gt;= 1 &amp;&amp; k &lt; N-1 &amp;&amp;
+      tz &gt;= 1 &amp;&amp; tz &lt; IN_TILE_DIM-1 &amp;&amp; ty &gt;= 1 &amp;&amp; ty &lt; IN_TILE_DIM-1 &amp;&amp;
+      tx &gt;= 1 &amp;&amp; tx &lt; IN_TILE_DIM-1)
+    out[i*N*N + j*N + k] = c0*in_s[tz][ty][tx]
+                         + c1*in_s[tz][ty][tx-1] + c2*in_s[tz][ty][tx+1]
+                         + c3*in_s[tz][ty-1][tx] + c4*in_s[tz][ty+1][tx]
+                         + c5*in_s[tz-1][ty][tx] + c6*in_s[tz+1][ty][tx];
+}
+// launch: dim3 block(8, 8, 8), grid(cdiv(N, 6), cdiv(N, 6), cdiv(N, 6))</code></pre>
+    <ul class="small">
+      <li>The same structure as the tiled convolution: block = input tile, the outer ring only loads.</li>
+      <li>The "− 1" is the order of the stencil: the halo is one point thick.</li>
+      <li>Out-of-grid slots are not loaded, and never read: only interior points compute, and their neighbours are inside the grid.</li>
+      <li>One barrier between loading and computing.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Tiled intensity against tile size</h2>
+  <div class="diagram" data-anim="tcurve">
+    <div class="svgwrap" data-svg></div>
+    <div class="cfg-out" data-out style="font-size:.56em"></div>
+    <div class="dctl"><label style="font-family:var(--mono)">input tile t <input data-in="t" type="range" min="3" max="40" value="8" style="vertical-align:middle;width:12em"></label><button data-p="8" class="on">t = 8</button><button data-p="10">t = 10</button><button data-p="32">t = 32</button></div>
+  </div>
+  <p class="small muted">A block loads t³ points and stores (t − 2)³: 13(t − 2)³ / (4t³ + 4(t − 2)³) FLOP/B, which tends to 13/8 = 1.625 as t grows. But one thread per input point means t³ ≤ 1024: t = 10 at most, in practice t = 8 (512 threads), which gives only <b>0.96 FLOP/B</b>. Shared memory also grows as t³.</p>
+</section>
+
+<section class="slide">
+  <h2>3D tiles are mostly halo</h2>
+  <div class="cfg" data-anim="halo">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">tile width t</span><input type="number" min="3" max="32" value="8" data-in="t"></div>
+      <div class="presets"><button data-p="32">32</button><button data-p="16">16</button><button data-p="10">10</button><button data-p="8" class="on">8</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>Halo elements are reused less than interior ones, so the larger their share of the tile, the lower the intensity.</li>
+        <li>A 32 × 32 2D tile is 12 % halo. The 3D tile we can afford, 8 × 8 × 8, is <b>58 %</b> halo: 296 of its 512 points.</li>
+        <li>More than half of the threads of that block only load.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Small tiles also hurt coalescing</h2>
+  <div class="diagram" data-anim="coal">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="cube" class="on">block 8 × 8 × 8</button><button data-mode="flat">block 32 × 8 × 4</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">tiled kernel, block (1, 1, 1), N = 64, 32-byte sectors</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread coarsening: march the tile along z</h2>
+  <div class="diagram" data-anim="zmarch">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy column of 4 output planes; counts for a 32 × 32 block</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: thread coarsening in z</h2>
+  <div class="cols wc">
+<pre class="tight"><code>#define IN_TILE_DIM 32
+#define OUT_TILE_DIM (IN_TILE_DIM - 2)
+__global__ void stencil_coarse_kernel(const float* in, float* out, int N) {
+  int iStart = blockIdx.z*OUT_TILE_DIM;
+  int j = blockIdx.y*OUT_TILE_DIM + threadIdx.y - 1;
+  int k = blockIdx.x*OUT_TILE_DIM + threadIdx.x - 1;
+  int ty = threadIdx.y, tx = threadIdx.x;
+  __shared__ float inPrev_s[IN_TILE_DIM][IN_TILE_DIM];
+  __shared__ float inCurr_s[IN_TILE_DIM][IN_TILE_DIM];
+  __shared__ float inNext_s[IN_TILE_DIM][IN_TILE_DIM];
+  bool inXY = j &gt;= 0 &amp;&amp; j &lt; N &amp;&amp; k &gt;= 0 &amp;&amp; k &lt; N;
+  if (inXY &amp;&amp; iStart &gt;= 1) inPrev_s[ty][tx] = in[(iStart-1)*N*N + j*N + k];
+  if (inXY &amp;&amp; iStart &lt; N)  inCurr_s[ty][tx] = in[iStart*N*N + j*N + k];
+  for (int i = iStart; i &lt; iStart + OUT_TILE_DIM; ++i) {
+    if (inXY &amp;&amp; i + 1 &lt; N) inNext_s[ty][tx] = in[(i+1)*N*N + j*N + k];
+    __syncthreads();                        // all three planes ready
+    if (i &gt;= 1 &amp;&amp; i &lt; N-1 &amp;&amp; j &gt;= 1 &amp;&amp; j &lt; N-1 &amp;&amp; k &gt;= 1 &amp;&amp; k &lt; N-1 &amp;&amp;
+        ty &gt;= 1 &amp;&amp; ty &lt; IN_TILE_DIM-1 &amp;&amp; tx &gt;= 1 &amp;&amp; tx &lt; IN_TILE_DIM-1)
+      out[i*N*N + j*N + k] = c0*inCurr_s[ty][tx]
+          + c1*inCurr_s[ty][tx-1] + c2*inCurr_s[ty][tx+1]
+          + c3*inCurr_s[ty+1][tx] + c4*inCurr_s[ty-1][tx]
+          + c5*inPrev_s[ty][tx]   + c6*inNext_s[ty][tx];
+    __syncthreads();                        // nobody still reads inCurr_s
+    inPrev_s[ty][tx] = inCurr_s[ty][tx];
+    inCurr_s[ty][tx] = inNext_s[ty][tx];
+  }
+}</code></pre>
+    <ul class="small">
+      <li>2D block of t² threads, t = 32 → <b>1024 threads</b>; each computes a column of 30 outputs.</li>
+      <li>Only 3 planes on chip: 3·t²·4 B = <b>12 KB</b>, instead of 128 KB for a 32³ tile.</li>
+      <li>Intensity: 13·30² / (4·32² + 4·30²) = <b>1.52 FLOP/B</b> per step; 1.47 over a block of 30 planes (the two extra z planes cost a little).</li>
+      <li>Two barriers: the first protects <code>inNext_s</code>, the second stops a fast thread from overwriting <code>inCurr_s</code> while a neighbour still reads it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Register tiling: who reads what?</h2>
+  <div class="diagram" data-anim="regs">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy 8 × 8 plane; numbers for a 32 × 32 block</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: coarsening plus register tiling</h2>
+  <div class="cols wc">
+<pre class="tight"><code>__global__ void stencil_reg_kernel(const float* in, float* out, int N) {
+  int iStart = blockIdx.z*OUT_TILE_DIM;
+  int j = blockIdx.y*OUT_TILE_DIM + threadIdx.y - 1;
+  int k = blockIdx.x*OUT_TILE_DIM + threadIdx.x - 1;
+  int ty = threadIdx.y, tx = threadIdx.x;
+  float inPrev = 0.0f, inCurr = 0.0f, inNext = 0.0f;     // registers
+  __shared__ float inCurr_s[IN_TILE_DIM][IN_TILE_DIM];  // one plane
+  bool inXY = j &gt;= 0 &amp;&amp; j &lt; N &amp;&amp; k &gt;= 0 &amp;&amp; k &lt; N;
+  if (inXY &amp;&amp; iStart &gt;= 1) inPrev = in[(iStart-1)*N*N + j*N + k];
+  if (inXY &amp;&amp; iStart &lt; N) {
+    inCurr = in[iStart*N*N + j*N + k];
+    inCurr_s[ty][tx] = inCurr;
+  }
+  for (int i = iStart; i &lt; iStart + OUT_TILE_DIM; ++i) {
+    if (inXY &amp;&amp; i + 1 &lt; N) inNext = in[(i+1)*N*N + j*N + k];
+    __syncthreads();
+    if (i &gt;= 1 &amp;&amp; i &lt; N-1 &amp;&amp; j &gt;= 1 &amp;&amp; j &lt; N-1 &amp;&amp; k &gt;= 1 &amp;&amp; k &lt; N-1 &amp;&amp;
+        ty &gt;= 1 &amp;&amp; ty &lt; IN_TILE_DIM-1 &amp;&amp; tx &gt;= 1 &amp;&amp; tx &lt; IN_TILE_DIM-1)
+      out[i*N*N + j*N + k] = c0*inCurr
+          + c1*inCurr_s[ty][tx-1] + c2*inCurr_s[ty][tx+1]
+          + c3*inCurr_s[ty+1][tx] + c4*inCurr_s[ty-1][tx]
+          + c5*inPrev + c6*inNext;
+    __syncthreads();
+    inPrev = inCurr;
+    inCurr = inNext;
+    inCurr_s[ty][tx] = inNext;
+  }
+}</code></pre>
+    <ul class="small">
+      <li><code>inPrev</code> and <code>inNext</code> replace two shared planes; <code>inCurr</code> stays in a register too, with a shared copy for the neighbours.</li>
+      <li>Shared memory: <b>one third</b>, 4 KB. Cost: 3 more registers per thread, 3072 per block.</li>
+      <li>Registers are faster than shared memory, so the kernel runs faster; global traffic, and so intensity, is unchanged.</li>
+      <li>The book's listing ends with <code>= inNext_s;</code>, a typo: there is no such array here, it must be the register <code>inNext</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Resources per block</h2>
+  <div class="cfg" data-anim="res" style="grid-template-columns:minmax(0,1fr);font-size:.8em">
+    <div>
+      <div class="cfg-row" style="gap:.5em 1.4em"><label><span class="cfg-lbl" style="min-width:0">order r</span> <input type="number" min="1" max="3" value="1" data-in="r" style="width:4em"></label><label><span class="cfg-lbl" style="min-width:0">3D tile</span> <input type="number" min="3" max="16" value="8" data-in="t3" style="width:4em"></label><label><span class="cfg-lbl" style="min-width:0">2D tile</span> <input type="number" min="4" max="64" value="32" data-in="t2" style="width:4em"></label><label><span class="cfg-lbl" style="min-width:0">z planes per block</span> <input type="number" min="1" max="512" value="30" data-in="d" style="width:4.5em"></label></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The four kernels side by side</h2>
+  <table>
+    <tr><th></th><th>basic</th><th>tiled 8 × 8 × 8</th><th>coarsened 32 × 32</th><th>+ register tiling</th></tr>
+    <tr><td>global loads per output</td><td>7</td><td>512 / 216 = 2.37</td><td>32²·32 / (30²·30) = 1.21</td><td>1.21</td></tr>
+    <tr><td>FLOP/B (store counted)</td><td>13/32 = 0.41</td><td>0.96</td><td>1.47 per block, 1.52 per step</td><td>same</td></tr>
+    <tr><td>threads per block</td><td>512</td><td>512, 216 compute</td><td>1024, 900 compute</td><td>1024, 900 compute</td></tr>
+    <tr><td>shared memory</td><td>—</td><td>2 KB</td><td>12 KB (3 planes)</td><td>4 KB (1 plane)</td></tr>
+    <tr><td>warp access</td><td>full 32-wide rows</td><td>4 rows of 8 floats</td><td>one row of 32 floats</td><td>one row of 32 floats</td></tr>
+    <tr><td>barriers</td><td>none</td><td>1</td><td>2 per plane</td><td>2 per plane</td></tr>
+  </table>
+  <p class="small muted">All four are memory-bound: the ideal 1.625 FLOP/B is far below the H100 ridge of 20. In practice L1 and L2 catch part of the basic kernel's repeated loads, so the measured gap is smaller than these counts. Some texts count only the loads: that doubles the ideal to 3.25 and gives the basic kernel 13/28 = 0.46. This deck and <code>ec2/stencil</code> count loads and stores, as the book does.</p>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>Stencils approximate derivatives on structured grids: discretize, replace derivatives by finite differences, apply the same weights at every point. The order is the number of points on each side.</li>
+    <li>A sweep updates every interior point from the previous sweep; boundary cells stay fixed; buffers are swapped between sweeps.</li>
+    <li>The 3D 7-point stencil does 13 FLOP per point: ideal 1.625 FLOP/B, basic kernel 0.41.</li>
+    <li>Tiling helps less than for convolution: sparse stars reuse little, 3D tiles are tiny (t = 8 → 0.96 FLOP/B), mostly halo and poorly coalesced.</li>
+    <li><b>Thread coarsening</b> in z keeps a 2D block of 32 × 32 threads and only 3 planes on chip: 1.52 FLOP/B with 12 KB.</li>
+    <li><b>Register tiling</b> keeps the z neighbours, used by one thread only, in registers: a third of the shared memory, the same global traffic.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 16.1–16.6</h2>
+  <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.3em;font-size:.68em">
+    <li>A 3D 7-point stencil on a 120 × 120 × 120 grid, boundary cells included. (a) How many output points does each sweep compute? How many blocks does (b) the basic kernel need with 8 × 8 × 8 blocks, (c) the tiled kernel with 8 × 8 × 8 blocks, (d) the coarsening kernel with 32 × 32 blocks?</li>
+    <li>A 7-point stencil with shared-memory tiling and thread coarsening, 32 × 32 blocks and a coarsening factor of 16 (each block computes 16 consecutive output planes). (a) How many input elements does a block load in its lifetime? (b) How many outputs does it compute? (c) What is its FLOP/B? Shared memory per block (d) without and (e) with register tiling?</li>
+    <li>A 3D order-2 stencil (13 points). FLOP per point and ideal FLOP/B? FLOP/B of the basic kernel and of the tiled kernel with 8 × 8 × 8 blocks? Shared memory of the coarsening kernel with 32 × 32 blocks, without and with register tiling?</li>
+    <li>Estimate f′(1) for f = sin with the central difference and h = 0.1. What is the error? Predict the error for h = 0.05.</li>
+    <li>The tiled kernel with 32 × 8 × 4 blocks: output tile, halo fraction and FLOP/B. Compare with 8 × 8 × 8. Why might it still run faster?</li>
+    <li>Jacobi iteration for Laplace's equation in 2D sets each interior point to the average of its 4 neighbours. Give c0…c4. Why can the kernel not write into its input array? What must both buffers contain before the first sweep?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 16.1–16.6</h2>
+  <table style="font-size:.62em">
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>16.1</td><td>(a) 118³ = <b>1 643 032</b>. (b) One thread per grid point: ⌈120/8⌉³ = <b>3 375</b>. (c) Output tile 6³: ⌈120/6⌉³ = <b>8 000</b>. (d) Output tile 30 × 30, and 30 planes per block in z as in the book's kernel: 4·4·4 = <b>64</b>.</td></tr>
+    <tr><td>16.2</td><td>(a) 32·32·(16 + 2) = <b>18 432</b>. (b) 30·30·16 = <b>14 400</b>. (c) 13·14 400 / (4·(18 432 + 14 400)) = 187 200 / 131 328 = <b>1.43 FLOP/B</b> (internal block, store counted). (d) 3·32²·4 = <b>12 288 B</b>. (e) 32²·4 = <b>4 096 B</b>.</td></tr>
+    <tr><td>16.3</td><td>13 multiplications + 12 additions = <b>25 FLOP</b>; ideal 25/8 = <b>3.125</b>. Basic: 25 / (13·4 + 4) = <b>0.45</b>. Tiled 8³: output 4³ = 64, 25·64 / (4·512 + 4·64) = <b>0.69</b>. Coarsening keeps 5 planes: 5·32²·4 = <b>20 KB</b>; with registers for the 4 z neighbours, <b>4 KB</b>.</td></tr>
+    <tr><td>16.4</td><td>(sin 1.1 − sin 0.9) / 0.2 = 0.53940; cos 1 = 0.54030; error <b>9.0·10⁻⁴</b> (≈ h²/6 · cos 1). With h = 0.05: about 4 times smaller, <b>2.25·10⁻⁴</b>.</td></tr>
+    <tr><td>16.5</td><td>Output 30 × 6 × 2 = 360 points; halo 1 − 360/1024 = <b>65 %</b>; 13·360 / (4·1024 + 4·360) = <b>0.85 FLOP/B</b>, less than 0.96. But each warp reads one row of 32 consecutive floats instead of 4 rows of 8, so fewer DRAM sectors per useful byte.</td></tr>
+    <tr><td>16.6</td><td>c0 = 0, c1…c4 = <b>1/4</b>. In place, a thread could read a neighbour already overwritten in this sweep, depending on scheduling: a race. Both buffers must hold the <b>boundary values</b>, which no sweep writes.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study and code</h2>
+  <ul>
+    <li><b><code>ec2/stencil/stencil.cu</code></b>: the four 3D kernels of this session, each checked against a CPU reference, then several sweeps with swapped buffers.</li>
+    <li><b><code>ec2/stencil/stencil_basics.cu</code></b>: the 1D finite difference of sin(x) and how its error shrinks with h, and a 2D 5-point stencil, basic against tiled.</li>
+    <li><b><code>ec2/stencil/bikeshare_station_coverage.cu</code></b>: an idea for your project in another domain, a coverage field around the stations of a bike-sharing city computed by repeated sweeps, and rental demand diffusing over time.</li>
+    <li><b><code>ec2/stencil/colab.ipynb</code></b>: how to run everything on Google Colab with <code>nvcc</code>. On a laptop, without a GPU: <code style="white-space:nowrap">g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code></li>
+    <li>Kernels there are launched with <code>launch(kernel, grid, block, args...)</code>, which maps to <code>kernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(args...)</code> on a real GPU.</li>
+    <li><b>Exercise</b>: write the order-2 (13-point) versions of the coarsening and register-tiling kernels and measure the shared-memory and register use.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>16 · Stencil computation on the GPU</span><span id="counter"></span></div>

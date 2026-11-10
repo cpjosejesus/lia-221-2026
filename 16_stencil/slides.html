@@ -1,0 +1,1121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stencil computation on the GPU</title>
+<style>
+:root{--bg:#FFFFFF;--ink:#1A1A1A;--muted:#6F6F6F;--line:#E4E4E4;--code:#F5F5F5;--ok:#2E7D4F;--bad:#B03A3A;
+--body:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+--acc:#2F6FD0;--acc-soft:#DCE7F8;--acc2:#C98A1B;--acc2-soft:#F6EAD2;--line-strong:#BDBDBD;--bad-soft:#F6DADA;--ok-soft:#D6EBDC}
+*{box-sizing:border-box}html{color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:calc(14px + 0.9vw);line-height:1.45}
+.deck{position:relative;height:100vh;overflow:hidden}
+.slide{position:absolute;inset:0;padding:5vh 7vw 7vh;display:none;flex-direction:column;justify-content:center;gap:1rem}
+.slide.active{display:flex}
+h1{font-size:2.4em;line-height:1.1;margin:0;font-weight:600;letter-spacing:-.02em;max-width:22ch;text-wrap:balance}
+h2{font-size:1.45em;line-height:1.15;margin:0;font-weight:600;letter-spacing:-.015em;text-wrap:balance}
+.eyebrow{font-size:.6em;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+p,li{max-width:62ch;margin:0}ul{margin:0;padding-left:1.1em;display:grid;gap:.4em}
+.small{font-size:.78em}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2.5vw;align-items:start}
+.cols.wl{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
+.cols.wr{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr)}
+@media (max-width:820px){.cols,.cols.wl,.cols.wr{grid-template-columns:1fr}}
+pre{font-family:var(--mono);font-size:.54em;line-height:1.45;background:var(--code);padding:.8em 1em;border-radius:3px;margin:0;overflow:auto;max-height:70vh;white-space:pre-wrap;overflow-wrap:break-word}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.05em .3em;border-radius:2px}
+pre code{background:none;padding:0;font-size:inherit}
+table{border-collapse:collapse;font-size:.66em;width:100%}th{text-align:left;font-size:.78em;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--ink);padding:.35em .8em .35em 0}td{border-bottom:1px solid var(--line);padding:.4em .8em .4em 0;vertical-align:top}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:1vh 7vw;font-size:.55em;color:var(--muted);font-family:var(--mono);background:var(--bg)}
+.note{border-left:3px solid var(--ink);padding-left:1em;max-width:62ch}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-radius:3px;padding:0 .35em}
+@media print{.deck{height:auto;overflow:visible}.slide{position:static;display:flex;min-height:100vh;page-break-after:always}.foot{display:none}}
+
+.diagram{width:100%;max-width:1150px}
+.svgwrap svg{width:100%;height:auto;max-height:54vh;display:block}
+.dctl{display:flex;gap:.5em;align-items:center;flex-wrap:wrap;font-size:.56em;margin-top:.4em}
+.dctl button{font:inherit;border:1px solid var(--line-strong);background:#fff;color:var(--ink);border-radius:3px;padding:.2em .75em;cursor:pointer}
+.dctl button:hover{border-color:var(--ink)}
+.dctl button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.dctl button:focus-visible,.cfg input:focus-visible,.cfg button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.cap{font-family:var(--mono);font-size:.54em;line-height:1.55;min-height:3.2em;margin-top:.3em;white-space:pre-wrap}
+.cap b{color:var(--acc)}
+.cap i{font-style:normal;color:var(--acc2);font-weight:600}
+
+svg text{font-family:var(--mono)}
+svg text:not([fill]){fill:var(--ink)}
+svg .lbl{font-family:var(--body);fill:var(--muted)}
+svg .frame{fill:none;stroke:#9a9a9a;stroke-width:1.5;transition:stroke .3s,stroke-width .3s}
+svg .frame.on{stroke:var(--acc);stroke-width:4}
+svg .dash{fill:none;stroke:#c9c9c9;stroke-width:1.2;stroke-dasharray:5 4}
+svg .sp{fill:#C9DBF4;transition:fill .3s}
+svg .sp.on{fill:var(--acc)}
+svg .ctl{fill:#E6E6E6}
+svg .mem{fill:#EDEDED;stroke:#bdbdbd;stroke-width:1;transition:fill .3s,stroke .3s}
+svg .mem.on{fill:var(--acc2-soft);stroke:var(--acc2);stroke-width:2.5}
+svg .wire{stroke:#bdbdbd;stroke-width:1.5;fill:none;transition:stroke .3s}
+svg .wire.on{stroke:var(--acc2);stroke-width:3}
+svg .wire.blue.on{stroke:var(--acc)}
+svg .chip{fill:#EDEDED;stroke:#9a9a9a;transition:fill .3s,stroke .3s,opacity .3s}
+svg .chip.run{fill:var(--acc-soft);stroke:var(--acc);stroke-width:2}
+svg .chip.done{fill:var(--ok-soft);stroke:var(--ok)}
+svg .chip.gone{opacity:.18}
+svg .bar{fill:var(--acc)}
+svg .bar2{fill:var(--acc2)}
+svg .barok{fill:var(--ok)}
+svg .hatch{fill:url(#hatch)}
+svg .cell{fill:#fff;stroke:#d0d0d0}
+svg .on-a{fill:#86C495}
+svg .on-b{fill:#E7B467}
+svg .on-c{fill:var(--acc)}
+svg .on-y{fill:#F2C230}
+svg .faint{fill:#F4F4F4;stroke:#e2e2e2}
+svg .busy{fill:#5f5f5f}
+svg .idle{fill:var(--bad-soft)}
+svg .ready{fill:#EEF3FB}
+svg .tok{transition:transform .7s ease}
+svg .red{stroke:var(--bad)!important}
+svg .hidden{display:none}
+@media (prefers-reduced-motion:reduce){svg .tok,svg .frame,svg .sp,svg .mem,svg .chip{transition:none}}
+
+/* calculators */
+.cfg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:2.5vw;align-items:start;font-size:.66em}
+@media (max-width:820px){.cfg{grid-template-columns:1fr}}
+.cfg-row{display:flex;gap:.7em;align-items:center;flex-wrap:wrap;margin-bottom:.6em}
+.cfg-lbl{font-family:var(--mono);min-width:9.5em;color:var(--muted)}
+.cfg input{font:inherit;font-family:var(--mono);width:6em;padding:.15em .4em;border:1px solid var(--line-strong);border-radius:3px}
+.cfg .presets{display:flex;flex-wrap:wrap;gap:.4em;margin:.3em 0 .8em}
+.cfg .presets button{font:inherit;font-size:.82em;border:1px solid var(--line-strong);background:#fff;border-radius:3px;padding:.15em .55em;cursor:pointer}
+.cfg .presets button:hover{border-color:var(--ink)}
+.cfg-out{font-family:var(--mono);font-size:.92em;line-height:1.6}
+.cfg-out b{color:var(--acc)}
+.cfg pre{font-size:.82em}
+.cfg-big{font-size:2em;font-weight:600;font-family:var(--mono);line-height:1.1}
+.cfg-big small{font-size:.38em;font-weight:400;color:var(--muted);font-family:var(--body)}
+.cfg-msg{margin-top:.5em}
+.cfg-msg.ok{color:var(--ok)}.cfg-msg.bad{color:var(--bad)}
+.gauge{position:relative;height:.9em;background:var(--code);border-radius:3px;margin:.5em 0;overflow:hidden}
+.gauge i{position:absolute;left:0;top:0;bottom:0;background:var(--acc);transition:width .4s ease}
+canvas[data-canvas]{display:block;max-width:100%}
+.legend{list-style:none;padding:0;margin:.3em 0 0;font-size:.85em;display:flex;flex-wrap:wrap;gap:.3em 1.2em}
+.legend li{display:flex;gap:.45em;align-items:center}
+.legend i{display:inline-block;width:.9em;height:.9em;border:1px solid #aaa;flex:none}
+
+/* 2D -> linear */
+.flat{position:relative;width:100%}
+.flat .fc{position:absolute;display:flex;align-items:center;justify-content:center;font-family:var(--mono);box-sizing:border-box;border:1px solid #fff;transition:left .6s ease,top .6s ease}
+.flat .pad{position:absolute;box-sizing:border-box;border:1px dashed #c9c9c9;background:#fff}
+.flat .wl{position:absolute;font-family:var(--mono);color:var(--acc);font-size:.5em;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.flat .fc{transition:none}}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:1.5vw}
+
+svg .hl{fill:var(--acc)}
+svg .soft{fill:var(--acc-soft);stroke:#9db7e3}
+svg .soft2{fill:var(--acc2-soft);stroke:#d9b06a}
+.cfg .presets button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.cfg-out table{font-size:.95em}
+.cfg .cap{font-size:.86em}
+.cols.wc{grid-template-columns:minmax(0,1.8fr) minmax(0,1fr)}
+@media (max-width:820px){.cols.wc{grid-template-columns:1fr}}
+pre.tight{font-size:.5em;line-height:1.4}
+.formula{font-family:var(--mono);font-size:.8em;background:var(--code);padding:.45em .8em;border-radius:3px;margin:.2em 0}
+.cfg .presets .plbl{font-family:var(--mono);color:var(--muted);align-self:center;min-width:5.5em}
+[data-anim=res] table td,[data-anim=res] table th{padding:.3em .7em .3em 0}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 16</div>
+  <h1>Stencil computation on the GPU</h1>
+  <p class="muted">A stencil looks like a convolution with a sparse filter. But stencils come from <b>differential equations</b> on <b>3D grids</b>, and that changes which optimizations pay off. This session: where stencils come from, the basic kernel, why shared-memory tiling buys much less than for convolution, and the two fixes, <b>thread coarsening</b> along z and <b>register tiling</b>.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 8 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/stencil</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>Same shape as convolution, different problem</h2>
+  <div class="cols">
+    <ul>
+      <li>Both compute each output from the input element at the same position and its neighbours, so both have halo cells and tiles. What you learned in session 15 still applies.</li>
+      <li>But a stencil <b>approximates derivatives</b>: its weights come from the equation being solved, and it is applied <b>sweep after sweep</b>.</li>
+      <li>The neighbourhood is a <b>star</b> along the axes, not a dense box: far fewer FLOP per loaded element, so far less reuse.</li>
+      <li>The grids are usually <b>3D</b>, where halos are huge and 1024 threads make a tiny tile.</li>
+      <li>Numerical accuracy pushes towards <b>double precision</b>: more bytes per point, more on-chip memory per tile.</li>
+    </ul>
+    <table>
+      <tr><th></th><th>convolution</th><th>stencil</th></tr>
+      <tr><td>typical data</td><td>2D images</td><td>3D grids</td></tr>
+      <tr><td>neighbourhood</td><td>(2r + 1)<sup>d</sup> box</td><td>2·d·r + 1 points on the axes</td></tr>
+      <tr><td>weights</td><td>designed filter</td><td>from the PDE and the grid spacing</td></tr>
+      <tr><td>edges</td><td>ghost cells = 0</td><td>boundary cells, fixed values</td></tr>
+      <tr><td>repetition</td><td>one pass</td><td>many sweeps, output → input</td></tr>
+      <tr><td>new optimizations</td><td>constant memory, tiling</td><td>+ coarsening in z, register tiling</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Discretization: a function becomes an array</h2>
+  <div class="cfg" data-anim="sine">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">grid points n</span><input type="number" min="3" max="81" value="7" data-in="n"></div>
+      <div class="presets"><button data-p="7" class="on">7 (h = π/6)</button><button data-p="13">13</button><button data-p="25">25</button><button data-p="49">49</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>A <b>structured grid</b> samples sin(x) on 0 ≤ x ≤ π at constant spacing h; the array F stores F[i] = sin(i·h).</li>
+        <li>The central difference gives the derivative at every grid point from its two neighbours.</li>
+        <li>Smaller h: more accurate, but more storage and more work per sweep.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>From a finite difference to a stencil</h2>
+  <div class="cols">
+    <div style="display:grid;gap:.5em">
+      <div class="formula">f′(x) = (f(x+h) − f(x−h)) / 2h + O(h²)</div>
+      <p class="small">The error is proportional to h²: halve the spacing and it drops by 4. On the grid, x = i·h, so</p>
+      <div class="formula">FD[i] = (F[i+1] − F[i−1]) / 2h</div>
+      <p class="small">Coefficients −1/2h, 0, +1/2h on F[i−1], F[i], F[i+1], the same at every grid point: a <b>1D 3-point stencil</b>. A second derivative needs</p>
+      <div class="formula">f″(x) ≈ (f(x−h) − 2f(x) + f(x+h)) / h²</div>
+    </div>
+    <ul class="small">
+      <li>A <b>stencil</b> is a geometric pattern of weights applied at every point of a structured grid.</li>
+      <li>The <b>order</b> of a stencil is the number of grid points on each side of the centre. Higher-order differences give more accurate derivatives: order 1 is a 3-point stencil, order 2 a 5-point one, order 3 a 7-point one.</li>
+      <li>A PDE in x and y with derivatives along each axis only (no mixed ∂²/∂x∂y terms) uses points along the axes: the 2D 5-point stencil (order 1) or 9-point stencil (order 2).</li>
+      <li>In 3D the order-1 stencil has 7 points: the centre and its six face neighbours. That is the stencil of this whole session.</li>
+      <li>Example, heat equation: u ← u + s·(sum of the 6 neighbours − 6u), so c0 = 1 − 6s and c1…c6 = s.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Stencil shapes by dimension and order</h2>
+  <div class="cfg" data-anim="shapes">
+    <div>
+      <div class="presets"><span class="plbl">dimension</span><button data-dim="1">1D</button><button data-dim="2">2D</button><button data-dim="3" class="on">3D</button></div>
+      <div class="presets"><span class="plbl">order</span><button data-ord="1" class="on">1</button><button data-ord="2">2</button><button data-ord="3">3</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>Blue: the stencil points. Gray dots: the box a convolution of the same radius would read.</li>
+        <li>The star touches 2·d·r + 1 points; the box touches (2r + 1)<sup>d</sup>. In 3D, order 3, that is 19 against 343.</li>
+        <li>Each point costs one multiplication, and all but one an addition: 2P − 1 FLOP per output.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>A stencil sweep, with fixed boundary cells</h2>
+  <div class="diagram" data-anim="sweep">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">12 × 12 grid, 2D 5-point stencil, 4 × 4 output tiles</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Sweep after sweep: an iterative solver</h2>
+  <div class="cols wr">
+    <div style="display:grid;gap:.6em">
+<pre><code>// both buffers hold the boundary values
+for (int s = 0; s &lt; sweeps; ++s) {
+  launch(stencil_kernel, grid, block,
+         d_in, d_out, N);
+  std::swap(d_in, d_out);  // no copy
+}</code></pre>
+      <ul class="small">
+        <li>Each sweep reads only the previous sweep's values, so all points of a sweep are <b>independent</b>.</li>
+        <li>Updating in place would be a race: a thread could read a neighbour already updated in this sweep.</li>
+        <li>Swapping pointers costs nothing. Boundary cells are never written, so both buffers keep them.</li>
+      </ul>
+    </div>
+    <div class="diagram" data-anim="heat">
+      <div class="svgwrap" data-svg></div>
+      <div class="cap" data-cap></div>
+      <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">Jacobi, c0 = 0, c1…c4 = 1/4</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the basic 3D 7-point kernel</h2>
+  <div class="cols wl">
+<pre><code>__global__ void stencil_kernel(const float* in, float* out,
+                               unsigned int N) {
+  unsigned int i = blockIdx.z*blockDim.z + threadIdx.z;
+  unsigned int j = blockIdx.y*blockDim.y + threadIdx.y;
+  unsigned int k = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i &gt;= 1 &amp;&amp; i &lt; N - 1 &amp;&amp; j &gt;= 1 &amp;&amp; j &lt; N - 1 &amp;&amp;
+      k &gt;= 1 &amp;&amp; k &lt; N - 1) {
+    out[i*N*N + j*N + k] = c0*in[i*N*N + j*N + k]
+                         + c1*in[i*N*N + j*N + (k - 1)]
+                         + c2*in[i*N*N + j*N + (k + 1)]
+                         + c3*in[i*N*N + (j - 1)*N + k]
+                         + c4*in[i*N*N + (j + 1)*N + k]
+                         + c5*in[(i - 1)*N*N + j*N + k]
+                         + c6*in[(i + 1)*N*N + j*N + k];
+  }
+}</code></pre>
+    <ul class="small">
+      <li>One thread per grid point, the familiar 3D mapping: i = z (plane), j = y (row), k = x (column).</li>
+      <li>Threads on the boundary do nothing: those cells keep their boundary values. There are no ghost cells to test inside the sum.</li>
+      <li>c0…c6 come from the equation: hard-coded, or in constant memory like the filter of session 15.</li>
+      <li>Per output: 7 multiplications + 6 additions = <b>13 FLOP</b>, 7 loads, 1 store.</li>
+      <li>Launch: 8 × 8 × 8 blocks, ⌈N/8⌉³ of them.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Where the seven neighbours live, and what they cost</h2>
+  <div class="diagram" data-anim="neigh">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy grid N = 8, so a plane is 64 floats</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Stencils reuse much less than convolutions</h2>
+  <div class="cfg" data-anim="aicalc">
+    <div>
+      <div class="presets"><span class="plbl">dimension</span><button data-dim="1">1D</button><button data-dim="2" class="on">2D</button><button data-dim="3">3D</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>Ideal intensity: every input loaded once, every output stored once, 8 B per point. Stencil: (2P − 1)/8. Convolution, counted as in session 15: 2·m<sup>d</sup>/8.</li>
+        <li>A 2D 5-point stencil: 1.125 FLOP/B, half of the 3 × 3 convolution's 2.25. The input tile does not even need its corners.</li>
+        <li>In 3D the gap explodes: loading a point into shared memory pays off far less for a stencil.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: shared-memory tiled kernel</h2>
+  <div class="cols wc">
+<pre class="tight"><code>#define IN_TILE_DIM 8
+#define OUT_TILE_DIM (IN_TILE_DIM - 2)
+__global__ void stencil_tiled_kernel(const float* in, float* out, int N) {
+  int i = blockIdx.z*OUT_TILE_DIM + threadIdx.z - 1;
+  int j = blockIdx.y*OUT_TILE_DIM + threadIdx.y - 1;
+  int k = blockIdx.x*OUT_TILE_DIM + threadIdx.x - 1;
+  int tz = threadIdx.z, ty = threadIdx.y, tx = threadIdx.x;
+  __shared__ float in_s[IN_TILE_DIM][IN_TILE_DIM][IN_TILE_DIM];
+  if (i &gt;= 0 &amp;&amp; i &lt; N &amp;&amp; j &gt;= 0 &amp;&amp; j &lt; N &amp;&amp; k &gt;= 0 &amp;&amp; k &lt; N)
+    in_s[tz][ty][tx] = in[i*N*N + j*N + k];
+  __syncthreads();
+  if (i &gt;= 1 &amp;&amp; i &lt; N-1 &amp;&amp; j &gt;= 1 &amp;&amp; j &lt; N-1 &amp;&amp; k &gt;= 1 &amp;&amp; k &lt; N-1 &amp;&amp;
+      tz &gt;= 1 &amp;&amp; tz &lt; IN_TILE_DIM-1 &amp;&amp; ty &gt;= 1 &amp;&amp; ty &lt; IN_TILE_DIM-1 &amp;&amp;
+      tx &gt;= 1 &amp;&amp; tx &lt; IN_TILE_DIM-1)
+    out[i*N*N + j*N + k] = c0*in_s[tz][ty][tx]
+                         + c1*in_s[tz][ty][tx-1] + c2*in_s[tz][ty][tx+1]
+                         + c3*in_s[tz][ty-1][tx] + c4*in_s[tz][ty+1][tx]
+                         + c5*in_s[tz-1][ty][tx] + c6*in_s[tz+1][ty][tx];
+}
+// launch: dim3 block(8, 8, 8), grid(cdiv(N, 6), cdiv(N, 6), cdiv(N, 6))</code></pre>
+    <ul class="small">
+      <li>The same structure as the tiled convolution: block = input tile, the outer ring only loads.</li>
+      <li>The "− 1" is the order of the stencil: the halo is one point thick.</li>
+      <li>Out-of-grid slots are not loaded, and never read: only interior points compute, and their neighbours are inside the grid.</li>
+      <li>One barrier between loading and computing.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Tiled intensity against tile size</h2>
+  <div class="diagram" data-anim="tcurve">
+    <div class="svgwrap" data-svg></div>
+    <div class="cfg-out" data-out style="font-size:.56em"></div>
+    <div class="dctl"><label style="font-family:var(--mono)">input tile t <input data-in="t" type="range" min="3" max="40" value="8" style="vertical-align:middle;width:12em"></label><button data-p="8" class="on">t = 8</button><button data-p="10">t = 10</button><button data-p="32">t = 32</button></div>
+  </div>
+  <p class="small muted">A block loads t³ points and stores (t − 2)³: 13(t − 2)³ / (4t³ + 4(t − 2)³) FLOP/B, which tends to 13/8 = 1.625 as t grows. But one thread per input point means t³ ≤ 1024: t = 10 at most, in practice t = 8 (512 threads), which gives only <b>0.96 FLOP/B</b>. Shared memory also grows as t³.</p>
+</section>
+
+<section class="slide">
+  <h2>3D tiles are mostly halo</h2>
+  <div class="cfg" data-anim="halo">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">tile width t</span><input type="number" min="3" max="32" value="8" data-in="t"></div>
+      <div class="presets"><button data-p="32">32</button><button data-p="16">16</button><button data-p="10">10</button><button data-p="8" class="on">8</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>Halo elements are reused less than interior ones, so the larger their share of the tile, the lower the intensity.</li>
+        <li>A 32 × 32 2D tile is 12 % halo. The 3D tile we can afford, 8 × 8 × 8, is <b>58 %</b> halo: 296 of its 512 points.</li>
+        <li>More than half of the threads of that block only load.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Small tiles also hurt coalescing</h2>
+  <div class="diagram" data-anim="coal">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="cube" class="on">block 8 × 8 × 8</button><button data-mode="flat">block 32 × 8 × 4</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">tiled kernel, block (1, 1, 1), N = 64, 32-byte sectors</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread coarsening: march the tile along z</h2>
+  <div class="diagram" data-anim="zmarch">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy column of 4 output planes; counts for a 32 × 32 block</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: thread coarsening in z</h2>
+  <div class="cols wc">
+<pre class="tight"><code>#define IN_TILE_DIM 32
+#define OUT_TILE_DIM (IN_TILE_DIM - 2)
+__global__ void stencil_coarse_kernel(const float* in, float* out, int N) {
+  int iStart = blockIdx.z*OUT_TILE_DIM;
+  int j = blockIdx.y*OUT_TILE_DIM + threadIdx.y - 1;
+  int k = blockIdx.x*OUT_TILE_DIM + threadIdx.x - 1;
+  int ty = threadIdx.y, tx = threadIdx.x;
+  __shared__ float inPrev_s[IN_TILE_DIM][IN_TILE_DIM];
+  __shared__ float inCurr_s[IN_TILE_DIM][IN_TILE_DIM];
+  __shared__ float inNext_s[IN_TILE_DIM][IN_TILE_DIM];
+  bool inXY = j &gt;= 0 &amp;&amp; j &lt; N &amp;&amp; k &gt;= 0 &amp;&amp; k &lt; N;
+  if (inXY &amp;&amp; iStart &gt;= 1) inPrev_s[ty][tx] = in[(iStart-1)*N*N + j*N + k];
+  if (inXY &amp;&amp; iStart &lt; N)  inCurr_s[ty][tx] = in[iStart*N*N + j*N + k];
+  for (int i = iStart; i &lt; iStart + OUT_TILE_DIM; ++i) {
+    if (inXY &amp;&amp; i + 1 &lt; N) inNext_s[ty][tx] = in[(i+1)*N*N + j*N + k];
+    __syncthreads();                        // all three planes ready
+    if (i &gt;= 1 &amp;&amp; i &lt; N-1 &amp;&amp; j &gt;= 1 &amp;&amp; j &lt; N-1 &amp;&amp; k &gt;= 1 &amp;&amp; k &lt; N-1 &amp;&amp;
+        ty &gt;= 1 &amp;&amp; ty &lt; IN_TILE_DIM-1 &amp;&amp; tx &gt;= 1 &amp;&amp; tx &lt; IN_TILE_DIM-1)
+      out[i*N*N + j*N + k] = c0*inCurr_s[ty][tx]
+          + c1*inCurr_s[ty][tx-1] + c2*inCurr_s[ty][tx+1]
+          + c3*inCurr_s[ty+1][tx] + c4*inCurr_s[ty-1][tx]
+          + c5*inPrev_s[ty][tx]   + c6*inNext_s[ty][tx];
+    __syncthreads();                        // nobody still reads inCurr_s
+    inPrev_s[ty][tx] = inCurr_s[ty][tx];
+    inCurr_s[ty][tx] = inNext_s[ty][tx];
+  }
+}</code></pre>
+    <ul class="small">
+      <li>2D block of t² threads, t = 32 → <b>1024 threads</b>; each computes a column of 30 outputs.</li>
+      <li>Only 3 planes on chip: 3·t²·4 B = <b>12 KB</b>, instead of 128 KB for a 32³ tile.</li>
+      <li>Intensity: 13·30² / (4·32² + 4·30²) = <b>1.52 FLOP/B</b> per step; 1.47 over a block of 30 planes (the two extra z planes cost a little).</li>
+      <li>Two barriers: the first protects <code>inNext_s</code>, the second stops a fast thread from overwriting <code>inCurr_s</code> while a neighbour still reads it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Register tiling: who reads what?</h2>
+  <div class="diagram" data-anim="regs">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy 8 × 8 plane; numbers for a 32 × 32 block</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: coarsening plus register tiling</h2>
+  <div class="cols wc">
+<pre class="tight"><code>__global__ void stencil_reg_kernel(const float* in, float* out, int N) {
+  int iStart = blockIdx.z*OUT_TILE_DIM;
+  int j = blockIdx.y*OUT_TILE_DIM + threadIdx.y - 1;
+  int k = blockIdx.x*OUT_TILE_DIM + threadIdx.x - 1;
+  int ty = threadIdx.y, tx = threadIdx.x;
+  float inPrev = 0.0f, inCurr = 0.0f, inNext = 0.0f;     // registers
+  __shared__ float inCurr_s[IN_TILE_DIM][IN_TILE_DIM];  // one plane
+  bool inXY = j &gt;= 0 &amp;&amp; j &lt; N &amp;&amp; k &gt;= 0 &amp;&amp; k &lt; N;
+  if (inXY &amp;&amp; iStart &gt;= 1) inPrev = in[(iStart-1)*N*N + j*N + k];
+  if (inXY &amp;&amp; iStart &lt; N) {
+    inCurr = in[iStart*N*N + j*N + k];
+    inCurr_s[ty][tx] = inCurr;
+  }
+  for (int i = iStart; i &lt; iStart + OUT_TILE_DIM; ++i) {
+    if (inXY &amp;&amp; i + 1 &lt; N) inNext = in[(i+1)*N*N + j*N + k];
+    __syncthreads();
+    if (i &gt;= 1 &amp;&amp; i &lt; N-1 &amp;&amp; j &gt;= 1 &amp;&amp; j &lt; N-1 &amp;&amp; k &gt;= 1 &amp;&amp; k &lt; N-1 &amp;&amp;
+        ty &gt;= 1 &amp;&amp; ty &lt; IN_TILE_DIM-1 &amp;&amp; tx &gt;= 1 &amp;&amp; tx &lt; IN_TILE_DIM-1)
+      out[i*N*N + j*N + k] = c0*inCurr
+          + c1*inCurr_s[ty][tx-1] + c2*inCurr_s[ty][tx+1]
+          + c3*inCurr_s[ty+1][tx] + c4*inCurr_s[ty-1][tx]
+          + c5*inPrev + c6*inNext;
+    __syncthreads();
+    inPrev = inCurr;
+    inCurr = inNext;
+    inCurr_s[ty][tx] = inNext;
+  }
+}</code></pre>
+    <ul class="small">
+      <li><code>inPrev</code> and <code>inNext</code> replace two shared planes; <code>inCurr</code> stays in a register too, with a shared copy for the neighbours.</li>
+      <li>Shared memory: <b>one third</b>, 4 KB. Cost: 3 more registers per thread, 3072 per block.</li>
+      <li>Registers are faster than shared memory, so the kernel runs faster; global traffic, and so intensity, is unchanged.</li>
+      <li>The book's listing ends with <code>= inNext_s;</code>, a typo: there is no such array here, it must be the register <code>inNext</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Resources per block</h2>
+  <div class="cfg" data-anim="res" style="grid-template-columns:minmax(0,1fr);font-size:.8em">
+    <div>
+      <div class="cfg-row" style="gap:.5em 1.4em"><label><span class="cfg-lbl" style="min-width:0">order r</span> <input type="number" min="1" max="3" value="1" data-in="r" style="width:4em"></label><label><span class="cfg-lbl" style="min-width:0">3D tile</span> <input type="number" min="3" max="16" value="8" data-in="t3" style="width:4em"></label><label><span class="cfg-lbl" style="min-width:0">2D tile</span> <input type="number" min="4" max="64" value="32" data-in="t2" style="width:4em"></label><label><span class="cfg-lbl" style="min-width:0">z planes per block</span> <input type="number" min="1" max="512" value="30" data-in="d" style="width:4.5em"></label></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The four kernels side by side</h2>
+  <table>
+    <tr><th></th><th>basic</th><th>tiled 8 × 8 × 8</th><th>coarsened 32 × 32</th><th>+ register tiling</th></tr>
+    <tr><td>global loads per output</td><td>7</td><td>512 / 216 = 2.37</td><td>32²·32 / (30²·30) = 1.21</td><td>1.21</td></tr>
+    <tr><td>FLOP/B (store counted)</td><td>13/32 = 0.41</td><td>0.96</td><td>1.47 per block, 1.52 per step</td><td>same</td></tr>
+    <tr><td>threads per block</td><td>512</td><td>512, 216 compute</td><td>1024, 900 compute</td><td>1024, 900 compute</td></tr>
+    <tr><td>shared memory</td><td>—</td><td>2 KB</td><td>12 KB (3 planes)</td><td>4 KB (1 plane)</td></tr>
+    <tr><td>warp access</td><td>full 32-wide rows</td><td>4 rows of 8 floats</td><td>one row of 32 floats</td><td>one row of 32 floats</td></tr>
+    <tr><td>barriers</td><td>none</td><td>1</td><td>2 per plane</td><td>2 per plane</td></tr>
+  </table>
+  <p class="small muted">All four are memory-bound: the ideal 1.625 FLOP/B is far below the H100 ridge of 20. In practice L1 and L2 catch part of the basic kernel's repeated loads, so the measured gap is smaller than these counts. Some texts count only the loads: that doubles the ideal to 3.25 and gives the basic kernel 13/28 = 0.46. This deck and <code>ec2/stencil</code> count loads and stores, as the book does.</p>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>Stencils approximate derivatives on structured grids: discretize, replace derivatives by finite differences, apply the same weights at every point. The order is the number of points on each side.</li>
+    <li>A sweep updates every interior point from the previous sweep; boundary cells stay fixed; buffers are swapped between sweeps.</li>
+    <li>The 3D 7-point stencil does 13 FLOP per point: ideal 1.625 FLOP/B, basic kernel 0.41.</li>
+    <li>Tiling helps less than for convolution: sparse stars reuse little, 3D tiles are tiny (t = 8 → 0.96 FLOP/B), mostly halo and poorly coalesced.</li>
+    <li><b>Thread coarsening</b> in z keeps a 2D block of 32 × 32 threads and only 3 planes on chip: 1.52 FLOP/B with 12 KB.</li>
+    <li><b>Register tiling</b> keeps the z neighbours, used by one thread only, in registers: a third of the shared memory, the same global traffic.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 16.1–16.6</h2>
+  <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.3em;font-size:.68em">
+    <li>A 3D 7-point stencil on a 120 × 120 × 120 grid, boundary cells included. (a) How many output points does each sweep compute? How many blocks does (b) the basic kernel need with 8 × 8 × 8 blocks, (c) the tiled kernel with 8 × 8 × 8 blocks, (d) the coarsening kernel with 32 × 32 blocks?</li>
+    <li>A 7-point stencil with shared-memory tiling and thread coarsening, 32 × 32 blocks and a coarsening factor of 16 (each block computes 16 consecutive output planes). (a) How many input elements does a block load in its lifetime? (b) How many outputs does it compute? (c) What is its FLOP/B? Shared memory per block (d) without and (e) with register tiling?</li>
+    <li>A 3D order-2 stencil (13 points). FLOP per point and ideal FLOP/B? FLOP/B of the basic kernel and of the tiled kernel with 8 × 8 × 8 blocks? Shared memory of the coarsening kernel with 32 × 32 blocks, without and with register tiling?</li>
+    <li>Estimate f′(1) for f = sin with the central difference and h = 0.1. What is the error? Predict the error for h = 0.05.</li>
+    <li>The tiled kernel with 32 × 8 × 4 blocks: output tile, halo fraction and FLOP/B. Compare with 8 × 8 × 8. Why might it still run faster?</li>
+    <li>Jacobi iteration for Laplace's equation in 2D sets each interior point to the average of its 4 neighbours. Give c0…c4. Why can the kernel not write into its input array? What must both buffers contain before the first sweep?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 16.1–16.6</h2>
+  <table style="font-size:.62em">
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>16.1</td><td>(a) 118³ = <b>1 643 032</b>. (b) One thread per grid point: ⌈120/8⌉³ = <b>3 375</b>. (c) Output tile 6³: ⌈120/6⌉³ = <b>8 000</b>. (d) Output tile 30 × 30, and 30 planes per block in z as in the book's kernel: 4·4·4 = <b>64</b>.</td></tr>
+    <tr><td>16.2</td><td>(a) 32·32·(16 + 2) = <b>18 432</b>. (b) 30·30·16 = <b>14 400</b>. (c) 13·14 400 / (4·(18 432 + 14 400)) = 187 200 / 131 328 = <b>1.43 FLOP/B</b> (internal block, store counted). (d) 3·32²·4 = <b>12 288 B</b>. (e) 32²·4 = <b>4 096 B</b>.</td></tr>
+    <tr><td>16.3</td><td>13 multiplications + 12 additions = <b>25 FLOP</b>; ideal 25/8 = <b>3.125</b>. Basic: 25 / (13·4 + 4) = <b>0.45</b>. Tiled 8³: output 4³ = 64, 25·64 / (4·512 + 4·64) = <b>0.69</b>. Coarsening keeps 5 planes: 5·32²·4 = <b>20 KB</b>; with registers for the 4 z neighbours, <b>4 KB</b>.</td></tr>
+    <tr><td>16.4</td><td>(sin 1.1 − sin 0.9) / 0.2 = 0.53940; cos 1 = 0.54030; error <b>9.0·10⁻⁴</b> (≈ h²/6 · cos 1). With h = 0.05: about 4 times smaller, <b>2.25·10⁻⁴</b>.</td></tr>
+    <tr><td>16.5</td><td>Output 30 × 6 × 2 = 360 points; halo 1 − 360/1024 = <b>65 %</b>; 13·360 / (4·1024 + 4·360) = <b>0.85 FLOP/B</b>, less than 0.96. But each warp reads one row of 32 consecutive floats instead of 4 rows of 8, so fewer DRAM sectors per useful byte.</td></tr>
+    <tr><td>16.6</td><td>c0 = 0, c1…c4 = <b>1/4</b>. In place, a thread could read a neighbour already overwritten in this sweep, depending on scheduling: a race. Both buffers must hold the <b>boundary values</b>, which no sweep writes.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study and code</h2>
+  <ul>
+    <li><b><code>ec2/stencil/stencil.cu</code></b>: the four 3D kernels of this session, each checked against a CPU reference, then several sweeps with swapped buffers.</li>
+    <li><b><code>ec2/stencil/stencil_basics.cu</code></b>: the 1D finite difference of sin(x) and how its error shrinks with h, and a 2D 5-point stencil, basic against tiled.</li>
+    <li><b><code>ec2/stencil/bikeshare_station_coverage.cu</code></b>: an idea for your project in another domain, a coverage field around the stations of a bike-sharing city computed by repeated sweeps, and rental demand diffusing over time.</li>
+    <li><b><code>ec2/stencil/colab.ipynb</code></b>: how to run everything on Google Colab with <code>nvcc</code>. On a laptop, without a GPU: <code style="white-space:nowrap">g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code></li>
+    <li>Kernels there are launched with <code>launch(kernel, grid, block, args...)</code>, which maps to <code>kernel&lt;&lt;&lt;grid, block&gt;&gt;&gt;(args...)</code> on a real GPU.</li>
+    <li><b>Exercise</b>: write the order-2 (13-point) versions of the coarsening and register-tiling kernels and measure the shared-memory and register use.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>16 · Stencil computation on the GPU</span><span id="counter"></span></div>
+
+<script>
+(function () {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs = {}, text) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  const R = (p, x, y, w, h, a = {}) => p.appendChild(el('rect', { x, y, width: w, height: h, ...a }));
+  const T = (p, x, y, s, a = {}) => p.appendChild(el('text', { x, y, ...a }, s));
+  const L = (p, x1, y1, x2, y2, a = {}) => p.appendChild(el('line', { x1, y1, x2, y2, ...a }));
+  const mid = { 'text-anchor': 'middle' };
+  const newSvg = (root, vb, label) => { const host = root.querySelector('[data-svg]'); host.innerHTML = ''; const s = el('svg', { viewBox: vb, role: 'img', 'aria-label': label }); host.appendChild(s); return s; };
+  const fmt = (n) => n.toLocaleString('en-US');
+  const pct = (x) => (Math.round(x * 1000) / 10) + ' %';
+
+  function stepper(root, steps, render, ms) {
+    let k = 0, timer = null;
+    const play = root.querySelector('[data-act=play]');
+    const draw = () => render(k);
+    const tick = () => { k = (k + 1) % steps(); draw(); };
+    const start = () => { if (timer || reduce) return; timer = setInterval(tick, ms); if (play) play.textContent = 'Pause'; };
+    const stop = () => { clearInterval(timer); timer = null; if (play) play.textContent = 'Play'; };
+    if (play) play.addEventListener('click', () => timer ? stop() : start());
+    root.querySelector('[data-act=step]')?.addEventListener('click', () => { stop(); tick(); });
+    root.querySelector('[data-act=reset]')?.addEventListener('click', () => { stop(); k = 0; draw(); });
+    return { enter() { draw(); start(); }, leave: stop, reset() { stop(); k = 0; draw(); start(); }, get k() { return k; } };
+  }
+  const modeButtons = (root, attr, onPick) => root.querySelectorAll(`[data-${attr}]`).forEach(b => b.addEventListener('click', () => {
+    root.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset[attr]);
+  }));
+
+  const ANIM = {};
+
+  const arrowHead = (svg, id, color) => {
+    const d = svg.querySelector('defs') || svg.insertBefore(el('defs'), svg.firstChild);
+    const m = el('marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto-start-reverse' });
+    m.appendChild(el('path', { d: 'M0,0 L10,5 L0,10 z', fill: color })); d.appendChild(m);
+    return `url(#${id})`;
+  };
+  const GRAY = '#9a9a9a', BLUE = '#2F6FD0', GOLD = '#C98A1B', RED = '#B03A3A', GREEN = '#2E7D4F', INK = '#1A1A1A';
+  const LBLUE = '#C9DBF4', MBLUE = '#9DB7E3', LGOLD = '#F6EAD2', LRED = '#F6DADA', LGREEN = '#D6EBDC', BGRAY = '#C4C4C4';
+  const syncButtons = (root, attr, val) => root.querySelectorAll(`[data-${attr}]`).forEach(b => b.classList.toggle('on', b.dataset[attr] === String(val)));
+  const grid = (svg, x0, y0, n, m, cs, fillFn, opts = {}) => {
+    const cells = [];
+    for (let r = 0; r < n; r++) for (let c = 0; c < m; c++) cells.push(R(svg, x0 + c * cs, y0 + r * cs, cs - (opts.gap ?? 1), cs - (opts.gap ?? 1), { fill: fillFn ? fillFn(r, c) : '#fff', stroke: opts.stroke || '#d0d0d0', 'stroke-width': .6 }));
+    return cells;
+  };
+  const C = (p, cx, cy, r, a = {}) => p.appendChild(el('circle', { cx, cy, r, ...a }));
+  const P = (p, d, a = {}) => p.appendChild(el('path', { d, ...a }));
+  const clampIn = (inp, lo, hi, def) => { const v = Math.round(+inp.value); return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def; };
+
+  // ------------------------------------------------------------ sin(x) on a grid, central differences
+  ANIM.sine = (root) => {
+    const svg = newSvg(root, '0 0 560 396', 'sin x sampled on a regular grid, and the central-difference derivative at each interior grid point against cos x');
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const X0 = 46, XW = 490, px = (x) => X0 + x / Math.PI * XW;
+    const draw = () => {
+      svg.innerHTML = '';
+      const n = clampIn(q('n'), 3, 81, 7), h = Math.PI / (n - 1);
+      // top plot: sin and the grid points
+      const ty = (v) => 170 - v * 135;
+      T(svg, X0, 18, 'f(x) = sin x and its grid values F[i]', { 'font-size': 13, class: 'lbl' });
+      L(svg, X0, ty(0), X0 + XW, ty(0), { stroke: GRAY });
+      let d = ''; for (let s = 0; s <= 200; s++) { const x = s / 200 * Math.PI; d += (s ? 'L' : 'M') + px(x).toFixed(1) + ',' + ty(Math.sin(x)).toFixed(1); }
+      P(svg, d, { fill: 'none', stroke: '#9a9a9a', 'stroke-width': 1.5 });
+      for (let i = 0; i < n; i++) {
+        const x = i * h;
+        if (n <= 25) L(svg, px(x), ty(0), px(x), ty(Math.sin(x)), { stroke: MBLUE, 'stroke-dasharray': '3 3' });
+        C(svg, px(x), ty(Math.sin(x)), n <= 25 ? 5 : 3, { fill: i === 0 || i === n - 1 ? '#fff' : BLUE, stroke: BLUE, 'stroke-width': 1.5 });
+      }
+      if (n <= 13) [['0', 0], ['π/2', Math.PI / 2], ['π', Math.PI]].forEach(([s, x]) => T(svg, px(x), ty(0) + 16, s, { ...mid, 'font-size': 12, class: 'lbl' }));
+      // h marker
+      L(svg, px(0), 28, px(h), 28, { stroke: GOLD, 'stroke-width': 3 }); T(svg, X0 + XW, 18, `h = π/${n - 1} = ${h.toFixed(3)}`, { 'font-size': 12, fill: GOLD, 'text-anchor': 'end' });
+      // bottom plot: cos and central differences
+      const by = (v) => 300 - v * 75;
+      T(svg, X0, 212, 'f′(x) = cos x (gray) and FD[i] = (F[i+1] − F[i−1]) / 2h', { 'font-size': 13, class: 'lbl' });
+      L(svg, X0, by(0), X0 + XW, by(0), { stroke: GRAY });
+      d = ''; for (let s = 0; s <= 200; s++) { const x = s / 200 * Math.PI; d += (s ? 'L' : 'M') + px(x).toFixed(1) + ',' + by(Math.cos(x)).toFixed(1); }
+      P(svg, d, { fill: 'none', stroke: '#9a9a9a', 'stroke-width': 1.5 });
+      let maxErr = 0;
+      for (let i = 1; i < n - 1; i++) {
+        const x = i * h, fd = (Math.sin(x + h) - Math.sin(x - h)) / (2 * h), e = Math.abs(fd - Math.cos(x)); maxErr = Math.max(maxErr, e);
+        L(svg, px(x), by(Math.cos(x)), px(x), by(fd), { stroke: RED, 'stroke-width': 2 });
+        C(svg, px(x), by(fd), n <= 25 ? 4.5 : 2.8, { fill: GREEN });
+      }
+      T(svg, X0, 392, 'green: FD[i] · red: error · end points lack a neighbour', { 'font-size': 11, class: 'lbl' });
+      const F = Array.from({ length: n }, (_, i) => Math.sin(i * h).toFixed(2));
+      const h2 = h / 2, err2 = Math.cos(h2) * (1 - Math.sin(h2) / h2);
+      out.innerHTML = `h = π/${n - 1} = <b>${h.toFixed(3)}</b>` +
+        `<br>F = {${n <= 13 ? F.join(', ') : F.slice(0, 5).join(', ') + ', …, ' + F[n - 1]}}` +
+        `<br>max |FD[i] − cos x<sub>i</sub>| = <b>${maxErr.toExponential(2)}</b> (≈ h²/6 = ${(h * h / 6).toExponential(2)})` +
+        `<br>with h/2: ${err2.toExponential(2)}, ${(maxErr / err2).toFixed(2)} times smaller`;
+      syncButtons(root, 'p', n);
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', draw));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { q('n').value = b.dataset.p; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ stencil shapes
+  ANIM.shapes = (root) => {
+    const svg = newSvg(root, '0 0 520 380', 'The points of a stencil of the chosen dimension and order, with the box a convolution of the same radius would read');
+    const out = root.querySelector('[data-out]');
+    let dim = 3, ord = 1;
+    const draw = () => {
+      svg.innerHTML = '';
+      const r = ord, s = dim === 1 ? 62 : dim === 2 ? 44 : 34;
+      const cx = 260, cy = dim === 3 ? 200 : 180;
+      const proj = (x, y, z) => [cx + x * s - z * s * .55, cy - y * s + z * s * .42];
+      const box = [];
+      const rng = (k) => Array.from({ length: 2 * k + 1 }, (_, i) => i - k);
+      const ys = dim >= 2 ? rng(r) : [0], zs = dim === 3 ? rng(r) : [0];
+      for (const z of zs) for (const y of ys) for (const x of rng(r)) box.push([x, y, z]);
+      box.sort((a, b) => b[2] - a[2]);
+      box.forEach(([x, y, z]) => { const [a, b] = proj(x, y, z); C(svg, a, b, 2.2, { fill: '#b9b9b9' }); });
+      // axes lines of the star
+      const axes = [[1, 0, 0]]; if (dim >= 2) axes.push([0, 1, 0]); if (dim === 3) axes.push([0, 0, 1]);
+      axes.forEach(([ax, ay, az]) => { const [a1, b1] = proj(-r * ax, -r * ay, -r * az), [a2, b2] = proj(r * ax, r * ay, r * az); L(svg, a1, b1, a2, b2, { stroke: '#8a8a8a', 'stroke-width': 2 }); });
+      const pts = [[0, 0, 0]];
+      axes.forEach(([ax, ay, az]) => { for (let k = 1; k <= r; k++) { pts.push([k * ax, k * ay, k * az]); pts.push([-k * ax, -k * ay, -k * az]); } });
+      pts.sort((a, b) => b[2] - a[2]);
+      pts.forEach(([x, y, z]) => { const [a, b] = proj(x, y, z), c = x === 0 && y === 0 && z === 0; C(svg, a, b, c ? 12 : 10, { fill: c ? BLUE : LBLUE, stroke: BLUE, 'stroke-width': 1.5 }); });
+      // axis legend
+      const lx = 40, ly = 340;
+      const hA = arrowHead(svg, 'sh-a', INK);
+      L(svg, lx, ly, lx + 34, ly, { stroke: INK, 'marker-end': hA }); T(svg, lx + 40, ly + 4, 'x', { 'font-size': 12 });
+      if (dim >= 2) { L(svg, lx, ly, lx, ly - 34, { stroke: INK, 'marker-end': hA }); T(svg, lx - 4, ly - 40, 'y', { 'font-size': 12 }); }
+      if (dim === 3) { L(svg, lx, ly, lx - 20, ly + 16, { stroke: INK, 'marker-end': hA }); T(svg, lx - 34, ly + 24, 'z', { 'font-size': 12 }); }
+      const Pn = 2 * dim * r + 1, m = 2 * r + 1, boxN = m ** dim;
+      T(svg, 20, 24, `${dim}D, order ${r}: ${Pn}-point stencil`, { 'font-size': 15, 'font-weight': 600 });
+      out.innerHTML = `points P = 2·${dim}·${r} + 1 = <b>${Pn}</b> · FLOP per output = 2P − 1 = <b>${2 * Pn - 1}</b>` +
+        `<br>convolution box of the same radius: ${m}<sup>${dim}</sup> = ${boxN} points` +
+        `<br>the stencil uses <b>${(Pn / boxN * 100).toFixed(Pn === boxN ? 0 : 1)} %</b> of the box`;
+      syncButtons(root, 'dim', dim); syncButtons(root, 'ord', ord);
+    };
+    root.querySelectorAll('[data-dim]').forEach(b => b.addEventListener('click', () => { dim = +b.dataset.dim; draw(); }));
+    root.querySelectorAll('[data-ord]').forEach(b => b.addEventListener('click', () => { ord = +b.dataset.ord; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ a 2D stencil sweep with fixed boundary cells
+  ANIM.sweep = (root) => {
+    const svg = newSvg(root, '0 0 1000 400', 'A 12 by 12 input and output grid; the 5-point stencil reads the input and writes interior output points; boundary cells are not computed');
+    const N = 12, cs = 26, xi = 60, xo = 560, y0 = 44;
+    T(svg, xi, 26, 'input (sweep s)', { 'font-size': 13, class: 'lbl' }); T(svg, xo, 26, 'output (sweep s + 1)', { 'font-size': 13, class: 'lbl' });
+    const bnd = (r, c) => r === 0 || c === 0 || r === N - 1 || c === N - 1;
+    const inC = grid(svg, xi, y0, N, N, cs, (r, c) => bnd(r, c) ? BGRAY : LBLUE);
+    const outC = grid(svg, xo, y0, N, N, cs, () => '#fff');
+    for (let k = 0; k <= N; k += 4) { L(svg, xo + k * cs, y0, xo + k * cs, y0 + N * cs, { stroke: INK, 'stroke-width': 1.6 }); L(svg, xo, y0 + k * cs, xo + N * cs, y0 + k * cs, { stroke: INK, 'stroke-width': 1.6 }); }
+    const star = svg.appendChild(el('g'));
+    const hA = arrowHead(svg, 'sw-a', BLUE); const arrow = L(svg, 0, 0, 0, 0, { stroke: BLUE, 'stroke-width': 2.5, 'marker-end': hA, opacity: 0 });
+    const info = T(svg, 60, 386, '', { 'font-size': 14 });
+    const pos = [[1, 1], [1, 2], [1, 3], [6, 8]];
+    const S = [
+      { cap: 'Gray: <b>boundary cells</b>. They hold the boundary conditions of the equation and are never computed. Light blue: interior points of the current sweep.' },
+      ...pos.map((p, i) => ({ p, cap: i === 0 ? 'The thread of output (1,1) reads its point and its 4 neighbours from the input: a 2D 5-point stencil. Two of the neighbours are boundary cells: real values, not ghost zeros.' : i < 3 ? 'The next thread does the same one point to the right. Every output uses the same coefficients.' : 'Any interior point, anywhere: the outputs only depend on the input grid, so their order does not matter.' })),
+      { all: true, cap: 'So all interior points are computed <b>in parallel</b>, one thread each, blocks of 4 × 4 outputs (thick lines). The boundary of the output is still empty.' },
+      { all: true, bnd: true, cap: 'Boundary cells keep their values: copied once into both buffers before the first sweep. Only the inner 10 × 10 points change.' },
+      { all: true, bnd: true, swap: true, cap: 'Next sweep: the output becomes the input. The host swaps the two pointers and launches the kernel again.' }
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => S.length, (k) => {
+      const s = S[k], done = new Set();
+      if (s.p) for (let j = 1; j < k; j++) done.add(pos[j - 1].join());
+      star.innerHTML = '';
+      inC.forEach((e, i) => { const r = Math.floor(i / N), c = i % N; e.setAttribute('fill', bnd(r, c) ? BGRAY : (s.swap ? LGREEN : LBLUE)); });
+      outC.forEach((e, i) => {
+        const r = Math.floor(i / N), c = i % N;
+        let f = '#fff';
+        if (bnd(r, c)) f = s.bnd ? BGRAY : '#fff';
+        else if (s.all) f = s.swap ? '#fff' : LGREEN;
+        else if (done.has(`${r},${c}`)) f = LGREEN;
+        if (s.p && r === s.p[0] && c === s.p[1]) f = GREEN;
+        e.setAttribute('fill', f);
+      });
+      if (s.p) {
+        const [r, c] = s.p;
+        [[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0]].forEach(([dr, dc]) => star.appendChild(el('rect', { x: xi + (c + dc) * cs, y: y0 + (r + dr) * cs, width: cs - 1, height: cs - 1, fill: dr || dc ? MBLUE : BLUE, stroke: BLUE, 'stroke-width': 1.5 })));
+        arrow.setAttribute('x1', xi + c * cs + cs / 2); arrow.setAttribute('y1', y0 + r * cs + cs / 2); arrow.setAttribute('x2', xo + c * cs + cs / 2 - 6); arrow.setAttribute('y2', y0 + r * cs + cs / 2); arrow.setAttribute('opacity', 1);
+        info.textContent = `out[${r}][${c}] = c0·in[${r}][${c}] + c1·in[${r}][${c - 1}] + c2·in[${r}][${c + 1}] + c3·in[${r - 1}][${c}] + c4·in[${r + 1}][${c}]`;
+      } else {
+        arrow.setAttribute('opacity', 0);
+        info.textContent = k === 0 ? '44 boundary cells, 100 interior points' : s.swap ? 'std::swap(d_in, d_out): the new input (green) is the old output' : s.bnd ? 'boundary cells: same values in both buffers' : '100 threads, one per interior point, no dependence between them';
+      }
+      cap.innerHTML = s.cap;
+    }, 2600);
+  };
+
+  // ------------------------------------------------------------ many sweeps: Jacobi for Laplace's equation
+  ANIM.heat = (root) => {
+    const svg = newSvg(root, '0 0 560 360', 'A 2D grid whose top edge is held hot and other edges cold; repeated Jacobi sweeps spread the heat into the interior');
+    const N = 22, cs = 13, X0 = 20, Y0 = 34;
+    let a = new Float64Array(N * N);
+    const init = () => { a = new Float64Array(N * N); for (let c = 0; c < N; c++) a[c] = 1; };
+    const sweep = () => { const b = a.slice(); let dmax = 0; for (let r = 1; r < N - 1; r++) for (let c = 1; c < N - 1; c++) { const v = .25 * (a[(r - 1) * N + c] + a[(r + 1) * N + c] + a[r * N + c - 1] + a[r * N + c + 1]); dmax = Math.max(dmax, Math.abs(v - a[r * N + c])); b[r * N + c] = v; } a = b; return dmax; };
+    const color = (v) => { const t = Math.max(0, Math.min(1, Math.pow(v, .6))); const lerp = (x, y, u) => Math.round(x + (y - x) * u); return t < .5 ? `rgb(${lerp(255, 233, t * 2)},${lerp(255, 180, t * 2)},${lerp(255, 103, t * 2)})` : `rgb(${lerp(233, 176, t * 2 - 1)},${lerp(180, 58, t * 2 - 1)},${lerp(103, 58, t * 2 - 1)})`; };
+    T(svg, X0, 22, 'top edge held at 1, other edges at 0', { 'font-size': 14, class: 'lbl' });
+    const cells = []; for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) cells.push(R(svg, X0 + c * cs, Y0 + r * cs, cs - .5, cs - .5, { fill: '#fff' }));
+    R(svg, X0 - 1, Y0 - 1, N * cs + 1, N * cs + 1, { fill: 'none', stroke: INK, 'stroke-width': 1.2 });
+    const t1 = T(svg, 330, 60, '', { 'font-size': 20, 'font-weight': 600 }), t2 = T(svg, 330, 90, '', { 'font-size': 13 }), t2b = T(svg, 330, 110, '', { 'font-size': 13 }), t3 = T(svg, 330, 132, '', { 'font-size': 13 });
+    for (let i = 0; i <= 10; i++) R(svg, 330 + i * 18, 170, 18, 14, { fill: color(i / 10) });
+    T(svg, 330, 200, '0', { 'font-size': 14, class: 'lbl' }); T(svg, 528, 200, '1', { 'font-size': 14, class: 'lbl', 'text-anchor': 'end' });
+    const plan = [0, 1, 2, 5, 10, 25, 50, 100, 200, 400];
+    const cap = root.querySelector('[data-cap]');
+    let done = 0, last = 0;
+    return stepper(root, () => plan.length, (k) => {
+      if (k === 0 || plan[k] < done) { init(); done = 0; last = 0; }
+      while (done < plan[k]) { last = sweep(); done++; }
+      cells.forEach((e, i) => e.setAttribute('fill', color(a[i])));
+      t1.textContent = `after ${done} sweep${done === 1 ? '' : 's'}`;
+      t2.textContent = done ? 'largest change in the' : 'initial guess:'; t2b.textContent = done ? `last sweep: ${last.toFixed(4)}` : 'interior = 0';
+      t3.textContent = `centre value: ${a[(N >> 1) * N + (N >> 1)].toFixed(3)}`;
+      cap.innerHTML = k === 0 ? 'Laplace\'s equation, solved by <b>Jacobi iteration</b>: every interior point becomes the average of its 4 neighbours.'
+        : k < 4 ? 'Each sweep moves information <b>one point</b> further from the hot edge: the stencil only reaches its neighbours.'
+          : k < 8 ? 'Hundreds of sweeps are normal. Each one is a full kernel launch over the whole grid, so its memory traffic is what matters.'
+            : 'The changes shrink towards zero: the field converges to the solution. A solver stops when the largest change is below a tolerance.';
+    }, 1800);
+  };
+
+  // ------------------------------------------------------------ where the 7 neighbours live in memory
+  ANIM.neigh = (root) => {
+    const svg = newSvg(root, '0 0 1000 380', 'Three 8 by 8 planes of a 3D grid and the linear memory that stores them; the seven loads of one output are highlighted');
+    const N = 8, cs = 22, gx = [70, 390, 710], Y0 = 40;
+    const ci = 1, cj = 3, ck = 4;   // centre point: plane 1 of the three shown, row 3, column 4
+    const labels = ['plane i − 1', 'plane i', 'plane i + 1'];
+    const planes = gx.map((x, p) => { T(svg, x, 28, labels[p], { 'font-size': 13, class: 'lbl' }); return grid(svg, x, Y0, N, N, cs, () => '#fff'); });
+    const MS = 3 * N * N, mw = 920 / MS, MY = 268;
+    T(svg, 40, MY - 10, 'linear memory: in[i*N*N + j*N + k], one cell per float, the three planes one after another', { 'font-size': 15, class: 'lbl' });
+    const mem = Array.from({ length: MS }, (_, m) => R(svg, 40 + m * mw, MY, mw - .4, 26, { fill: '#fff', stroke: '#e0e0e0', 'stroke-width': .3 }));
+    for (let p = 0; p <= 3; p++) L(svg, 40 + p * N * N * mw, MY - 4, 40 + p * N * N * mw, MY + 30, { stroke: INK, 'stroke-width': 1.5 });
+    const marks = svg.appendChild(el('g'));
+    const t1 = T(svg, 40, 330, '', { 'font-size': 14, 'font-weight': 600 }), t2 = T(svg, 40, 354, '', { 'font-size': 13 });
+    const L7 = [
+      ['in[i][j][k]', 0, 0, 0, 'the centre itself'],
+      ['in[i][j][k−1]', 0, 0, -1, '1 float before: same 32-byte sector'],
+      ['in[i][j][k+1]', 0, 0, 1, '1 float after'],
+      ['in[i][j−1][k]', 0, -1, 0, `N floats before: ${N * 4} B here, 2 KB for N = 512`],
+      ['in[i][j+1][k]', 0, 1, 0, 'N floats after'],
+      ['in[i−1][j][k]', -1, 0, 0, `N² floats before: ${N * N * 4} B here, 1 MB for N = 512`],
+      ['in[i+1][j][k]', 1, 0, 0, 'N² floats after: a different DRAM page']
+    ];
+    const cap = root.querySelector('[data-cap]');
+    return stepper(root, () => L7.length + 2, (k) => {
+      const shown = Math.min(k, 7);
+      planes.forEach(g => g.forEach(e => e.setAttribute('fill', '#fff')));
+      mem.forEach(e => e.setAttribute('fill', '#fff'));
+      marks.innerHTML = '';
+      for (let q = 0; q < Math.max(1, shown); q++) {
+        const [, di, dj, dk] = L7[q], p = ci + di, idx = (cj + dj) * N + ck + dk, cur = q === shown - 1 && k >= 1 && k <= 7;
+        planes[p][idx].setAttribute('fill', cur ? GOLD : (di || dj || dk ? MBLUE : BLUE));
+        mem[p * N * N + idx].setAttribute('fill', cur ? GOLD : BLUE);
+        marks.appendChild(el('line', { x1: 40 + (p * N * N + idx + .5) * mw, y1: MY + 28, x2: 40 + (p * N * N + idx + .5) * mw, y2: MY + 38, stroke: cur ? GOLD : BLUE, 'stroke-width': 2 }));
+      }
+      if (k >= 1 && k <= 7) { const [s, , , , note] = L7[k - 1]; t1.textContent = `load ${k}: ${s}`; t2.textContent = note; }
+      else if (k === 0) { t1.textContent = 'one thread, one output: out[i][j][k]'; t2.textContent = 'centre of the stencil: plane i, row j = 3, column k = 4'; }
+      else { t1.textContent = '13 FLOP / (7 loads × 4 B + 1 store × 4 B) = 13/32 = 0.41 FLOP/B'; t2.textContent = 'ideal, each input loaded once and each output stored once: 13 / (4 + 4) = 1.625 FLOP/B'; }
+      cap.innerHTML = k === 0 ? 'The basic kernel: each thread computes one output and reads its 7 inputs straight from global memory.'
+        : k <= 3 ? 'Neighbours along x (k ± 1) are next to each other in memory, and next to what the neighbouring threads of the warp read.'
+          : k <= 5 ? 'Along y the neighbour is a whole row away: N floats.'
+            : k <= 7 ? 'Along z it is a whole <b>plane</b> away: N² floats. The 7 loads land in three far-apart places in memory.'
+              : 'Every point is loaded by up to 7 threads, and each load is counted again. The basic kernel reaches only <b>0.41 FLOP/B</b> (0.46 = 13/28 if the store is not counted). L1 and L2 catch some of the repeats, but shared memory makes the reuse reliable.';
+    }, 2200);
+  };
+
+  // ------------------------------------------------------------ ideal intensity: stencil against convolution
+  ANIM.aicalc = (root) => {
+    const svg = newSvg(root, '0 0 540 360', 'Ideal arithmetic intensity of stencils and convolutions of order 1 to 3 for the chosen dimension');
+    const out = root.querySelector('[data-out]');
+    let dim = 2;
+    const st = (d, r) => (2 * (2 * d * r + 1) - 1) / 8, cv = (d, r) => 2 * (2 * r + 1) ** d / 8;
+    const draw = () => {
+      svg.innerHTML = '';
+      const max = cv(dim, 3) * 1.12, H = 250, Y0 = 290, sc = H / max;
+      T(svg, 20, 24, `${dim}D: ideal FLOP/B, order 1 to 3`, { 'font-size': 14, 'font-weight': 600 });
+      L(svg, 40, Y0, 520, Y0, { stroke: INK });
+      [1, 2, 3].forEach((r, i) => {
+        const x = 70 + i * 160, a = st(dim, r), b = cv(dim, r);
+        R(svg, x, Y0 - Math.max(2, a * sc), 54, Math.max(2, a * sc), { fill: BLUE });
+        R(svg, x + 62, Y0 - b * sc, 54, b * sc, { fill: '#E7B467' });
+        T(svg, x + 27, Y0 - Math.max(2, a * sc) - 6, a.toFixed(3).replace(/0+$/, '').replace(/\.$/, ''), { ...mid, 'font-size': 12 });
+        T(svg, x + 89, Y0 - b * sc - 6, b.toFixed(3).replace(/0+$/, '').replace(/\.$/, ''), { ...mid, 'font-size': 12 });
+        T(svg, x + 58, Y0 + 18, `order ${r}`, { ...mid, 'font-size': 12 });
+        T(svg, x + 58, Y0 + 34, `${2 * dim * r + 1} pts vs ${2 * r + 1}${dim > 1 ? '^' + dim : ''}`, { ...mid, 'font-size': 11, class: 'lbl' });
+      });
+      R(svg, 40, 40, 14, 14, { fill: BLUE }); T(svg, 60, 52, 'stencil (2P − 1)/8', { 'font-size': 12 });
+      R(svg, 40, 62, 14, 14, { fill: '#E7B467' }); T(svg, 60, 74, 'convolution 2m^d/8', { 'font-size': 12 });
+      let h = '<table><tr><th></th><th>order 1</th><th>order 2</th><th>order 3</th></tr>';
+      [1, 2, 3].forEach(d => { h += `<tr${d === dim ? ' style="background:#EEF3FB"' : ''}><td><b>${d}D</b></td>` + [1, 2, 3].map(r => `<td>${st(d, r)} / ${cv(d, r)}</td>`).join('') + '</tr>'; });
+      out.innerHTML = h + '</table><span class="small muted">stencil / convolution, FLOP/B</span>' +
+        `<br>${dim}D order 3: the convolution reaches <b>${(cv(dim, 3) / st(dim, 3)).toFixed(1)}×</b> the stencil's intensity`;
+      syncButtons(root, 'dim', dim);
+    };
+    root.querySelectorAll('[data-dim]').forEach(b => b.addEventListener('click', () => { dim = +b.dataset.dim; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ tiled intensity as a function of the tile size
+  ANIM.tcurve = (root) => {
+    const svg = newSvg(root, '0 0 1000 330', 'Arithmetic intensity of the 3D tiled kernel and of the z-coarsened kernel against the input tile width t, with the 1024-thread limits');
+    const inp = root.querySelector('[data-in=t]'), out = root.querySelector('[data-out]');
+    const tiled = (t) => 13 * (t - 2) ** 3 / (4 * t ** 3 + 4 * (t - 2) ** 3);
+    const coarse = (t) => 13 * (t - 2) ** 2 / (4 * t * t + 4 * (t - 2) ** 2);
+    const X0 = 70, XW = 880, Y0 = 280, YH = 250, tMax = 40, vMax = 1.8;
+    const px = (t) => X0 + (t - 2) / (tMax - 2) * XW, py = (v) => Y0 - v / vMax * YH;
+    const draw = () => {
+      svg.innerHTML = '';
+      const t = clampIn(inp, 3, 40, 8);
+      L(svg, X0, Y0, X0 + XW, Y0, { stroke: INK }); L(svg, X0, Y0, X0, Y0 - YH, { stroke: INK });
+      [0, .5, 1, 1.5].forEach(v => { T(svg, X0 - 8, py(v) + 4, v.toFixed(1), { 'font-size': 12, 'text-anchor': 'end' }); L(svg, X0, py(v), X0 + XW, py(v), { stroke: '#eeeeee' }); });
+      [4, 8, 10, 16, 20, 24, 32, 40].forEach(x => T(svg, px(x), Y0 + 18, x, { ...mid, 'font-size': 12 }));
+      T(svg, X0 + XW + 14, Y0 + 4, 't', { 'font-size': 13, 'font-style': 'italic' });
+      T(svg, 20, 18, 'FLOP/B', { 'font-size': 12, class: 'lbl' });
+      L(svg, X0, py(1.625), X0 + XW, py(1.625), { stroke: GREEN, 'stroke-dasharray': '6 4', 'stroke-width': 1.5 }); T(svg, X0 + XW - 4, py(1.625) - 6, 'ideal 13/8 = 1.625', { 'font-size': 12, fill: GREEN, 'text-anchor': 'end' });
+      const curve = (f, a, b, attrs) => { let d = ''; for (let x = a; x <= b + 1e-9; x += .25) d += (d ? 'L' : 'M') + px(x).toFixed(1) + ',' + py(f(x)).toFixed(1); P(svg, d, { fill: 'none', ...attrs }); };
+      curve(tiled, 3, 10, { stroke: BLUE, 'stroke-width': 3 }); curve(tiled, 10, 40, { stroke: BLUE, 'stroke-width': 2, 'stroke-dasharray': '4 4', opacity: .45 });
+      curve(coarse, 3, 32, { stroke: GOLD, 'stroke-width': 3 }); curve(coarse, 32, 40, { stroke: GOLD, 'stroke-width': 2, 'stroke-dasharray': '4 4', opacity: .45 });
+      L(svg, px(10), Y0, px(10), Y0 - YH, { stroke: BLUE, 'stroke-dasharray': '3 3' }); T(svg, px(10) + 5, Y0 - YH + 12, 't³ ≤ 1024 → t ≤ 10', { 'font-size': 12, fill: BLUE });
+      L(svg, px(32), Y0, px(32), Y0 - YH, { stroke: GOLD, 'stroke-dasharray': '3 3' }); T(svg, px(32) - 5, Y0 - YH + 12, 't² ≤ 1024 → t ≤ 32', { 'font-size': 12, fill: GOLD, 'text-anchor': 'end' });
+      L(svg, 560, 200, 590, 200, { stroke: BLUE, 'stroke-width': 3 }); T(svg, 598, 204, 'tiled: 3D block t × t × t', { 'font-size': 12, fill: BLUE });
+      L(svg, 560, 224, 590, 224, { stroke: GOLD, 'stroke-width': 3 }); T(svg, 598, 228, 'coarsened in z: block t × t, per plane', { 'font-size': 12, fill: GOLD });
+      L(svg, 560, 248, 590, 248, { stroke: GRAY, 'stroke-width': 2, 'stroke-dasharray': '4 4' }); T(svg, 598, 252, 'dashed: too many threads to launch', { 'font-size': 12, class: 'lbl' });
+      C(svg, px(8), py(tiled(8)), 5, { fill: BLUE }); T(svg, px(8) + 8, py(tiled(8)) + 16, '0.96', { 'font-size': 12, fill: BLUE });
+      C(svg, px(32), py(coarse(32)), 5, { fill: GOLD }); T(svg, px(32) + 8, py(coarse(32)) + 16, '1.52', { 'font-size': 12, fill: GOLD });
+      L(svg, px(t), Y0, px(t), Y0 - YH, { stroke: INK, 'stroke-width': 1.5 });
+      C(svg, px(t), py(tiled(t)), 6, { fill: '#fff', stroke: BLUE, 'stroke-width': 2.5 }); C(svg, px(t), py(coarse(t)), 6, { fill: '#fff', stroke: GOLD, 'stroke-width': 2.5 });
+      const ok3 = t ** 3 <= 1024, ok2 = t * t <= 1024;
+      out.innerHTML = `t = <b>${t}</b> · 3D tile: ${fmt(t ** 3)} threads${ok3 ? '' : ' <span style="color:#B03A3A">(over 1024)</span>'}, ${fmt(t ** 3 * 4)} B shared, <b>${tiled(t).toFixed(2)} FLOP/B</b>` +
+        `<br>coarsened: ${fmt(t * t)} threads${ok2 ? '' : ' <span style="color:#B03A3A">(over 1024)</span>'}, 3 planes = ${fmt(3 * t * t * 4)} B shared, <b>${coarse(t).toFixed(2)} FLOP/B</b> per plane`;
+      syncButtons(root, 'p', t);
+    };
+    inp.addEventListener('input', draw);
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { inp.value = b.dataset.p; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ halo fraction, 2D against 3D
+  ANIM.halo = (root) => {
+    const svg = newSvg(root, '0 0 560 380', 'A 2D tile and a 3D tile drawn plane by plane, halo cells in light blue, and bars with the halo fraction of each');
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const draw = () => {
+      svg.innerHTML = '';
+      const t = clampIn(q('t'), 3, 32, 8);
+      const f2 = 1 - (t - 2) ** 2 / t ** 2, f3 = 1 - (t - 2) ** 3 / t ** 3;
+      const ring = (r, c) => r === 0 || c === 0 || r === t - 1 || c === t - 1;
+      // 2D tile
+      T(svg, 20, 18, `2D tile ${t} × ${t}`, { 'font-size': 13, class: 'lbl' });
+      const c2 = 150 / t;
+      for (let r = 0; r < t; r++) for (let c = 0; c < t; c++) R(svg, 20 + c * c2, 28 + r * c2, c2 - (t > 20 ? .3 : 1), c2 - (t > 20 ? .3 : 1), { fill: ring(r, c) ? MBLUE : BLUE });
+      // 3D tile, plane by plane
+      T(svg, 200, 18, `3D tile ${t} × ${t} × ${t}, plane by plane`, { 'font-size': 13, class: 'lbl' });
+      const cols = Math.ceil(Math.sqrt(t * 1.6)), rows = Math.ceil(t / cols), pw = Math.min(70, 340 / cols - 6, 210 / rows - 18), c3 = pw / t;
+      for (let z = 0; z < t; z++) {
+        const ox = 200 + (z % cols) * (pw + 6), oy = 28 + Math.floor(z / cols) * (pw + 16), face = z === 0 || z === t - 1;
+        if (t <= 12) { for (let r = 0; r < t; r++) for (let c = 0; c < t; c++) R(svg, ox + c * c3, oy + r * c3, c3 - .6, c3 - .6, { fill: face || ring(r, c) ? MBLUE : BLUE }); }
+        else { R(svg, ox, oy, pw, pw, { fill: MBLUE }); if (!face) R(svg, ox + c3, oy + c3, pw - 2 * c3, pw - 2 * c3, { fill: BLUE }); }
+        if (t <= 16) T(svg, ox, oy + pw + 11, `z=${z}`, { 'font-size': 9, class: 'lbl' });
+      }
+      // bars
+      const BY = 270;
+      [['2D', f2], ['3D', f3]].forEach(([s, f], i) => {
+        const y = BY + i * 44;
+        T(svg, 20, y + 19, `${s} halo`, { 'font-size': 13, 'font-weight': 600 });
+        R(svg, 110, y, 400, 26, { fill: '#f1f1f1' }); R(svg, 110, y, 400 * f, 26, { fill: MBLUE });
+        T(svg, 116 + 400 * f, y + 18, `${(f * 100).toFixed(0)} %`, { 'font-size': 13 });
+      });
+      T(svg, 20, 368, 'dark blue: interior (output tile) · light blue: halo, loaded but not computed', { 'font-size': 11, class: 'lbl' });
+      out.innerHTML = `2D: ${t * t} − ${(t - 2) ** 2} = ${t * t - (t - 2) ** 2} of ${t * t} → <b>${(f2 * 100).toFixed(1)} %</b>` +
+        `<br>3D: ${fmt(t ** 3)} − ${fmt((t - 2) ** 3)} = ${fmt(t ** 3 - (t - 2) ** 3)} of ${fmt(t ** 3)} → <b>${(f3 * 100).toFixed(1)} %</b>` +
+        `<br>3D block of ${fmt(t ** 3)} threads: ${t ** 3 <= 1024 ? 'fits' : '<span style="color:#B03A3A">over the 1024 limit</span>'}`;
+      syncButtons(root, 'p', t);
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', draw));
+    root.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { q('t').value = b.dataset.p; draw(); }));
+    return { enter: draw, leave() {} };
+  };
+
+  // ------------------------------------------------------------ warp access pattern: 8x8x8 against 32x8x4
+  ANIM.coal = (root) => {
+    let mode = 'cube';
+    const svg = newSvg(root, '0 0 1000 360', 'The global-memory addresses loaded by one warp of the tiled kernel, for a cubic 8 by 8 by 8 block and for a flat 32 by 8 by 4 block, with the 32-byte sectors they touch');
+    const N = 64, cw = 14, MX = 60, cap = root.querySelector('[data-cap]');
+    const draw = (w) => {
+      svg.innerHTML = '';
+      const B = mode === 'cube' ? [8, 8, 8] : [32, 8, 4], OUT = B.map(b => b - 2);
+      // warp w = threads 32w .. 32w+31 in x-fastest order; block index (1,1,1)
+      const loads = [];
+      for (let l = 0; l < 32; l++) {
+        const id = 32 * w + l, tx = id % B[0], ty = Math.floor(id / B[0]) % B[1], tz = Math.floor(id / (B[0] * B[1]));
+        loads.push({ i: OUT[2] + tz - 1, j: OUT[1] + ty - 1, k: OUT[0] + tx - 1, tx, ty, tz });
+      }
+      const rows = [...new Set(loads.map(o => `${o.i},${o.j}`))];
+      T(svg, 20, 22, `block ${B.join(' × ')}, warp ${w}: threads ${32 * w}…${32 * w + 31}  →  ${rows.length} row${rows.length > 1 ? 's' : ''} of the grid`, { 'font-size': 14, 'font-weight': 600 });
+      T(svg, MX, 46, 'each strip: one grid row (64 floats = 256 B); ticks: 32-byte sectors', { 'font-size': 12, class: 'lbl' });
+      let sectors = 0;
+      rows.forEach((key, ri) => {
+        const y = 62 + ri * 58;
+        const used = loads.filter(o => `${o.i},${o.j}` === key).map(o => o.k);
+        const label = `grid row z = ${key.split(',')[0]}, y = ${key.split(',')[1]}: x = ${Math.min(...used)}…${Math.max(...used)}`;
+        T(svg, MX, y + 2, label, { 'font-size': 11, class: 'lbl' });
+        const sec = new Set(used.map(k => Math.floor(k / 8)));
+        sectors += sec.size;
+        for (let k = 0; k < N; k++) R(svg, MX + k * cw, y + 8, cw - 1, 22, { fill: used.includes(k) ? BLUE : sec.has(Math.floor(k / 8)) ? LGOLD : '#fff', stroke: '#d6d6d6', 'stroke-width': .5 });
+        for (let s = 0; s <= 8; s++) L(svg, MX + s * 8 * cw - .5, y + 4, MX + s * 8 * cw - .5, y + 34, { stroke: INK, 'stroke-width': 1.2 });
+        sec.forEach(s => R(svg, MX + s * 8 * cw - .5, y + 6, 8 * cw, 26, { fill: 'none', stroke: GOLD, 'stroke-width': 2.5 }));
+      });
+      const fetched = sectors * 32, eff = 128 / fetched;
+      R(svg, MX, 300, 14, 14, { fill: BLUE }); T(svg, MX + 20, 312, 'loaded by the warp', { 'font-size': 12 });
+      R(svg, MX + 190, 300, 14, 14, { fill: LGOLD, stroke: GOLD }); T(svg, MX + 210, 312, 'fetched but unused', { 'font-size': 12 });
+      T(svg, MX, 344, `${sectors} sectors = ${fetched} B fetched for 128 B used: ${(eff * 100).toFixed(0)} % efficiency, ${rows.length} separate memory location${rows.length > 1 ? 's' : ''}`, { 'font-size': 14, 'font-weight': 600, fill: eff > .7 ? GREEN : RED });
+      cap.innerHTML = mode === 'cube'
+        ? (w === 0 ? 'An 8 × 8 × 8 block: a warp of 32 threads covers <b>4 rows of 8</b> consecutive x positions. Rows are N floats apart, so one load instruction hits 4 distant places.' : 'Every warp of the cube looks the same: 4 short rows, each 32 B long and starting at 6·bx − 1, so most rows straddle two sectors. About half of the fetched bytes are wasted.')
+        : (w === 0 ? 'A 32 × 8 × 4 block: the warp is <b>one row of 32</b> consecutive floats, 128 B in one place. The row starts at 30·bx − 1, so 5 sectors instead of 4, still far better.' : 'Every warp is a full row. The catch: the output tile is only 30 × 6 × 2 = 360 points, and intensity drops to <b>0.85 FLOP/B</b> (0.96 for the cube). The tile is still too small: we need a different idea.');
+    };
+    const st = stepper(root, () => 4, draw, 2600);
+    modeButtons(root, 'mode', (m) => { mode = m; st.reset(); });
+    return st;
+  };
+
+  // ------------------------------------------------------------ thread coarsening: three planes marching along z
+  ANIM.zmarch = (root) => {
+    const svg = newSvg(root, '0 0 1000 370', 'Input planes of a column, three shared-memory buffers inPrev_s, inCurr_s and inNext_s, and output planes; the block marches along z one plane per iteration');
+    const OUT = 4, IN = OUT + 2, PH = 34, PY = 50;
+    const cap = root.querySelector('[data-cap]');
+    const slab = (x, y, w, h, a) => P(svg, `M${x},${y} l${w},0 l22,-14 l${-w},0 z M${x},${y} l0,${h} l${w},0 l0,${-h}`, a);
+    // steps: 0 init, then for each iteration 3 sub-steps (load, compute, shift), then summary
+    const total = 1 + 3 * OUT + 1;
+    return stepper(root, () => total, (k) => {
+      svg.innerHTML = '';
+      const it = k === 0 ? -1 : Math.min(OUT - 1, Math.floor((k - 1) / 3)), sub = k === 0 ? -1 : k === total - 1 ? 3 : (k - 1) % 3;
+      // buffers content (input plane indices, relative: plane p = iStart - 1 + p)
+      let prev = 0, curr = 1, next = null, loaded = 2, computed = 0;
+      if (k > 0) {
+        loaded = 2 + it + 1; next = it + 2; prev = it; curr = it + 1; computed = it + (sub >= 1 ? 1 : 0);
+        if (sub >= 2) { prev = it + 1; curr = it + 2; next = it + 2; }
+        if (k === total - 1) { computed = OUT; }
+      }
+      T(svg, 30, 22, 'input planes (global memory)', { 'font-size': 13, class: 'lbl' });
+      for (let p = 0; p < IN; p++) {
+        const y = PY + 14 + p * (PH + 8), isL = p < loaded;
+        const role = p === prev && k < total - 1 ? 'prev' : p === curr && k < total - 1 ? 'curr' : p === next && k > 0 && sub === 0 ? 'next' : '';
+        slab(30, y, 190, PH, { fill: role === 'curr' ? BLUE : role ? MBLUE : isL ? '#EEF3FB' : '#fff', stroke: role ? BLUE : '#bdbdbd', 'stroke-width': role ? 2 : 1 });
+        T(svg, 236, y + 22, p === 0 ? 'z = iStart − 1' : `z = iStart + ${p - 1}`, { 'font-size': 12, class: 'lbl' });
+      }
+      T(svg, 400, 22, 'shared memory of the block', { 'font-size': 13, class: 'lbl' });
+      const bufs = [['inPrev_s', prev], ['inCurr_s', curr], ['inNext_s', next]];
+      bufs.forEach(([name, p], b) => {
+        const y = 40 + b * 74, on = (b === 2 && sub === 0) || (sub === 2);
+        R(svg, 400, y, 220, 54, { fill: b === 1 ? LBLUE : '#fff', stroke: on ? GOLD : '#9a9a9a', 'stroke-width': on ? 3 : 1.2, rx: 4 });
+        T(svg, 412, y + 22, name, { 'font-size': 14, 'font-weight': 600 });
+        T(svg, 412, y + 42, p == null ? 'empty' : p === 0 ? 'holds z = iStart − 1' : `holds z = iStart + ${p - 1}`, { 'font-size': 12, class: 'lbl' });
+      });
+      if (sub === 2 && k < total - 1) { const hA = arrowHead(svg, 'zm-a', GOLD); P(svg, 'M632,140 C680,140 680,80 632,70', { fill: 'none', stroke: GOLD, 'stroke-width': 2.5, 'marker-end': hA }); P(svg, 'M632,214 C680,214 680,154 632,144', { fill: 'none', stroke: GOLD, 'stroke-width': 2.5, 'marker-end': hA }); }
+      T(svg, 740, 22, 'output planes', { 'font-size': 13, class: 'lbl' });
+      for (let o = 0; o < OUT; o++) {
+        const y = PY + 14 + (o + 1) * (PH + 8), cur = sub === 1 && o === it;
+        slab(740, y, 160, PH, { fill: o < computed ? (cur ? GREEN : LGREEN) : '#fff', stroke: cur ? GREEN : '#bdbdbd', 'stroke-width': cur ? 2.5 : 1 });
+        T(svg, 916, y + 22, `iStart + ${o}`, { 'font-size': 12, class: 'lbl' });
+      }
+      const ld = loaded * 1024, outs = computed * 900, ai = outs ? 13 * outs / (4 * ld + 4 * outs) : 0;
+      T(svg, 400, 286, `loaded: ${loaded} planes × 32² = ${fmt(ld)} points`, { 'font-size': 13 });
+      T(svg, 400, 308, `computed: ${computed} planes × 30² = ${fmt(outs)} outputs`, { 'font-size': 13 });
+      T(svg, 400, 330, `intensity so far: ${ai ? ai.toFixed(2) : '—'} FLOP/B`, { 'font-size': 14, 'font-weight': 600, fill: BLUE });
+      T(svg, 400, 352, 'shared memory: 3 × 32² × 4 B = 12 KB, whatever the depth', { 'font-size': 12, class: 'lbl' });
+      cap.innerHTML = k === 0 ? 'A 2D block of t × t threads owns a <b>column</b> of the grid. Before the loop it loads the first two input planes: z = iStart − 1 into <code>inPrev_s</code>, z = iStart into <code>inCurr_s</code>.'
+        : k === total - 1 ? `After ${OUT} planes. With 30 planes per block (t = 32) the block loads 32 planes and computes 30: <b>1.47 FLOP/B</b>; each extra step adds 1024 loads for 900 outputs, so a deep column tends to <b>1.52</b>.`
+          : sub === 0 ? `Iteration ${it}: every thread loads one point of the next plane into <code>inNext_s</code>, then <code>__syncthreads()</code>. Only <b>one new plane</b> per output plane.`
+            : sub === 1 ? `The inner 30 × 30 threads compute output plane iStart + ${it}: x and y neighbours from <code>inCurr_s</code>, z neighbours from <code>inPrev_s</code> and <code>inNext_s</code>.`
+              : '<code>__syncthreads()</code>, then shift: <code>inPrev_s ← inCurr_s</code>, <code>inCurr_s ← inNext_s</code>. Each thread copies only its own slot.';
+    }, 2000);
+  };
+
+  // ------------------------------------------------------------ register tiling: who reads which slot
+  ANIM.regs = (root) => {
+    const svg = newSvg(root, '0 0 1000 360', 'Three planes of the coarsening kernel; the x and y neighbours of a thread are read from slots written by other threads, the z neighbours only from its own slot');
+    const n = 8, cs = 24, ty = 3, tx = 4, cap = root.querySelector('[data-cap]');
+    const gx = [40, 280, 520], GY = 60;
+    const S = [
+      'The coarsening kernel keeps three planes in shared memory. Take thread (ty, tx) = (3, 4).',
+      'Its x and y neighbours in <code>inCurr_s</code> were loaded by <b>four other threads</b>. Those slots are read by up to five threads: they must be in shared memory.',
+      'But <code>inPrev_s[3][4]</code> and <code>inNext_s[3][4]</code> are read by this thread <b>only</b>: no other thread ever needs them, so sharing them buys nothing.',
+      '<b>Register tiling</b>: keep the z neighbours in registers <code>inPrev</code>, <code>inNext</code> (and <code>inCurr</code>), and only one plane, <code>inCurr_s</code>, in shared memory.',
+      'For 32 × 32 blocks: shared memory 12 KB → <b>4 KB</b>; 3 more registers per thread = <b>3072</b> per block. Global loads do not change, so neither does the intensity. Higher orders need more registers: a common register versus shared-memory trade-off.'
+    ];
+    return stepper(root, () => S.length, (k) => {
+      svg.innerHTML = '';
+      const reg = k >= 3;
+      const names = ['inPrev_s', 'inCurr_s', 'inNext_s'];
+      const hA = arrowHead(svg, 'rg-a', GOLD);
+      names.forEach((nm, p) => {
+        const x0 = gx[p], asReg = reg && p !== 1;
+        T(svg, x0, GY - 14, asReg ? (p === 0 ? 'inPrev (registers)' : 'inNext (registers)') : nm + ' (shared)', { 'font-size': 13, 'font-weight': 600, fill: asReg ? GREEN : INK });
+        for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+          const me = r === ty && c === tx, nb = p === 1 && Math.abs(r - ty) + Math.abs(c - tx) === 1;
+          let f = p === 1 ? LBLUE : '#fff';
+          if (k >= 1 && p === 1 && nb) f = GOLD;
+          if (k >= 1 && me && p === 1) f = BLUE;
+          if (k >= 2 && me && p !== 1) f = BLUE;
+          if (asReg && !me) f = LGREEN;
+          R(svg, x0 + c * cs, GY + r * cs, cs - (asReg ? 5 : 2), cs - (asReg ? 5 : 2), { fill: f, stroke: asReg ? GREEN : '#c9c9c9', rx: asReg ? 6 : 1 });
+        }
+        if (k >= 1 && p === 1) [[0, -1], [0, 1], [-1, 0], [1, 0]].forEach(([dr, dc]) => {
+          const x1 = x0 + (tx + dc) * cs + cs / 2, y1 = GY + (ty + dr) * cs + cs / 2, x2 = x0 + tx * cs + cs / 2 - dc * 6, y2 = GY + ty * cs + cs / 2 - dr * 6;
+          svg.appendChild(el('line', { x1, y1, x2: (x1 + x2) / 2, y2: (y1 + y2) / 2, stroke: INK, 'stroke-width': 1.5, 'marker-end': hA }));
+        });
+      });
+      // memory bars
+      const BX = 770;
+      T(svg, BX, 46, 'per block of 32 × 32', { 'font-size': 13, class: 'lbl' });
+      const sh = reg ? 4 : 12;
+      T(svg, BX, 80, `shared memory: ${sh} KB`, { 'font-size': 13, 'font-weight': 600 });
+      R(svg, BX, 88, 200, 20, { fill: '#f1f1f1' }); R(svg, BX, 88, 200 * sh / 12, 20, { fill: BLUE });
+      T(svg, BX, 140, `extra registers: ${reg ? '3 072' : '0'}`, { 'font-size': 13, 'font-weight': 600 });
+      R(svg, BX, 148, 200, 20, { fill: '#f1f1f1' }); R(svg, BX, 148, reg ? 200 : 0, 20, { fill: GREEN });
+      T(svg, BX, 200, 'global loads per output:', { 'font-size': 13 }); T(svg, BX, 220, '1.21 in both kernels', { 'font-size': 13, 'font-weight': 600 });
+      T(svg, 40, 300, k === 0 ? '' : k === 1 ? 'gold: written by other threads, read by thread (3,4)' : k === 2 ? 'blue: the only slots thread (3,4) reads in the prev and next planes' : 'green: per-thread registers, invisible to other threads', { 'font-size': 13 });
+      T(svg, 40, 330, reg ? 'out = c0·inCurr + c1…c4·inCurr_s[ty±1][tx±1] + c5·inPrev + c6·inNext' : 'out = c0·inCurr_s[ty][tx] + c1…c4·inCurr_s[ty±1][tx±1] + c5·inPrev_s[ty][tx] + c6·inNext_s[ty][tx]', { 'font-size': 12, class: 'lbl' });
+      cap.innerHTML = S[k];
+    }, 2800);
+  };
+
+  // ------------------------------------------------------------ resources per block
+  ANIM.res = (root) => {
+    const q = (n) => root.querySelector(`[data-in=${n}]`), out = root.querySelector('[data-out]');
+    const update = () => {
+      const r = clampIn(q('r'), 1, 3, 1), t3 = clampIn(q('t3'), 3, 16, 8), t2 = clampIn(q('t2'), 4, 64, 32), D = clampIn(q('d'), 1, 512, 30);
+      const Pn = 6 * r + 1, F = 2 * Pn - 1;
+      const bad = (s) => `<span style="color:#B03A3A">${s}</span>`;
+      const kb = (b) => b >= 1024 ? (b / 1024).toFixed(b % 1024 ? 1 : 0) + ' KB' : b + ' B';
+      const thr = (n) => n > 1024 ? bad(fmt(n) + ' (over 1024)') : fmt(n);
+      const shm = (b) => b > 48 * 1024 ? bad(kb(b) + ' (over 48 KB)') : kb(b);
+      const o3 = Math.max(0, t3 - 2 * r), o2 = Math.max(0, t2 - 2 * r);
+      const rows = [
+        ['basic, 8 × 8 × 8', fmt(512), '—', 'baseline', fmt(512), F / (4 * Pn + 4)],
+        [`tiled, ${t3} × ${t3} × ${t3}`, thr(t3 ** 3), shm(t3 ** 3 * 4), 'baseline', fmt(o3 ** 3), o3 ? F * o3 ** 3 / (4 * t3 ** 3 + 4 * o3 ** 3) : 0],
+        [`coarsened, ${t2} × ${t2}`, thr(t2 * t2), shm((2 * r + 1) * t2 * t2 * 4) + ` (${2 * r + 1} planes)`, 'baseline', fmt(o2 * o2 * D), o2 ? F * o2 * o2 * D / (4 * t2 * t2 * (D + 2 * r) + 4 * o2 * o2 * D) : 0],
+        ['+ register tiling', thr(t2 * t2), shm(t2 * t2 * 4) + ' (1 plane)', `+${2 * r + 1}/thread = ${fmt((2 * r + 1) * t2 * t2)}`, fmt(o2 * o2 * D), o2 ? F * o2 * o2 * D / (4 * t2 * t2 * (D + 2 * r) + 4 * o2 * o2 * D) : 0]
+      ];
+      let h = '<table><tr><th>kernel</th><th>threads</th><th>shared memory</th><th>extra registers</th><th>outputs / block</th><th>FLOP/B</th></tr>';
+      rows.forEach(rw => { h += `<tr><td><b>${rw[0]}</b></td><td>${rw[1]}</td><td>${rw[2]}</td><td>${rw[3]}</td><td>${rw[4]}</td><td><b>${rw[5].toFixed(2)}</b></td></tr>`; });
+      out.innerHTML = h + '</table>' +
+        `<p class="small" style="margin:.6em 0 0;max-width:none;font-family:var(--body)">Order ${r}: ${Pn}-point stencil, ${F} FLOP per output, ideal ${(F / 8).toFixed(3)} FLOP/B. Halo ${r} thick, so tiles lose 2·${r} points per dimension. ` +
+        `FLOP/B of internal blocks, loads and stores counted. Red: over the 1024 threads per block, or over the 48 KB of static shared memory per block.</p>`;
+    };
+    root.querySelectorAll('input').forEach(i => i.addEventListener('input', update));
+    return { enter: update, leave() {} };
+  };
+
+  // ------------------------------------------------------------ deck navigation
+  const slides = [...document.querySelectorAll('.slide')];
+  const counter = document.getElementById('counter');
+  document.querySelectorAll('[data-ref]').forEach(e => { const t = document.getElementById(e.dataset.ref); e.textContent = t ? slides.indexOf(t) + 1 : '?'; });
+  const inst = new Map();
+  slides.forEach(s => s.querySelectorAll('[data-anim]').forEach(d => { if (ANIM[d.dataset.anim]) inst.set(s, ANIM[d.dataset.anim](d)); }));
+  let i = Math.max(0, Math.min(slides.length - 1, (parseInt(location.hash.slice(1), 10) || 1) - 1)), current = null;
+  function show(n) {
+    if (current) current.leave();
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    history.replaceState(null, '', '#' + (i + 1));
+    current = inst.get(slides[i]) || null;
+    if (current) current.enter();
+  }
+  const typing = (t) => t && t.closest && t.closest('input, select, textarea');
+  document.addEventListener('keydown', e => {
+    if (typing(e.target)) return;
+    if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { if (e.target.closest && e.target.closest('button')) return; e.preventDefault(); show(i + 1); }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'p') { if (current) current.leave(); slides.forEach(s => s.classList.add('active')); inst.forEach(a => a.enter && a.enter()); inst.forEach(a => a.leave && a.leave()); window.print(); }
+  });
+  document.addEventListener('click', e => {
+    if (e.target.closest('a, pre, code, button, input, label, select, canvas, svg, .diagram, .cfg, table, .flat')) return;
+    show(e.clientX > innerWidth / 2 ? i + 1 : i - 1);
+  });
+  show(i);
+})();
+</script>
+</body>
+</html>
+</body>
+</html>

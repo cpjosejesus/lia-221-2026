@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Session 12 Teaching Guide</title>
+<style>
+@page { size: A4; margin: 16mm 16mm 18mm; @bottom-center { content: counter(page) " / " counter(pages); font: 9pt "Helvetica Neue", Arial, sans-serif; color: #777; } }
+body { font: 10.5pt/1.45 "Helvetica Neue", Arial, sans-serif; color: #1a1a1a; margin: 0 auto; max-width: 178mm; }
+h1 { font-size: 22pt; margin: 0 0 4pt; } .sub { color: #555; margin: 0 0 10pt; }
+code, kbd { font-family: Menlo, monospace; font-size: 9pt; background: #f3f3f3; padding: 0 2px; border-radius: 2px; }
+table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 6pt 0 12pt; }
+th, td { border-bottom: 1px solid #ddd; text-align: left; padding: 3pt 6pt 3pt 0; vertical-align: top; }
+th { border-bottom: 1px solid #1a1a1a; font-weight: 600; }
+.sl { break-inside: avoid; border-top: 2px solid #2F6FD0; padding-top: 6pt; margin: 14pt 0 4pt; }
+.hd { display: flex; align-items: baseline; gap: 8pt; } .hd h2 { font-size: 13pt; margin: 0; flex: 1; }
+.num { font: 600 8.5pt Menlo, monospace; color: #2F6FD0; text-transform: uppercase; }
+.min { font-size: 9pt; color: #777; white-space: nowrap; }
+.goal { margin: 4pt 0; }
+h3 { font-size: 9pt; text-transform: uppercase; letter-spacing: .05em; color: #555; margin: 7pt 0 2pt; }
+ul { margin: 0; padding-left: 14pt; } li { margin: 2pt 0; }
+.qa li { list-style: none; margin-left: -14pt; padding: 3pt 7pt; background: #f6f8fc; border-left: 3px solid #2F6FD0; margin-bottom: 4pt; }
+.a { color: #333; }
+.w li { color: #8a4b12; }
+.intro { break-after: page; }
+</style></head><body>
+<section class="intro">
+<h1>Session 12: Inside the GPU</h1>
+<p class="sub">Teaching guide for <code>12_gpu_architecture_scheduling/slides.html</code>: compute architecture and scheduling (based on chapter 4 of <i>Programming Massively Parallel Processors</i>).</p>
+<h3>How to use this guide</h3>
+<ul>
+<li>One section per slide, in deck order: the goal of the slide, what to say, how to drive its diagram, questions to ask (with answers), and pitfalls.</li>
+<li>Open the deck in a browser (serve the repository with <code>python3 -m http.server 8767</code> and open <code>http://localhost:8767/12_gpu_architecture_scheduling/slides.html</code>). Diagrams start playing when a slide opens; Step and Reset let you control them while you talk.</li>
+<li>Suggested time: about 143 minutes including the exercises; the timing per slide is a guide, not a target.</li>
+<li>All numbers on the slides (block scheduling, barrier waiting time, divergent warps, latency utilisation, occupancy, exercise answers) were computed by script and checked against the animations.</li>
+</ul>
+<h3>Plan of the session</h3>
+<table>
+<tr><th>Part</th><th>Slides</th><th>Minutes</th></tr>
+<tr><td>Architecture and block scheduling</td><td>1–6</td><td>20</td></tr>
+<tr><td>Barriers and transparent scalability</td><td>7–12</td><td>24</td></tr>
+<tr><td>Warps and SIMD hardware</td><td>13–18</td><td>23</td></tr>
+<tr><td>Control divergence</td><td>19–23</td><td>20</td></tr>
+<tr><td>Latency tolerance and occupancy</td><td>24–30</td><td>26</td></tr>
+<tr><td>Summary, exercises, solutions, self-study</td><td>31–37</td><td>30</td></tr>
+</table>
+<h3>Before class</h3>
+<ul>
+<li>Open slides 22, 23 and 27 once: they are calculators, and students like to propose their own numbers.</li>
+<li>Have chapter 4 at hand for figures 4.1–4.10; every one of them is redrawn and animated in the deck.</li>
+</ul>
+</section>
+<section class="sl"><div class="hd"><span class="num">Slide 1</span><h2>Title</h2><span class="min">≈ 1 min</span></div>
+<p class="goal"><b>Goal.</b> Set the question for the session: where do the threads of a kernel actually run?</p>
+<h3>Say</h3><ul><li>Recall session 11: we chose <code>&lt;&lt;&lt;grid, block&gt;&gt;&gt;</code> without asking where those threads physically go.</li><li>Today's promise: by the end, students can predict why one launch configuration is faster than another without running it.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Mention the controls once: arrows or space to move, Play/Step/Reset on every diagram, <kbd>p</kbd> to print.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 2</span><h2>From the programming model to the machine</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Connect the hardware topics to performance questions students already have.</p>
+<h3>Say</h3><ul><li>CPU: few powerful cores, big caches and branch prediction, all to make one thread finish fast (latency).</li><li>GPU: many simple processors and a huge register file, to finish as many threads per second as possible (throughput).</li><li>Walk the table: each hardware topic answers one practical question. Tell them every later slide maps to a row.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Why might 32 threads per block be slower than 256 even if the total number of threads is the same?<br><span class="a"><b>A.</b> Keep the question open; it is answered on the occupancy slides (block slots run out at 32 threads per block).</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 3</span><h2>Architecture of a modern GPU (Fig. 4.1)</h2><span class="min">≈ 5 min</span></div>
+<p class="goal"><b>Goal.</b> Name the levels: GPU, GPC, SM, streaming processor, on-chip memory, global memory.</p>
+<h3>Say</h3><ul><li>Let the animation highlight each level; pause on the SM step and point at the three parts: control, processors, memory.</li><li>H100 numbers: 132 SMs, 128 streaming processors each (16,896 in total), arranged in 8 GPCs.</li><li>Two memories: small, fast on-chip memory per SM (chapter 5) and large, slow-ish off-chip global memory reached through many controllers (chapter 6).</li></ul>
+<h3>Drive the diagram</h3><ul><li>Play runs through the six steps (3 s each). Use Step if you want to talk longer about one level.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Why does the global memory have several controllers instead of one?<br><span class="a"><b>A.</b> Bandwidth: many controllers serve requests in parallel, so thousands of threads can be fed at once.</span></li></ul>
+<h3>Watch out</h3><ul class="w"><li>Do not call streaming processors “cores”: students then compare them one-to-one with CPU cores, which is misleading.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 4</span><h2>Vocabulary, with one real GPU as a yardstick</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Fix the vocabulary and give a sense of scale.</p>
+<h3>Say</h3><ul><li>Read the table top to bottom; stress the last row: threads, blocks and registers per SM are shared by all resident blocks.</li><li>These three limits come back in the occupancy part, so ask students to remember 2048 / 32 / 65,536.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> How many threads can an H100 hold at the same time?<br><span class="a"><b>A.</b> 132 SMs × 2048 threads = 270,336 threads resident at once.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 5</span><h2>Thread block scheduling (Fig. 4.2)</h2><span class="min">≈ 5 min</span></div>
+<p class="goal"><b>Goal.</b> Blocks go to SMs whole, a few at a time, and freed slots are refilled.</p>
+<h3>Say</h3><ul><li>Ten blocks with different lengths (shown as “3t” = 3 time units) and two SMs that hold 3 blocks each.</li><li>At time 0 six blocks start; the rest wait in the grid. Each time a block finishes, the next waiting block takes its slot.</li><li>Point out that a block never moves between SMs and never runs partially: all its threads start together on one SM.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Let it play once (1.5 s per step), then Reset and Step through times 1 and 2 while asking who starts next.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> At time 2, which blocks start and where?<br><span class="a"><b>A.</b> B7 and B8, both on SM 1, in the slots freed by B1 and B3.</span></li><li><b>Q.</b> Why is it useful that blocks may finish in any order?<br><span class="a"><b>A.</b> The scheduler can keep every slot busy without waiting for a particular block.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 6</span><h2>What block-by-block assignment guarantees</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Explain what the whole-block rule makes possible: barriers and shared memory inside a block.</p>
+<h3>Say</h3><ul><li>Same SM + same time = threads of a block can wait for each other and share fast on-chip memory.</li><li>Different blocks: no guarantee of running together, so no cooperation between them.</li><li>Hopper's clusters add a level: blocks of a cluster are co-scheduled on one GPC and can sync and share memory. Mention it, do not dwell.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 7</span><h2>Barrier synchronization (Fig. 4.3)</h2><span class="min">≈ 5 min</span></div>
+<p class="goal"><b>Goal.</b> Build the timing intuition of a barrier: early arrivals wait for the last one.</p>
+<h3>Say</h3><ul><li>Use the shopping-mall analogy in your own words: friends shop separately, then everyone waits at the car until the last one returns.</li><li>Solid bar = working, hatched = waiting at <code>__syncthreads()</code>, green = after the barrier. The red line appears when the last thread (thread 4) arrives.</li><li>The caption computes the waiting share: 10.6 of 31.2 thread-µs, about 34 %. This is exactly exercise 12.3.</li></ul>
+<h3>Drive the diagram</h3><ul><li>The time cursor moves in 0.2 µs steps; Play takes about 6 s. Pause right after the release to read the caption.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> What determines when everybody is released?<br><span class="a"><b>A.</b> The slowest thread: here thread 4 at 5.2 µs.</span></li><li><b>Q.</b> How could the waiting share be reduced?<br><span class="a"><b>A.</b> Balance the work so all threads reach the barrier at about the same time.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 8</span><h2>A barrier every thread must reach (Fig. 4.4)</h2><span class="min">≈ 5 min</span></div>
+<p class="goal"><b>Goal.</b> Show why <code>__syncthreads()</code> inside an if/else is wrong.</p>
+<h3>Say</h3><ul><li>Start in Wrong mode: even threads stop at barrier A, odd at barrier B. Each call site is a separate barrier and waits for all 8 threads.</li><li>Neither ever completes: undefined behaviour, typically a hang. Then switch to Right: one barrier after the branch, 8 of 8, released.</li><li>Rule to write on the board: a <code>__syncthreads()</code> must be reached by all threads of the block or by none.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Use the Wrong/Right buttons; each mode has 4 steps. The code on the left switches with the mode.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Is <code>if (blockIdx.x == 0) __syncthreads();</code> legal?<br><span class="a"><b>A.</b> Yes: the condition is the same for every thread of a block, so either all of them reach it or none does.</span></li></ul>
+<h3>Watch out</h3><ul class="w"><li>Students often think the two calls are “the same barrier” because the function is the same. Insist: the barrier is the call site.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 9</span><h2>Barrier scope and why it is limited to a block</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Introduce scope (block, cluster, grid) and the resource-based reason for limiting it.</p>
+<h3>Say</h3><ul><li>A barrier needs every thread in its scope to be able to arrive. CUDA guarantees that inside a block by giving a block all its resources before it starts.</li><li>Grid-wide barriers exist (Cooperative Groups) but only work if the whole grid fits on the GPU at once, and they are expensive.</li><li>Bridge: because blocks never wait for each other, the hardware is free to run them in any order, which is the next slide.</li><li>The note at the bottom: <code>__syncthreads()</code> is an intrinsic (the book's sidebar). The double underscore marks it; the compiler emits one special instruction, not a function call.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Why would a grid-wide barrier deadlock if the grid is larger than what fits on the GPU?<br><span class="a"><b>A.</b> Blocks that are waiting at the barrier keep their SM slots; the blocks not yet scheduled can never start, so they never arrive.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 10</span><h2>Code: a barrier in a real kernel</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Show the barrier rule in working code before moving on.</p>
+<h3>Say</h3><ul><li>Read the three numbered steps: write my slot, wait, read another thread's slot.</li><li>Ask what goes wrong without line 2 (a thread reads a slot that is not written yet: a race whose result changes between runs).</li><li>Point out that the barrier is outside any branch, and that each block works alone, which is what lets the grid scale (next slide).</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Would the kernel still be correct if thread t read s[t] instead of s[BLOCK - 1 - t]?<br><span class="a"><b>A.</b> Yes, even without the barrier: each thread would only read the slot it wrote itself. The barrier is needed because data moves between threads.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 11</span><h2>Transparent scalability (Fig. 4.5)</h2><span class="min">≈ 4 min</span></div>
+<p class="goal"><b>Goal.</b> The same code runs on a small and a large GPU, faster on the large one, without changes.</p>
+<h3>Say</h3><ul><li>Device A runs 2 blocks at a time (4 waves); device B runs 4 at a time (2 waves).</li><li>Point at the centre grid turning green: B finishes at step 2, A at step 4.</li><li>This works only because blocks are independent. Connect to the market: phones, laptops and data-centre GPUs run the same CUDA program.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Six steps at 1.8 s; stop at step 2 and ask where device A is.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> What would break transparent scalability?<br><span class="a"><b>A.</b> Blocks waiting for each other (for example spinning on a flag set by another block): on a small GPU the other block might never be scheduled.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 12</span><h2>Waves and the tail effect</h2><span class="min">≈ 4 min</span></div>
+<p class="goal"><b>Goal.</b> Quantify waves: blocks in the grid divided by blocks that fit at once.</p>
+<h3>Say</h3><ul><li>Preset 660 / 264: 2.5 waves; the last wave uses half the GPU (tail effect).</li><li>Preset 528 / 264: exactly 2 waves, no tail.</li><li>Many waves help when block work is uneven, because the hardware rebalances; few, even waves are fine when work is balanced (thread coarsening, chapter 6).</li></ul>
+<h3>Drive the diagram</h3><ul><li>Type numbers or use the presets; the bars and the utilisation update live.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> A GPU fits 264 blocks at once. How many blocks would you choose for a balanced kernel?<br><span class="a"><b>A.</b> A multiple of 264, for example 528 or 792, so every wave is full.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 13</span><h2>Warps (Fig. 4.6)</h2><span class="min">≈ 4 min</span></div>
+<p class="goal"><b>Goal.</b> Blocks are cut into warps of 32 consecutive threads; warps are what the SM schedules.</p>
+<h3>Say</h3><ul><li>Default: 3 blocks of 256 threads = 8 warps each = 24 warps in the SM (the book's example).</li><li>Preset 48 × 3: each block needs 2 warps, the second padded with 16 inactive lanes (hatched).</li><li>Formula on the board: warps per block = ceil(threads per block / 32); warp w holds threads 32w … 32w+31.</li></ul>
+<h3>Drive the diagram</h3><ul><li>The highlight walks through the warps of block 0; type any block size to rebuild.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Why are block sizes usually multiples of 32?<br><span class="a"><b>A.</b> Otherwise the last warp of every block carries idle lanes that still occupy hardware.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 14</span><h2>2D/3D blocks become one line (Fig. 4.7)</h2><span class="min">≈ 4 min</span></div>
+<p class="goal"><b>Goal.</b> Show how multidimensional blocks are linearised (row-major) before forming warps.</p>
+<h3>Say</h3><ul><li>Labels are (threadIdx.y, threadIdx.x). Each step moves one row into the linear order: all y = 0 first, then y = 1, and so on.</li><li>4 × 4: 16 threads, half a warp, padded with 16 inactive lanes. Switch to 8 × 8: 64 threads, warp 0 = rows 0–3, warp 1 = rows 4–7.</li><li>Link to session 11: this is the same row-major rule as flattening a 2D array.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Use the 4×4 / 8×8 buttons; each row moves with an animation.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> In a 16 × 16 block, which threads form warp 3?<br><span class="a"><b>A.</b> Linear positions 96–127: rows y = 6 and y = 7, all x.</span></li><li><b>Q.</b> For a 3D block, which index varies slowest?<br><span class="a"><b>A.</b> threadIdx.z: all z = 0 threads come first.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 15</span><h2>Code: which warp and which lane am I?</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Turn the linearization rule into the two lines every warp-aware kernel uses.</p>
+<h3>Say</h3><ul><li>warp = t / warpSize and lane = t % warpSize, with t the linear index of the thread inside its block.</li><li>Walk the table: in a 16-wide block, every two rows form one warp; thread (5, 3) is t = 53, warp 1, lane 21.</li><li>Use warpSize rather than a literal 32.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> In a 32 × 8 block, which threads form warp 3?<br><span class="a"><b>A.</b> t = 96…127: the whole row threadIdx.y = 3.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 16</span><h2>Processing blocks and SIMD (Fig. 4.8)</h2><span class="min">≈ 4 min</span></div>
+<p class="goal"><b>Goal.</b> One instruction fetch serves many lanes: SIMD hardware, programmed as SIMT.</p>
+<h3>Say</h3><ul><li>Toy SM: two processing blocks of 8 lanes with toy 8-thread warps. Real H100: four processing blocks of 32 lanes, 32-thread warps.</li><li>Each step: one processing block fetches one instruction of one warp and sends it to all its lanes; each lane has different register values, so different results.</li><li>SIMT: we write a scalar thread; the hardware groups threads into warps and runs them in SIMD.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Eight steps alternate between the two processing blocks and the four warps.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> What is shared by the lanes and what is private?<br><span class="a"><b>A.</b> Shared: instruction fetch/dispatch (control). Private: each lane's registers (data).</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 17</span><h2>Von Neumann model to SIMD (sidebar)</h2><span class="min">≈ 5 min</span></div>
+<p class="goal"><b>Goal.</b> Explain the motivation for warps from first principles.</p>
+<h3>Say</h3><ul><li>One processor mode: walk the fetch–decode–execute cycle (PC → memory → IR → ALU, PC advances). This is the stored-program model.</li><li>GPU mode: the same control unit drives four processing units, each with its own registers (r2, r3 differ, so r1 differs).</li><li>The payoff: control hardware is paid once, so more transistors go to arithmetic. The price: threads in a warp must follow the same instructions, hence divergence next.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Toggle “One processor” / “GPU processing block”; five steps each.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Name Flynn's four classes and place a CPU core and a GPU processing block.<br><span class="a"><b>A.</b> SISD, SIMD, MISD, MIMD. A scalar CPU core is SISD (ignoring its vector units); a GPU processing block is SIMD; a multicore CPU, or a GPU as a whole with many SMs, is MIMD.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 18</span><h2>SIMD, SIMT and Flynn's taxonomy</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Name the classes and explain what SIMT adds on top of SIMD.</p>
+<h3>Say</h3><ul><li>Flynn's four classes: SISD, SIMD, MISD, MIMD. A GPU processing block is SIMD; the GPU as a whole (many SMs with their own instruction streams) is MIMD.</li><li>SIMT: the programmer writes scalar threads; the hardware forms warps. On a CPU, SIMD requires explicit vector instructions or intrinsics.</li><li>Warp size is implementation-defined (32 so far): read <code>warpSize</code>. Warp-level primitives appear in chapters 10–12.</li><li>End with the price of SIMD: divergence, which is the next slide.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Where does MISD appear in practice?<br><span class="a"><b>A.</b> Rarely; some fault-tolerant designs run several instruction streams on the same data and compare results.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 19</span><h2>Control divergence in an if/else (Fig. 4.9)</h2><span class="min">≈ 5 min</span></div>
+<p class="goal"><b>Goal.</b> Different paths inside a warp cost extra passes.</p>
+<h3>Say</h3><ul><li>threadIdx.x &lt; 24: pass A on 24 lanes, pass B on 8 lanes, then C on all 32. SIMD efficiency over the if/else: 50 %.</li><li>threadIdx.x % 2 == 0: the worst pattern, every warp splits 16/16.</li><li>threadIdx.x &gt; 2 (the book's text example): only the first warp of a block diverges; other warps are all-true.</li><li>blockIdx.x == 0: the same for the whole warp, so no divergence, one pass.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Use the four condition buttons; each runs the four-step sequence.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Does <code>if (threadIdx.x / 32 == 0)</code> diverge?<br><span class="a"><b>A.</b> No: it is constant inside each warp (it selects whole warps).</span></li><li><b>Q.</b> What is the cost of divergence?<br><span class="a"><b>A.</b> Extra passes, plus the lanes that sit idle during each pass.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 20</span><h2>Divergence in loops; independent thread scheduling (Fig. 4.10)</h2><span class="min">≈ 4 min</span></div>
+<p class="goal"><b>Goal.</b> Loops with per-thread trip counts keep the warp busy until the longest thread ends.</p>
+<h3>Say</h3><ul><li>The lanes of Fig. 4.10 (threads 0, 1, 2, 4, 5, 6, 7, 31) have trip counts 8, 6, 7, 4, 5, 6, 8, 7: the warp iterates 8 times; useful work 51 of 64 lane-slots (≈ 80 %).</li><li>Pascal and older ran divergent paths one after the other; from Volta on they may be interleaved (independent thread scheduling).</li><li>Consequence: never assume a warp is back in lockstep after a branch; use <code>__syncwarp()</code> when a phase must complete warp-wide.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Play shows one iteration per step; the caption marks divergent iterations.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Which iterations are free of divergence here?<br><span class="a"><b>A.</b> Iterations i = 0 to 3: every lane has n ≥ 4.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 21</span><h2>Code: divergent and warp-uniform branches</h2><span class="min">≈ 4 min</span></div>
+<p class="goal"><b>Goal.</b> Compare the same work written in ways that do and do not diverge.</p>
+<h3>Say</h3><ul><li>A: the condition alternates lane by lane, so every warp runs both paths.</li><li>B: the condition is constant inside a warp (it depends on t / warpSize), so each warp runs one path. Same work, half the passes.</li><li>C: the boundary check diverges in at most one warp. D: for tiny branches, compute both values and select; compilers often do this themselves (predication).</li><li>Remind them: never put __syncthreads() after an early return taken by only some threads.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> When can you not use the B form?<br><span class="a"><b>A.</b> When the kind of work is decided by the data (for example the value of x[i]); then divergence depends on the input.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 22</span><h2>The boundary check in 1D</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Boundary checks are the most common source of divergence, and their cost shrinks with size.</p>
+<h3>Say</h3><ul><li>1003 / 64: 16 blocks, 1024 threads, 32 warps; only the warp holding i = 1003 diverges (≈ 3 %).</li><li>10000 / 256: 320 warps launched, one divergent, 7 entirely idle (idle warps are not divergent).</li><li>The share of divergent warps falls as n grows; for realistic sizes it is negligible.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Change n and the block size (multiples of 32) or use the presets.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> With n = 3000 and 256 threads per block, how many warps diverge?<br><span class="a"><b>A.</b> One (warp 93, threads 2976–3007): exercise 12.2.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 23</span><h2>Boundary checks in 2D</h2><span class="min">≈ 4 min</span></div>
+<p class="goal"><b>Goal.</b> Count divergent warps in a 2D launch.</p>
+<h3>Say</h3><ul><li>With 16 × 16 blocks each warp is two rows of 16 threads.</li><li>76 × 62 (session 11's picture): 20 blocks, 160 warps, 31 divergent: the right-hand block column (24) plus 7 in the corner block. The bottom block row never diverges: its warps are fully in or fully out.</li><li>200 × 150: 1040 warps, <b>75</b> divergent (7.2 %). Note for the instructor: the book's text estimates 80 by counting all 8 warps of the corner block; the bottom 5 warps of that block are entirely outside the picture, so the exact count is 75.</li><li>The larger the picture, the smaller the share (1000 × 1000: 500 of 31,752, 1.6 %).</li></ul>
+<h3>Drive the diagram</h3><ul><li>Presets redraw the map; orange cells are divergent warps, grey are warps entirely outside. The output lists the book's four regions: 1 inside, 2 right column, 3 bottom row, 4 corner.</li><li>Preset 76 × 63 answers the book's “reader should verify” remark: with an odd height the bottom-row warps (region 3) also diverge (36 divergent instead of 31).</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Why does the bottom row of blocks not diverge when the height is 62?<br><span class="a"><b>A.</b> Rows 48–61 are inside and 62–63 outside; each warp covers two whole rows, so it is either fully inside or fully outside.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 24</span><h2>Warp scheduling and latency tolerance</h2><span class="min">≈ 5 min</span></div>
+<p class="goal"><b>Goal.</b> Many resident warps let the SM hide memory latency.</p>
+<h3>Say</h3><ul><li>Each warp runs C C L C C L C C; a load (L) makes the warp wait 5 cycles. One execution unit picks a ready warp each cycle.</li><li>1 warp: busy 8 of 18 cycles (44 %). 2 warps: 67 %. 4 warps: 89 %. 6 warps: 100 %: some warp is always ready.</li><li>Use the post-office analogy in your own words: the clerk serves the next customer while someone fills in a form.</li><li>This is why an H100 SM holds up to 2048 threads while it has only 128 processors: 16× oversubscription.</li></ul>
+<h3>Drive the diagram</h3><ul><li>Choose 1, 2, 4 or 6 warps; Play reveals one cycle every 0.33 s. Pause on an idle (pink) cycle and ask why.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Why do GPUs devote less area to caches and branch prediction than CPUs?<br><span class="a"><b>A.</b> They hide latency by switching warps instead, and spend the area on arithmetic units and memory channels.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 25</span><h2>Zero-overhead scheduling (sidebar)</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Explain why switching warps is free while a CPU context switch is not.</p>
+<h3>Say</h3><ul><li>CPU: one register set per core; switching threads means saving A's registers to memory and loading B's.</li><li>GPU: every resident warp keeps its registers in the SM's large register file, so the scheduler just picks another warp.</li><li>Connect forward: that register file is a shared resource, which is exactly what limits occupancy.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 26</span><h2>How an SM's resources are partitioned</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Introduce the four SM resources, dynamic partitioning and the definition of occupancy before the calculator.</p>
+<h3>Say</h3><ul><li>Resources: thread slots, block slots, registers, shared memory. Each resident block takes its share.</li><li>Dynamic versus fixed partitioning: dynamic lets the SM run many small blocks or a few large ones; fixed would waste slots or reject large blocks.</li><li>Read the table: block sizes 1024 to 64 all reach 2048 threads; 32 runs out of block slots. Registers: at most 32 per thread for full occupancy on an H100.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> A block of 128 threads uses 48 registers per thread. Does it reach full occupancy?<br><span class="a"><b>A.</b> No: 65,536 / (128 × 48) = 10 blocks = 1280 threads, 62.5 %, limited by registers.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 27</span><h2>Resource partitioning and occupancy</h2><span class="min">≈ 6 min</span></div>
+<p class="goal"><b>Goal.</b> Compute occupancy from threads, block slots and registers.</p>
+<h3>Say</h3><ul><li>Occupancy = resident warps / maximum warps (64 on an H100 SM).</li><li>Resident blocks = min( floor(2048 / threads per block), 32, floor(65,536 / (threads per block × registers per thread)) ).</li><li>Walk the presets: 1024 (100 %), 32 threads (50 %, block slots), 768 (75 %, 2048 not a multiple), 64 registers (50 %), 512 with 31 vs 33 registers (100 % vs 75 %).</li></ul>
+<h3>Drive the diagram</h3><ul><li>Each preset resets the SM limits to H100 values; the warp-slot map shows one colour band per block.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> What is the smallest block size that can reach 100 % occupancy?<br><span class="a"><b>A.</b> 64 threads: 32 blocks × 64 = 2048.</span></li><li><b>Q.</b> Two more local variables push a kernel from 31 to 33 registers. What happens?<br><span class="a"><b>A.</b> 4 blocks need 67,584 registers > 65,536, so only 3 fit: 75 % (a performance cliff).</span></li></ul>
+<h3>Watch out</h3><ul class="w"><li>The book's model ignores register allocation granularity; real GPUs round registers up per warp. Mention it only if asked.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 28</span><h2>Occupancy in numbers</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Consolidate the four ways to lose occupancy.</p>
+<h3>Say</h3><ul><li>Let students predict each row before you reveal the explanation column (cover it with a sheet or ask aloud).</li><li>Explain register spilling: fewer registers per thread, more occupancy, but slower memory accesses per thread. Higher occupancy is not automatically faster.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 29</span><h2>Asking the GPU what it has</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Show the device query API and the fields that matter for launch configuration.</p>
+<h3>Say</h3><ul><li><code>cudaGetDeviceCount</code> counts devices (integrated GPUs too); <code>cudaGetDeviceProperties</code> fills a <code>cudaDeviceProp</code>.</li><li>Fields tied to today: SM count, threads per block, threads per SM, registers, warp size, compute capability.</li><li><code>cudaOccupancyMaxActiveBlocksPerMultiprocessor</code> and the Nsight Compute calculator do the slide-27 computation for a real kernel (code on slide 30).</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Why query at run time instead of hard-coding 1024 threads per block?<br><span class="a"><b>A.</b> Devices differ, and future devices may allow more; queried limits keep the program correct and fast everywhere.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 30</span><h2>Code: let the runtime compute occupancy</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Show how occupancy is obtained for a real compiled kernel.</p>
+<h3>Say</h3><ul><li>cudaOccupancyMaxActiveBlocksPerMultiprocessor knows the kernel's real register and shared-memory use, which the calculator only assumes.</li><li>cudaOccupancyMaxPotentialBlockSize suggests a block size; minGrid is the smallest grid that fills every SM.</li><li>Mention nvcc -Xptxas -v to see registers per thread, and that higher occupancy is a means: always time the kernel.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 31</span><h2>Summary</h2><span class="min">≈ 2 min</span></div>
+<p class="goal"><b>Goal.</b> Recap the five ideas.</p>
+<h3>Say</h3><ul><li>Ask students to say each bullet in one sentence before you show it, if time allows.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 32</span><h2>Exercise 12.1</h2><span class="min">≈ 8 min</span></div>
+<p class="goal"><b>Goal.</b> Practise counting warps, divergence and SIMD efficiency on one kernel.</p>
+<h3>Say</h3><ul><li>Give 5–6 minutes. Hint if needed: work per block first (4 warps of 32), then multiply by 16 blocks.</li><li>Line 4: warp 2 (threads 64–95) has no thread that passes; it is inactive, not divergent.</li></ul>
+<h3>Ask</h3><ul class="qa"><li><b>Q.</b> Answers<br><span class="a"><b>A.</b> See slide 34: 4 warps per block, 64 in the grid; line 4: 48 active, 32 divergent, efficiencies 100/50/0/50 %; line 6: 64 active, 64 divergent, 25 %; loop: 1 iteration without divergence, 3 with.</span></li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 33</span><h2>Exercises 12.2–12.9</h2><span class="min">≈ 10 min</span></div>
+<p class="goal"><b>Goal.</b> Short exercises on divergence, barriers, warp size and occupancy.</p>
+<h3>Say</h3><ul><li>Pairs work well: one student computes, the other checks with the calculators on slides 22, 23 and 27.</li><li>12.4 is conceptual; make sure the answer mentions independent thread scheduling, not just “it might not work”.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 34</span><h2>Solutions 12.1</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Go through the table; ask a student to explain each row before revealing it.</p>
+<h3>Say</h3><ul><li>Emphasise the distinction between an inactive warp (no thread passes) and a divergent one (some do, some do not).</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 35</span><h2>Solutions 12.2–12.5</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Correct and discuss.</p>
+<h3>Say</h3><ul><li>12.3: the 22.9 % is the same computation as the barrier animation on slide 7.</li><li>12.5: point out that 384 is not a power of two but still a multiple of 32; it loses because 2048 / 384 is not an integer.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 36</span><h2>Solutions 12.6–12.9</h2><span class="min">≈ 3 min</span></div>
+<p class="goal"><b>Goal.</b> Correct and discuss.</p>
+<h3>Say</h3><ul><li>12.7(c): registers, not threads, are the limit; this is the slide-27 calculator with 128 threads and 40 registers.</li><li>12.8: show the 100 × 70 preset on slide 23 to confirm 35 divergent warps.</li><li>12.9: a launch that violates a limit fails; in real code always check <code>cudaGetLastError()</code> after a launch.</li></ul>
+</section><section class="sl"><div class="hd"><span class="num">Slide 37</span><h2>Self-study</h2><span class="min">≈ 1 min</span></div>
+<p class="goal"><b>Goal.</b> Point to chapters 5 and 6 and the tools.</p>
+<h3>Say</h3><ul><li>Suggest running the device query on a lab machine and filling a table of SMs, threads per SM and compute capability.</li></ul>
+</section>
+</body></html>

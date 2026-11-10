@@ -1,0 +1,387 @@
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 15</div>
+  <h1>Convolution on the GPU</h1>
+  <p class="muted">You already know what a convolution computes. This session is about how to compute it <b>fast on a GPU</b>: mapping threads to outputs, ghost cells and divergence, the arithmetic intensity of each kernel, <b>constant memory</b> and the cache hierarchy, and <b>tiling</b> when input tiles are larger than output tiles.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 7 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/conv</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>Why convolution is a good GPU problem, and a tricky one</h2>
+  <div class="cols">
+    <ul>
+      <li>Every output element is computed <b>independently</b>: ideal data parallelism, one thread per output.</li>
+      <li>Many operations per output: (2r + 1)² multiply-adds in 2D, so large images mean huge amounts of work.</li>
+      <li>But neighbouring outputs <b>share most of their inputs</b>: the same input element is read by up to (2r + 1)² threads.</li>
+      <li>And the edges need <b>boundary handling</b> (ghost cells), in 2D on four sides.</li>
+      <li>Sharing plus awkward boundaries make convolution the classic case for sophisticated tiling and data staging.</li>
+    </ul>
+    <table>
+      <tr><th>Kernel</th><th>Idea</th></tr>
+      <tr><td>basic</td><td>one thread per output, everything from global memory</td></tr>
+      <tr><td>constant memory</td><td>the filter in the constant cache</td></tr>
+      <tr><td>tiled, halo in shared</td><td>block = input tile, load once, reuse</td></tr>
+      <tr><td>tiled, cached halo</td><td>block = output tile, halo from L2</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Threads to output elements</h2>
+  <div class="diagram" data-anim="mapping">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">16 × 16 image, 4 × 4 blocks of 4 × 4 threads, 5 × 5 filter (r = 2)</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the basic 2D kernel</h2>
+  <div class="cols wl">
+<pre><code>__global__ void convolution_2D_basic_kernel(
+    const float* N, const float* F, float* P,
+    int r, int width, int height) {
+  int outCol = blockIdx.x * blockDim.x + threadIdx.x;
+  int outRow = blockIdx.y * blockDim.y + threadIdx.y;
+  if (outRow &lt; height &amp;&amp; outCol &lt; width) {
+    float Pvalue = 0.0f;                 // in a register
+    for (int fRow = 0; fRow &lt; 2*r + 1; ++fRow)
+      for (int fCol = 0; fCol &lt; 2*r + 1; ++fCol) {
+        int inRow = outRow - r + fRow;
+        int inCol = outCol - r + fCol;
+        if (inRow &gt;= 0 &amp;&amp; inRow &lt; height &amp;&amp;
+            inCol &gt;= 0 &amp;&amp; inCol &lt; width)   // skip ghost cells
+          Pvalue += F[fRow*(2*r + 1) + fCol]
+                  * N[inRow*width + inCol];
+      }
+    P[outRow*width + outCol] = Pvalue;
+  }
+}</code></pre>
+    <ul class="small">
+      <li>Same thread mapping as the grayscale kernel: a 2D grid, typically 32 × 32 threads per block.</li>
+      <li>The patch of each output starts at <code>(outRow − r, outCol − r)</code>; the double loop walks the filter.</li>
+      <li>Ghost cells count as 0, so the test simply <b>skips</b> them.</li>
+      <li><code>Pvalue</code> accumulates in a register and is written once at the end.</li>
+      <li>The outer <code>if</code> handles images whose size is not a multiple of the block.</li>
+      <li>Linearized indices: N, F and P are dynamically allocated 1D arrays.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Ghost cells cause divergence, but only at the edges</h2>
+  <div class="cfg" data-anim="ghost">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">width</span><input type="number" min="4" max="64" value="48" data-in="w"></div>
+      <div class="cfg-row"><span class="cfg-lbl">height</span><input type="number" min="4" max="40" value="24" data-in="h"></div>
+      <div class="cfg-row"><span class="cfg-lbl">filter radius r</span><input type="number" min="1" max="7" value="2" data-in="r"></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li>Threads near an edge skip a different number of filter positions, so threads of the same warp take different paths in the inner <code>if</code>: <b>control divergence</b>.</li>
+        <li>Its cost grows with the filter radius and shrinks with the image size. For real images and small filters it is minor.</li>
+        <li>The bigger problem is memory bandwidth (next slide).</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide" id="s-ai">
+  <h2>Arithmetic intensity: the real bottleneck</h2>
+  <div class="diagram" data-anim="ai">
+    <div class="svgwrap" data-svg></div>
+    <div class="cfg-out" data-out style="font-size:.56em"></div>
+    <div class="dctl"><label style="font-family:var(--mono)">filter m <input data-in="m" type="number" min="1" max="21" step="2" value="5" style="font:inherit;width:3.5em"></label><label style="font-family:var(--mono)">output tile t <input data-in="t" type="number" min="1" max="128" value="28" style="font:inherit;width:3.5em"></label><button data-p="3,28">3 × 3</button><button data-p="5,28" class="on">5 × 5</button><button data-p="11,28">11 × 11</button><button data-p="13,64">13 × 13, t 64</button></div>
+  </div>
+  <p class="small muted">Ideal: an n × n image, n² outputs × m² multiply-adds = 2n²m² FLOP; reading the input and writing the output once = 8n² B (the filter is negligible) → m²/4 FLOP/B. A 3 × 3 filter (2.25) can never be compute-bound on an H100; an 11 × 11 one (30.25) can. The basic kernel loads 8 B (one N, one F) for every 2 FLOP: 0.25, whatever the filter.</p>
+</section>
+
+<section class="slide">
+  <h2>The filter belongs in constant memory</h2>
+  <div class="diagram" data-anim="bcast">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy warp of 8 threads computing 8 consecutive outputs of one row</span></div>
+  </div>
+  <p class="small muted">Three properties of F: it is <b>small</b> (radius 7 or less in most applications; even in 3D at most 7³ = 343 elements), it <b>does not change</b> while the kernel runs, and <b>all threads</b> read it, in the <b>same order</b>. Constant memory is limited to 64 KB, which F easily fits.</p>
+</section>
+
+<section class="slide">
+  <h2>Code: declaring, filling and using constant memory</h2>
+  <div class="cols wl">
+<pre><code>#define FILTER_RADIUS 2
+// global scope, outside any function
+__constant__ float F_c[2*FILTER_RADIUS + 1][2*FILTER_RADIUS + 1];
+
+// host: copy the filter once, before the launches
+cudaMemcpyToSymbol(F_c, F_h,
+    (2*FILTER_RADIUS + 1) * (2*FILTER_RADIUS + 1) * sizeof(float));
+
+__global__ void convolution_2D_const_mem_kernel(
+    const float* N, float* P, int width, int height) {
+  int outCol = blockIdx.x * blockDim.x + threadIdx.x;
+  int outRow = blockIdx.y * blockDim.y + threadIdx.y;
+  if (outRow &gt;= height || outCol &gt;= width) return;
+  float Pvalue = 0.0f;
+  for (int fRow = 0; fRow &lt; 2*FILTER_RADIUS + 1; ++fRow)
+    for (int fCol = 0; fCol &lt; 2*FILTER_RADIUS + 1; ++fCol) {
+      int inRow = outRow - FILTER_RADIUS + fRow;
+      int inCol = outCol - FILTER_RADIUS + fCol;
+      if (inRow &gt;= 0 &amp;&amp; inRow &lt; height &amp;&amp; inCol &gt;= 0 &amp;&amp; inCol &lt; width)
+        Pvalue += F_c[fRow][fCol] * N[inRow*width + inCol];
+    }
+  P[outRow*width + outCol] = Pvalue;
+}</code></pre>
+    <ul class="small">
+      <li><code>__constant__</code> must be at file scope. Kernels use it as a global variable: <b>no pointer parameter</b> for F.</li>
+      <li><code>cudaMemcpyToSymbol(dest, src, bytes)</code> also tells the runtime the data will not change during kernel execution.</li>
+      <li>Only N comes from global memory now: 2 FLOP per 4 B = <b>0.5 FLOP/B</b>, twice the basic kernel.</li>
+      <li>Normal C++ scoping applies: if host and kernel code are in different files, the kernel file needs an <code>extern</code> declaration of <code>F_c</code>.</li>
+      <li>Alternative: put the weights in a struct and pass it <b>by value</b>. Kernel parameters live in constant memory too, and the runtime copies them at each launch, so different launches can use different filters.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Caches, the constant cache, and shared memory</h2>
+  <div class="diagram" data-anim="hier">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">some CPUs add an L3 of hundreds of MB</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Input tiles are larger than output tiles</h2>
+  <div class="cfg" data-anim="tiles">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">output tile t</span><input type="number" min="1" max="12" value="4" data-in="t"></div>
+      <div class="cfg-row"><span class="cfg-lbl">filter radius r</span><input type="number" min="1" max="4" value="2" data-in="r"></div>
+      <div class="presets"><button data-p="4,2" class="on">4 × 4, r 2</button><button data-p="8,2">8 × 8, r 2</button><button data-p="12,1">12 × 12, r 1</button></div>
+      <div class="cfg-out" data-out></div>
+      <ul class="small" style="margin-top:.6em">
+        <li><b>Output tile</b>: the outputs one block computes. <b>Input tile</b>: every input element needed for them.</li>
+        <li>The input tile extends r elements beyond the output tile on every side: the <b>halo</b>.</li>
+        <li>A 4 × 4 output tile with a 5 × 5 filter needs an 8 × 8 input tile, 4 times larger. Real tiles are bigger: 16 × 16 → 20 × 20 = 400 elements, still about 1.6 times.</li>
+        <li>Unlike the matrix product of session 13, the tiles differ in size, which is what complicates the kernel.</li>
+      </ul>
+    </div>
+    <div class="svgwrap" data-svg></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Two thread organizations</h2>
+  <div class="diagram" data-anim="orgs">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="input" class="on">block = input tile</button><button data-mode="output">block = output tile</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">3 × 3 filter: input tile 8 × 8, output tile 6 × 6</span></div>
+  </div>
+</section>
+
+<section class="slide" id="s-tiled">
+  <h2>The tiled kernel, step by step</h2>
+  <div class="diagram" data-anim="tiled">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">FILTER_RADIUS = 1, IN_TILE_DIM = 8, OUT_TILE_DIM = 6</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: tiled kernel with the halo in shared memory</h2>
+  <div class="cols wl">
+<pre><code>#define IN_TILE_DIM 32
+#define OUT_TILE_DIM (IN_TILE_DIM - 2*FILTER_RADIUS)
+__constant__ float F_c[2*FILTER_RADIUS+1][2*FILTER_RADIUS+1];
+
+__global__ void convolution_tiled_2D_const_mem_kernel(
+    const float* N, float* P, int width, int height) {
+  int col = blockIdx.x*OUT_TILE_DIM + threadIdx.x - FILTER_RADIUS;
+  int row = blockIdx.y*OUT_TILE_DIM + threadIdx.y - FILTER_RADIUS;
+  // phase 1: every thread loads one element of the input tile
+  __shared__ float N_s[IN_TILE_DIM][IN_TILE_DIM];
+  if (row &gt;= 0 &amp;&amp; row &lt; height &amp;&amp; col &gt;= 0 &amp;&amp; col &lt; width)
+    N_s[threadIdx.y][threadIdx.x] = N[row*width + col];
+  else
+    N_s[threadIdx.y][threadIdx.x] = 0.0f;   // ghost cell
+  __syncthreads();
+  // phase 2: only the inner threads compute an output element
+  int tileCol = threadIdx.x - FILTER_RADIUS;
+  int tileRow = threadIdx.y - FILTER_RADIUS;
+  if (col &gt;= 0 &amp;&amp; col &lt; width &amp;&amp; row &gt;= 0 &amp;&amp; row &lt; height &amp;&amp;
+      tileCol &gt;= 0 &amp;&amp; tileCol &lt; OUT_TILE_DIM &amp;&amp;
+      tileRow &gt;= 0 &amp;&amp; tileRow &lt; OUT_TILE_DIM) {
+    float Pvalue = 0.0f;
+    for (int fRow = 0; fRow &lt; 2*FILTER_RADIUS + 1; ++fRow)
+      for (int fCol = 0; fCol &lt; 2*FILTER_RADIUS + 1; ++fCol)
+        Pvalue += F_c[fRow][fCol] * N_s[tileRow + fRow][tileCol + fCol];
+    P[row*width + col] = Pvalue;
+  }
+}
+// launch: dim3 block(IN_TILE_DIM, IN_TILE_DIM),
+//         grid(cdiv(width, OUT_TILE_DIM), cdiv(height, OUT_TILE_DIM))</code></pre>
+    <ul class="small">
+      <li>Blocks are spaced <b>OUT_TILE_DIM</b> apart but are <b>IN_TILE_DIM</b> wide: neighbouring blocks overlap by 2r, each loading its own copy of the halo.</li>
+      <li>Ghost cells are stored as 0, so phase 2 needs no boundary test on the filter loop.</li>
+      <li>One barrier: the read-after-write dependence between loading and using the tile. There is no second phase, so no write-after-read barrier.</li>
+      <li>The thread at (tx, ty) computes output (tx − r, ty − r) of the tile from the patch starting at <code>N_s[ty − r][tx − r]</code>.</li>
+      <li>All global loads happen before the loop: the loop itself only touches shared memory and the constant cache.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>How much did tiling buy?</h2>
+  <div class="cols wl">
+    <div data-anim="aitable" style="font-size:.74em">
+      <div class="cfg-row" style="font-family:var(--mono)">ridge (FLOP/B) <input data-in="ridge" type="number" min="1" value="20" style="font:inherit;width:4em;margin-left:.5em"></div>
+      <div data-out></div>
+    </div>
+    <ul class="small">
+      <li>Internal block: t² outputs × m² multiply-adds = 2t²m² FLOP. It loads (t + m − 1)² inputs and stores t² outputs, 4 B each.</li>
+      <li>Intensity = 2t²m² / (4((t + m − 1)² + t²)): it approaches the ideal m²/4 as t grows, because a larger output tile reuses each loaded element more.</li>
+      <li>Example: 5 × 5 filter, 32 × 32 blocks → 28 × 28 output tiles: <b>5.42 FLOP/B</b>, close to the ideal 6.25 and 21 times the basic kernel.</li>
+      <li>Small filters stay memory-bound however large the tile. Large filters with large tiles become compute-bound.</li>
+      <li>t is capped by the 1024 threads per block and by shared memory; later chapters show ways around both.</li>
+      <li>Blocks at the image edge load fewer elements (ghost cells are not loaded); for large images that effect is negligible.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The cost of block = input tile</h2>
+  <div class="cfg" data-anim="idle">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">IN_TILE_DIM</span><input type="number" min="2" max="32" value="32" data-in="in"></div>
+      <div class="cfg-row"><span class="cfg-lbl">FILTER_RADIUS</span><input type="number" min="0" max="15" value="2" data-in="r"></div>
+      <div class="cfg-row"><span class="cfg-lbl">image width</span><input type="number" min="1" value="4096" data-in="w"></div>
+      <div class="presets"><button data-p="32,1">3 × 3</button><button data-p="32,2">5 × 5</button><button data-p="32,5">11 × 11</button><button data-p="32,8">17 × 17</button></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+    <ul class="small">
+      <li><b>Idle threads</b>: the outer ring only loads. Fine for a memory-bound kernel (more loads in flight), wasteful for a compute-bound one.</li>
+      <li><b>Odd tile widths</b>: 32 − 2r is not a power of two, so each block's output rows start at unaligned addresses and stores are less efficient.</li>
+      <li><b>Large filters shrink the output tile</b>: the input tile cannot grow past 32 × 32, so bigger r means smaller t, lower intensity and both problems above made worse.</li>
+      <li>Fixes: make the block the size of the output tile and let threads loop to load the input tile, or do not put the halo in shared memory at all (next slide).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Leaving the halo to the caches</h2>
+  <div class="diagram" data-anim="halo">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">toy tiles of 6 × 6, 3 × 3 filter</span></div>
+  </div>
+  <p class="small muted">The halo of one tile is the interior of its neighbours. By the time a block needs it, the neighbour has very probably loaded it, so it is waiting in L2 and costs no extra DRAM traffic.</p>
+</section>
+
+<section class="slide">
+  <h2>Code: tiled kernel with cached halos</h2>
+  <div class="cols wl">
+<pre><code>#define TILE_DIM 32
+__global__ void convolution_cached_tiled_2D_const_mem_kernel(
+    const float* N, float* P, int width, int height) {
+  int col = blockIdx.x*TILE_DIM + threadIdx.x;
+  int row = blockIdx.y*TILE_DIM + threadIdx.y;
+  __shared__ float N_s[TILE_DIM][TILE_DIM];      // tile only
+  if (row &lt; height &amp;&amp; col &lt; width)
+    N_s[threadIdx.y][threadIdx.x] = N[row*width + col];
+  else
+    N_s[threadIdx.y][threadIdx.x] = 0.0f;
+  __syncthreads();
+  if (col &lt; width &amp;&amp; row &lt; height) {
+    float Pvalue = 0.0f;
+    for (int fRow = 0; fRow &lt; 2*FILTER_RADIUS + 1; ++fRow)
+      for (int fCol = 0; fCol &lt; 2*FILTER_RADIUS + 1; ++fCol) {
+        int sx = threadIdx.x - FILTER_RADIUS + fCol;
+        int sy = threadIdx.y - FILTER_RADIUS + fRow;
+        if (sx &gt;= 0 &amp;&amp; sx &lt; TILE_DIM &amp;&amp; sy &gt;= 0 &amp;&amp; sy &lt; TILE_DIM) {
+          Pvalue += F_c[fRow][fCol] * N_s[sy][sx];        // inside the tile
+        } else {
+          int gy = row - FILTER_RADIUS + fRow, gx = col - FILTER_RADIUS + fCol;
+          if (gy &gt;= 0 &amp;&amp; gy &lt; height &amp;&amp; gx &gt;= 0 &amp;&amp; gx &lt; width)
+            Pvalue += F_c[fRow][fCol] * N[gy*width + gx];  // halo: L2
+        }                                                   // else: ghost
+      }
+    P[row*width + col] = Pvalue;
+  }
+}</code></pre>
+    <ul class="small">
+      <li>Input tile, output tile and block are all <b>TILE_DIM × TILE_DIM</b>: loading is one element per thread, and nobody is idle.</li>
+      <li>The loading condition is simpler: no halo, so only the usual "inside the image" test.</li>
+      <li>The compute loop is more complex: each patch element is either in the tile (shared memory), in the halo (global memory, usually an L2 hit) or a ghost cell (skipped).</li>
+      <li>Power-of-two tiles also mean aligned stores and less memory and control divergence than the previous kernel.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The four kernels side by side</h2>
+  <table>
+    <tr><th></th><th>basic</th><th>constant F</th><th>tiled, halo in shared</th><th>tiled, cached halo</th></tr>
+    <tr><td>global loads per output</td><td>2m² (N and F)</td><td>m² (N)</td><td>(t + m − 1)² / t² (once per tile)</td><td>1 + halo reads, mostly L2 hits</td></tr>
+    <tr><td>FLOP/B (5 × 5, 32 × 32 blocks)</td><td>0.25</td><td>0.5</td><td>5.42</td><td>about 6.25 if every halo read hits L2</td></tr>
+    <tr><td>threads per block</td><td>any</td><td>any</td><td>input tile (32 × 32), outputs (32 − 2r)²</td><td>output tile, all compute</td></tr>
+    <tr><td>shared memory</td><td>—</td><td>—</td><td>IN_TILE_DIM² × 4 B</td><td>TILE_DIM² × 4 B</td></tr>
+    <tr><td>divergence</td><td>edges of the image</td><td>edges of the image</td><td>idle ring + image edges</td><td>tile edges in the compute loop</td></tr>
+    <tr><td>code complexity</td><td>low</td><td>low</td><td>medium</td><td>medium-high</td></tr>
+  </table>
+  <p class="small muted">The same ideas carry to 1D and 3D: only the index arithmetic and the loop nesting change. Run all four kernels and compare: <code>ec2/conv/conv.cu</code>.</p>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>One thread per output element, a 2D grid of 2D blocks; ghost cells are skipped, causing divergence only near the edges.</li>
+    <li>The basic kernel reaches 0.25 FLOP/B, far from the ideal m²/4: convolution kernels are limited by memory bandwidth unless they reuse data on chip.</li>
+    <li><b>Constant memory</b> fits the filter: small, read-only during the kernel, read in the same order by all threads. The constant cache broadcasts it and removes all DRAM traffic for F (0.5 FLOP/B).</li>
+    <li><b>Tiling</b>: blocks load an input tile, larger than their output tile by the halo, into shared memory and reuse it. Intensity approaches m²/4 as tiles grow.</li>
+    <li>Block = input tile is simple to load but leaves threads idle and tiles of odd width; caching the halo in L2 keeps tiles, blocks and outputs the same power-of-two size.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 15.1–15.8</h2>
+  <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.4em">
+    <li>1D convolution of N = {4, 1, 3, 2, 3} with F = {2, 1, 4}, ghost cells 0. What is the output array?</li>
+    <li>1D convolution of an array of size N with a filter of size M = 2r + 1: how many ghost cells are there, and how many multiplications are performed if ghost cells are multiplied by 0, and if they are skipped?</li>
+    <li>The same questions for an N × N image and an M × M filter.</li>
+    <li>For the tiled kernel with the halo in shared memory, an N × N image, an M × M filter and T × T output tiles: how many blocks, how many threads per block and how much shared memory per block? And for the cached-halo kernel?</li>
+    <li>IN_TILE_DIM = 32 and a 7 × 7 filter: what is the output tile, what fraction of the threads only loads, and how many blocks does a 1024 × 1024 image need?</li>
+    <li>N is read-only during the kernel too. Why do we put F in constant memory but not N?</li>
+    <li>In the cached-halo kernel with TILE_DIM = 32 and r = 2, what fraction of a block's threads reads at least one element from global memory during the compute loop?</li>
+    <li>A 3 × 3 filter on an H100: what is the best throughput the tiled kernel can reach, in TFLOPS, with 30 × 30 output tiles?</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Solutions 15.1–15.8</h2>
+  <table>
+    <tr><th>#</th><th>Answer</th></tr>
+    <tr><td>15.1</td><td>y0 = 2·0 + 1·4 + 4·1 = 8; y1 = 2·4 + 1·1 + 4·3 = 21; y2 = 2·1 + 3 + 4·2 = 13; y3 = 2·3 + 2 + 4·3 = 20; y4 = 2·2 + 3 + 0 = 7 → <b>{8, 21, 13, 20, 7}</b>.</td></tr>
+    <tr><td>15.2</td><td>Ghost cells: r on each side = <b>M − 1</b>. With zeros multiplied: <b>N·M</b>. Skipped: the first and last r outputs miss r, r−1, …, 1 taps each → <b>N·M − r(r + 1)</b>.</td></tr>
+    <tr><td>15.3</td><td>Ghost cells: (N + M − 1)² − N². Multiplying zeros: <b>N²M²</b>. Skipped: rows and columns are independent → <b>(N·M − r(r + 1))²</b>.</td></tr>
+    <tr><td>15.4</td><td>Halo in shared: ⌈N/T⌉² blocks, (T + M − 1)² threads, (T + M − 1)² × 4 B. Cached halo: ⌈N/T⌉² blocks, T² threads, T² × 4 B.</td></tr>
+    <tr><td>15.5</td><td>r = 3 → output tile <b>26 × 26</b>; idle 1 − 676/1024 = <b>34 %</b>; ⌈1024/26⌉² = 40² = <b>1600</b> blocks.</td></tr>
+    <tr><td>15.6</td><td>N is far larger than the 64 KB of constant memory, and threads of a warp read <b>different</b> N elements, so a broadcast cache gives no benefit. F is tiny and every thread reads the same element at the same time.</td></tr>
+    <tr><td>15.7</td><td>Threads within r of a tile edge: 1 − (32 − 4)²/32² = 1 − 784/1024 = <b>23 %</b>.</td></tr>
+    <tr><td>15.8</td><td>t = 30, m = 3: 2·900·9 / (4·(32² + 30²)) = 16200 / 7696 = 2.10 FLOP/B, memory-bound: 3.35 TB/s × 2.10 ≈ <b>7.1 TFLOPS</b>, about 11 % of the peak.</td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Self-study and code</h2>
+  <ul>
+    <li><b>Run it</b>: <code>ec2/conv</code> has all four kernels with checks and timings, and an idea for your project from another domain (a smoothed demand map of a bike-sharing city). It compiles with <code>nvcc</code> on Google Colab, or with <code>g++</code> on any laptop through a small CPU emulation of CUDA.</li>
+    <li><b>Exercise</b>: rewrite the tiled kernel with block = output tile, threads looping to load the larger input tile.</li>
+    <li><b>Exercise</b>: turn the basic, constant-memory and tiled kernels into 3D convolutions.</li>
+    <li><b>Chapter 8</b>: stencils, a special case of convolution used in PDE solvers (<code>ec2/stencil</code>). Later: convolutional neural networks build on the same ideas.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>15 · Convolution on the GPU</span><span id="counter"></span></div>

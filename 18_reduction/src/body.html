@@ -1,0 +1,612 @@
+<div class="deck">
+
+<section class="slide active">
+  <div class="eyebrow">C++ concurrency · session 18</div>
+  <h1>Parallel reduction</h1>
+  <p class="muted">Many values in, one value out: a sum, a maximum, a count. The tree is easy; making it fast on a GPU is a tour of everything we know: <b>control divergence</b>, <b>coalescing</b>, <b>shared memory</b>, <b>warp shuffles</b>, <b>atomics</b> and <b>thread coarsening</b>. Seven kernels, each fixing one bottleneck of the previous one.</p>
+  <p class="muted" style="font-size:.7em">Based on chapter 10 of <i>Programming Massively Parallel Processors</i> (Hwu, Kirk, El Hajj). Runnable code for every kernel: <code>ec2/reduction</code> (laptop or Google Colab). Navigate with <kbd>→</kbd> <kbd>←</kbd> or <kbd>space</kbd>; press <kbd>p</kbd> to print.</p>
+</section>
+
+<section class="slide">
+  <h2>What you already know: operator and identity</h2>
+  <div class="cols wc">
+    <div style="display:grid;gap:.8em">
+<pre style="font-size:.5em"><code>// sum reduction: identity 0.0f, operator +
+float sum = 0.0f;
+for (int i = 0; i &lt; N; ++i) {
+  sum += input[i];
+}
+
+// general form: any binary operator with an identity
+float acc = IDENTITY;
+for (int i = 0; i &lt; N; ++i) {
+  acc = Operator(acc, input[i]);
+}</code></pre>
+      <table>
+        <tr><th>reduction</th><th>operator</th><th>identity</th></tr>
+        <tr><td>sum</td><td><code>a + b</code></td><td>0</td></tr>
+        <tr><td>product</td><td><code>a * b</code></td><td>1</td></tr>
+        <tr><td>min / max</td><td><code>fminf</code> / <code>fmaxf</code></td><td>+∞ / −∞</td></tr>
+      </table>
+    </div>
+    <ul class="small">
+      <li>A reduction turns a list into <b>one value</b> with a binary operator. {7.0, 2.1, 5.3, 9.0, 11.2} sums to 34.6.</li>
+      <li>The <b>identity</b> leaves the other input unchanged. Without one, start with <code>acc = input[0]</code> and loop from <code>i = 1</code>.</li>
+      <li>Sequential: N operations, N steps. Sessions 09–10: <code>std::accumulate</code> (left to right) and <code>std::reduce</code> (any order), and the tree on threads.</li>
+      <li>On the GPU, libraries already do it: <b>Thrust</b> <code>thrust::reduce</code>, <b>CUB</b> <code>cub::DeviceReduce</code>. We build it from scratch because it teaches every optimization.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Reduction trees: max and sum</h2>
+  <div class="diagram" data-anim="trees">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="max" class="on">max tree</button><button data-mode="sum">sum tree</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">8 inputs, one operation per circle</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Associativity, commutativity and floats</h2>
+  <div class="diagram" data-anim="forder">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="seq" class="on">sequential</button><button data-mode="rev">reversed</button><button data-mode="simple">simple tree</button><button data-mode="conv">convergent tree</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+  <p class="small muted" style="font-size:.6em;max-width:none"><b>Associative</b> (a ⊕ b) ⊕ c = a ⊕ (b ⊕ c): change the parentheses (the tree). <b>Commutative</b> a ⊕ b = b ⊕ a: also change the order of operands (the convergent kernel, atomics). Subtraction is neither (1 − 2 − 3 ≠ 1 − (2 − 3)); rewrite it as adding negatives. Fine print: <code>int</code> overflow is undefined behaviour in C++, so a reordering can overflow where the original did not; <code>fmaxf</code> with a <b>NaN</b> operand is not commutative; float + is not associative. If you can rule these out, treat the operator as associative and commutative.</p>
+</section>
+
+<section class="slide">
+  <h2>Work, span and parallelism</h2>
+  <div class="cfg" data-anim="workspan">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">N inputs</span><input type="number" min="2" value="1024" data-in="N" style="width:7em"></div>
+      <div class="cfg-row"><span class="cfg-lbl">execution units</span><input type="number" min="0" value="0" data-in="P"><span class="muted">0 = unlimited</span></div>
+      <div class="presets"><button data-p="8,0">8</button><button data-p="1024,0" class="on">1024</button><button data-p="1024,64">1024, 64 units</button><button data-p="1048576,0">1 M</button></div>
+      <ul class="small" style="margin-top:.4em">
+        <li><b>Work</b>: operations performed. <b>Span</b>: steps with unlimited resources.</li>
+        <li>Tree: N/2 + N/4 + … + 1 = N − 1 operations, as many as the loop: <b>work-efficient</b>.</li>
+        <li>But the parallelism collapses: 512 units in step 1, 1 in step 10. The <b>average</b> is far below the <b>peak</b>; on a GPU, the idle units of the late steps are the problem of this session.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>A tournament is a max reduction</h2>
+  <div class="diagram" data-anim="bracket">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="s4" class="on">4 stadiums</button><button data-mode="s3">3 stadiums</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">knockout bracket, one game per stadium per day</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the simple kernel</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void SimpleSumReductionKernel(float* input,
+                                         float* output) {
+  unsigned int i = 2*threadIdx.x;
+  for (unsigned int stride = 1; stride &lt;= blockDim.x;
+       stride *= 2) {
+    if (threadIdx.x % stride == 0) {
+      input[i] += input[i + stride];
+    }
+    __syncthreads();
+  }
+  if (threadIdx.x == 0) {
+    *output = input[0];
+  }
+}
+
+// one block of N/2 threads: N ≤ 2048
+SimpleSumReductionKernel&lt;&lt;&lt;1, N/2&gt;&gt;&gt;(input_d, output_d);</code></pre>
+    <ul class="small">
+      <li>One block, so every thread can use <code>__syncthreads()</code>. Each thread adds two elements in the first step: N/2 threads.</li>
+      <li><b>Owner computes</b>: thread t owns input[2t]; only it writes there.</li>
+      <li>The stride doubles: 1, 2, 4 … Active threads are the multiples of the stride.</li>
+      <li><code>__syncthreads()</code> is a barrier <b>and a memory fence</b> for the block: writes before it are visible to every thread of the block after it.</li>
+      <li>The tree is computed in place: the input is destroyed.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Control divergence, step by step</h2>
+  <div class="diagram" data-anim="tree16">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="simple" class="on">simple kernel</button><button data-mode="conv">convergent kernel</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">16 elements, 8 threads, toy warps of 4 lanes</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the convergent kernel</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void ConvergentSumReductionKernel(float* input,
+                                             float* output) {
+<span class="hl-line">  unsigned int i = threadIdx.x;</span>
+<span class="hl-line">  for (unsigned int stride = blockDim.x; stride &gt;= 1;</span>
+<span class="hl-line">       stride /= 2) {</span>
+<span class="hl-line">    if (threadIdx.x &lt; stride) {</span>
+      input[i] += input[i + stride];
+    }
+    __syncthreads();
+  }
+  if (threadIdx.x == 0) {
+    *output = input[0];
+  }
+}</code></pre>
+    <ul class="small">
+      <li>Three small changes: thread t owns input[t]; the stride <b>starts</b> at blockDim.x and halves; the active threads are those with t &lt; stride.</li>
+      <li>Active threads stay <b>consecutive</b>, so whole warps switch off together: no divergence until fewer than 32 threads remain.</li>
+      <li>Pairs are now half a section apart: the operands are <b>reordered</b>, which needs commutativity as well as associativity.</li>
+      <li>Same number of additions, same result (up to float rounding), far fewer wasted lanes.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Execution resource efficiency</h2>
+  <div class="cfg" data-anim="eff">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">N elements</span><input type="number" min="4" max="2048" value="256" data-in="N"><span class="muted">power of 2</span></div>
+      <div class="presets"><button data-k="simple" class="on">simple</button><button data-k="convergent">convergent</button></div>
+      <div class="presets"><button data-p="64">64</button><button data-p="256" class="on">256</button><button data-p="1024">1024</button><button data-p="2048">2048</button></div>
+      <ul class="small" style="margin-top:.4em">
+        <li>N = 256: 128 threads, 4 warps, 8 iterations.</li>
+        <li>Simple: all 4 warps issue in the first 6 iterations (stride 1 … 32), then 2, then 1: (4·6 + 2 + 1)·32 = <b>864</b> lane slots for 255 adds: 255/864 = <b>0.30</b>.</li>
+        <li>Convergent: 4, 2, 1 warps, then 5 iterations with 1 warp: (4 + 2 + 1 + 5·1)·32 = <b>384</b>: 255/384 = <b>66 %</b>.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Memory divergence: counting global requests</h2>
+  <div class="diagram" data-anim="memreq">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="simple" class="on">simple</button><button data-mode="conv">convergent</button><button data-mode="shared">shared memory</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">N = 256, 4 warps</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: partial sums in shared memory</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void SharedMemorySumReductionKernel(float* input,
+                                               float* output) {
+  __shared__ float input_s[BLOCK_DIM];
+  unsigned int t = threadIdx.x;
+<span class="hl-line">  input_s[t] = input[t] + input[t + BLOCK_DIM];</span>
+  for (unsigned int stride = blockDim.x/2; stride &gt;= 1;
+       stride /= 2) {
+<span class="hl-line">    __syncthreads();</span>
+    if (threadIdx.x &lt; stride) {
+      input_s[t] += input_s[t + stride];
+    }
+  }
+  if (threadIdx.x == 0) {
+    *output = input_s[0];
+  }
+}</code></pre>
+    <ul class="small">
+      <li>The convergent kernel writes every partial sum to global memory and reads it back. Keep them in <b>shared memory</b> instead.</li>
+      <li>The first add happens <b>while loading</b>, so the loop starts at blockDim.x/2. The barrier moves to the top of the loop.</li>
+      <li><code>BLOCK_DIM</code> is a compile-time constant equal to blockDim.x: it sizes <code>input_s</code> and is the offset of the second element.</li>
+      <li>Global accesses: N + 1. Requests: N/32 + 1 = 8 + 1 = <b>9</b> for N = 256, against 36. And the input is not modified.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Global loads once, then shared memory</h2>
+  <div class="diagram" data-anim="shmem">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">16 elements, BLOCK_DIM = 8</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Warp-level primitives: <code>__shfl_down_sync</code></h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>#define WARP_SIZE 32
+__device__ unsigned int warpIdx() { return threadIdx.x / WARP_SIZE; }
+__device__ unsigned int laneIdx() { return threadIdx.x % WARP_SIZE; }
+
+// T __shfl_down_sync(unsigned mask, T var,
+//                    unsigned int delta, int width = 32);
+
+__device__ __inline__ float warp_reduce(float val) {
+  float partialSum = val;
+  for (unsigned int stride = WARP_SIZE/2; stride &gt; 0;
+       stride /= 2) {
+    partialSum += __shfl_down_sync(0xffffffff,
+                                   partialSum, stride);
+  }
+  return partialSum;     // the total is valid in lane 0 only
+}</code></pre>
+    <ul class="small">
+      <li><code>__syncwarp()</code>: a barrier for the 32 threads of one warp; diverged threads reconverge.</li>
+      <li><b>Shuffles</b> read another lane's <b>register</b>: no shared memory, no <code>__syncthreads()</code>.</li>
+      <li><code>mask</code>: lanes taking part (all 32 here). <code>var</code>: the value each sender offers. <code>delta</code>: lane i receives lane i + delta's <code>var</code>; if i + delta falls outside the group, its own.</li>
+      <li>Thread 33: warpIdx 1, laneIdx 1.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Shuffles: values move between registers</h2>
+  <div class="diagram" data-anim="shfl">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="d8" class="on">warp_reduce, 8 lanes</button><button data-mode="d32">32 lanes</button><button data-mode="w4">width 4</button><button data-mode="x8">__shfl_xor_sync</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the warp-level kernel</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void WarpLevelSumReductionKernel(float* input,
+                                            float* output) {
+  __shared__ float input_s[BLOCK_DIM];
+  unsigned int t = threadIdx.x;
+  input_s[t] = input[t] + input[t + BLOCK_DIM];
+<span class="hl-line">  for (unsigned int stride = blockDim.x/2;</span>
+<span class="hl-line">       stride &gt;= WARP_SIZE; stride /= 2) {</span>
+    __syncthreads();
+    if (threadIdx.x &lt; stride) {
+      input_s[t] += input_s[t + stride];
+    }
+  }
+  __syncthreads();
+<span class="hl-line">  if (warpIdx() == 0) {</span>
+<span class="hl-line">    float partialSum = input_s[t];</span>
+<span class="hl-line">    partialSum = warp_reduce(partialSum);</span>
+    if (threadIdx.x == 0) {
+      *output = partialSum;
+    }
+  }
+}</code></pre>
+    <ul class="small">
+      <li>From stride 32 down, only warp 0 works in the shared-memory kernel, yet every step pays a block-wide barrier and shared-memory round trips.</li>
+      <li>Here the shared loop stops after stride 32: input_s[0 … 31] holds 32 partial sums.</li>
+      <li>One last barrier, then warp 0 loads them into registers and finishes with 5 shuffles.</li>
+      <li>Strides 16 … 1 lose their barriers and shared accesses.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>More warp-level functions</h2>
+  <table style="font-size:.6em">
+    <tr><th>family</th><th>function</th><th>lane i gets</th><th>typical use</th></tr>
+    <tr><td>shuffle</td><td><code>__shfl_down_sync(mask, v, d)</code></td><td>v of lane i + d</td><td>reduction (this session)</td></tr>
+    <tr><td></td><td><code>__shfl_up_sync(mask, v, d)</code></td><td>v of lane i − d</td><td>prefix sum (next session)</td></tr>
+    <tr><td></td><td><code>__shfl_xor_sync(mask, v, m)</code></td><td>v of lane i ^ m</td><td>butterfly: every lane gets the total</td></tr>
+    <tr><td></td><td><code>__shfl_sync(mask, v, src)</code></td><td>v of lane src</td><td>broadcast one lane's value</td></tr>
+    <tr><td>vote</td><td><code>__all_sync</code>, <code>__any_sync</code>, <code>__ballot_sync</code></td><td>one predicate over the warp; ballot: a 32-bit mask</td><td>"is anyone done?", compaction</td></tr>
+    <tr><td>match</td><td><code>__match_any_sync</code>, <code>__match_all_sync</code></td><td>mask of lanes with the same value</td><td>group equal keys, e.g. same histogram bin</td></tr>
+    <tr><td>reduce</td><td><code>__reduce_add_sync</code>, <code>_min_</code>, <code>_max_</code> …</td><td>the warp's result, for integers</td><td>one instruction on compute capability 8.0+</td></tr>
+    <tr><td>sync</td><td><code>__syncwarp(mask)</code></td><td>—</td><td>barrier and memory ordering inside a warp</td></tr>
+  </table>
+  <p class="small muted" style="font-size:.62em">All take a <code>mask</code> of participating lanes. Shuffles take an optional <code>width</code> (a power of 2 up to 32): <code>width = 8</code> makes a warp behave as four independent groups of eight. Since Volta, lanes of a warp may run independently, which is why the <code>_sync</code> versions with a mask are required.</p>
+</section>
+
+<section class="slide">
+  <h2>Code: two-stage warp-wide reduction</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void TwoStageWarpLevelSumReductionKernel(
+    float* input, float* output) {
+  unsigned int t = threadIdx.x;
+  float partialSum = input[t] + input[t + BLOCK_DIM];
+<span class="hl-line">  partialSum = warp_reduce(partialSum);    // stage 1</span>
+
+  __shared__ float partialSums_s[BLOCK_DIM/WARP_SIZE];
+  if (laneIdx() == 0) {
+    partialSums_s[warpIdx()] = partialSum;
+  }
+  __syncthreads();                       // the only barrier
+
+  if (warpIdx() == 0) {
+    float partialSum = partialSums_s[t];
+<span class="hl-line">    partialSum = warp_reduce(partialSum);  // stage 2</span>
+    if (threadIdx.x == 0) {
+      *output = partialSum;
+    }
+  }
+}</code></pre>
+    <ul class="small">
+      <li>Stage 1: every warp reduces its own 64 elements in registers. Lane 0 puts the warp's sum in shared memory.</li>
+      <li>One barrier, then warp 0 reduces the per-warp sums. At most 1024 threads = 32 warps, so one warp is enough.</li>
+      <li>The listing assumes BLOCK_DIM = 1024. With fewer threads, guard the load: <code>t &lt; BLOCK_DIM/WARP_SIZE ? partialSums_s[t] : 0.0f</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>One stage or two? Barriers versus divergence</h2>
+  <div class="cfg" data-anim="stages">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">BLOCK_DIM</span><input type="number" min="64" max="1024" value="1024" data-in="T"><span class="muted">power of 2</span></div>
+      <div class="presets"><button data-p="128">128</button><button data-p="256">256</button><button data-p="1024" class="on">1024</button></div>
+      <ul class="small" style="margin-top:.4em">
+        <li>Two-stage: all warps stay busy in stage 1, but inside each warp only 16, 8, 4, 2, 1 lanes do useful work per shuffle: <b>more divergence</b>.</li>
+        <li>In exchange: <b>one</b> barrier and almost no shared memory.</li>
+        <li>Once the data is loaded, a reduction is <b>latency-bound</b>: few instructions, each waiting on the previous one. Removing barriers and shared-memory round trips shortens the critical path; removing idle lanes would only free cycles that the warps spend stalled anyway.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Arbitrary length: one segment per block</h2>
+  <div class="diagram" data-anim="multi">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="atomic" class="on">atomic adds</button><button data-mode="kernel">second kernel</button><button data-mode="host">host</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button><span class="muted">4 blocks, 8 elements each</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: multi-block reduction with <code>atomic_ref</code></h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void reduce_kernel(float* input, float* output,
+                              unsigned int N) {
+<span class="hl-line">  unsigned int segment = 2*blockDim.x*blockIdx.x;</span>
+<span class="hl-line">  unsigned int i = segment + threadIdx.x;</span>
+  float partialSum = input[i] + input[i + BLOCK_DIM];
+  partialSum = warp_reduce(partialSum);
+
+  __shared__ float partialSums_s[BLOCK_DIM/WARP_SIZE];
+  if (threadIdx.x%WARP_SIZE == 0) {
+    partialSums_s[threadIdx.x/WARP_SIZE] = partialSum;
+  }
+  __syncthreads();
+
+  if (threadIdx.x &lt; WARP_SIZE) {
+    float partialSum = partialSums_s[threadIdx.x];
+    partialSum = warp_reduce(partialSum);
+    if (threadIdx.x == 0) {
+<span class="hl-line">      cuda::atomic_ref&lt;float, cuda::thread_scope_device&gt;</span>
+<span class="hl-line">          output_ref(*output);</span>
+<span class="hl-line">      output_ref.fetch_add(partialSum,</span>
+<span class="hl-line">                           cuda::memory_order_relaxed);</span>
+    }
+  }
+}
+// host: *output = 0; N / (2*BLOCK_DIM) blocks of BLOCK_DIM</code></pre>
+    <ul class="small">
+      <li>Block b reduces the segment starting at 2·blockDim.x·b; <code>i</code> replaces <code>t</code> for global indices.</li>
+      <li>The leader thread adds the block's sum with a device-scope <code>fetch_add</code> (session 17).</li>
+      <li><code>N</code> is not used yet: N must be a multiple of 2·BLOCK_DIM (exercise 18.5).</li>
+      <li>Alternatives: write <code>partial[blockIdx.x]</code>, then a second one-block kernel or the host: fixed order, no atomics.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Thread coarsening: serialize the blocks yourself</h2>
+  <div class="cfg" data-anim="coarse">
+    <div>
+      <div class="cfg-row"><span class="cfg-lbl">threads per block</span><input type="number" min="2" max="1024" value="8" data-in="T"></div>
+      <div class="cfg-row"><span class="cfg-lbl">original blocks</span><input type="number" min="1" value="2" data-in="B"></div>
+      <div class="cfg-row"><span class="cfg-lbl">COARSE_FACTOR</span><input type="number" min="1" max="64" value="2" data-in="C"></div>
+      <div class="cfg-row"><span class="cfg-lbl">SMs</span><input type="number" min="1" max="1000" value="1" data-in="S"></div>
+      <div class="presets"><button data-p="8,2,2,1" class="on">book: 2 blocks, 1 SM</button><button data-p="8,16,2,4">16 blocks, 4 SMs</button><button data-p="8,16,8,4">factor too large</button><button data-p="1024,1024,4,132">1024 thr, 132 SMs</button></div>
+      <p class="small muted" style="margin:0">Toy model: one block per SM at a time; a step is one round of adds by a whole block. Each thread first adds 2 × COARSE_FACTOR elements (2C − 1 steps, all threads busy), then the tree takes log₂ T steps.</p>
+    </div>
+    <div>
+      <div class="svgwrap" data-svg></div>
+      <div class="cfg-out" data-out></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Code: the coarsened kernel</h2>
+  <div class="cols wc">
+<pre style="font-size:.5em"><code>__global__ void CoarsenedSumReductionKernel(float* input,
+                                            float* output) {
+<span class="hl-line">  unsigned int segment = COARSE_FACTOR*2*blockDim.x*blockIdx.x;</span>
+  unsigned int i = segment + threadIdx.x;
+  float partialSum = input[i];
+<span class="hl-line">  for (unsigned int c = 1; c &lt; COARSE_FACTOR*2; ++c) {</span>
+<span class="hl-line">    partialSum += input[i + c*BLOCK_DIM];</span>
+<span class="hl-line">  }</span>
+  // from here on as in the two-stage, multi-block kernel
+  partialSum = warp_reduce(partialSum);
+  __shared__ float partialSums_s[BLOCK_DIM/WARP_SIZE];
+  if (laneIdx() == 0) {
+    partialSums_s[warpIdx()] = partialSum;
+  }
+  __syncthreads();
+  if (warpIdx() == 0) {
+    float partialSum = partialSums_s[threadIdx.x];
+    partialSum = warp_reduce(partialSum);
+    if (threadIdx.x == 0) {
+      cuda::atomic_ref&lt;float, cuda::thread_scope_device&gt;
+          output_ref(*output);
+      output_ref.fetch_add(partialSum,
+                           cuda::memory_order_relaxed);
+    }
+  }
+}</code></pre>
+    <ul class="small">
+      <li>Segments are COARSE_FACTOR times longer; each thread adds 2 × COARSE_FACTOR elements, BLOCK_DIM apart: coalesced, no barriers.</li>
+      <li>The book shows only this head and writes <code>...</code> for the rest; the rest is the two-stage block reduction plus the atomic.</li>
+      <li>Grid: N / (COARSE_FACTOR · 2 · BLOCK_DIM) blocks.</li>
+      <li>Pick the largest factor that still leaves enough blocks to fill every SM.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>The kernels side by side</h2>
+  <table style="font-size:.6em">
+    <tr><th>kernel</th><th>fixes</th><th>efficiency</th><th>global requests</th><th>barriers</th><th>shared accesses</th><th>input size</th></tr>
+    <tr><td>simple</td><td>—</td><td>30 %</td><td>141</td><td>8</td><td>—</td><td>≤ 2048</td></tr>
+    <tr><td>convergent</td><td>control divergence, coalescing</td><td>66 %</td><td>36</td><td>8</td><td>—</td><td>≤ 2048</td></tr>
+    <tr><td>shared memory</td><td>global traffic</td><td>66 %</td><td>9</td><td>7</td><td>510</td><td>≤ 2048</td></tr>
+    <tr><td>warp-level</td><td>barriers of the last 5 steps</td><td>66 %</td><td>9</td><td>3</td><td>448</td><td>≤ 2048</td></tr>
+    <tr><td>two-stage</td><td>barriers of every step</td><td>more idle lanes</td><td>9</td><td>1</td><td>8</td><td>≤ 2048</td></tr>
+    <tr><td>multi-block</td><td>a single block</td><td>as two-stage</td><td>+ 1 atomic per block</td><td>1 per block</td><td>8 per block</td><td>multiple of 2·BLOCK_DIM</td></tr>
+    <tr><td>coarsened</td><td>idle tree steps in every block</td><td>more steps fully used</td><td>coalesced loads</td><td>1 per block</td><td>8 per block</td><td>fewer, bigger blocks</td></tr>
+  </table>
+  <p class="small muted" style="font-size:.62em">One block of 128 threads, N = 256 elements. Efficiency: useful adds / lane slots of issued warps. Barriers: <code>__syncthreads()</code> per block. Shared accesses per thread: stores, then 2 loads + 1 store per active thread per iteration; the two-stage kernels write and read 4 per-warp sums. Measure all versions: <code>ec2/reduction/reduction_book.cu</code>.</p>
+</section>
+
+<section class="slide">
+  <h2>Summary</h2>
+  <ul>
+    <li>A reduction derives one value from many with an operator and its identity. The <b>tree</b> does N − 1 operations, like the loop, in log₂ N steps, if the operator is <b>associative</b> (and <b>commutative</b> once operands are reordered). Floats only approximately qualify.</li>
+    <li>The simple kernel uses 30 % of the lanes it occupies for N = 256: active threads drift apart (<b>control divergence</b>) and their accesses are strided (<b>memory divergence</b>, 141 requests). Keeping active threads consecutive gives 66 % and 36 requests.</li>
+    <li><b>Shared memory</b> cuts global traffic to N + 1 accesses (9 requests). <b>Warp shuffles</b> remove barriers and shared accesses, in the last steps or, with two stages, everywhere.</li>
+    <li>Blocks cannot synchronize: each reduces a <b>segment</b> and adds its result with an <b>atomic</b> (or writes a partial sum for a second pass). <b>Coarsening</b> serializes the work ourselves, so fewer steps run with idle threads.</li>
+    <li>In practice call Thrust or CUB; the techniques reappear in scan (next session), histograms and sorting.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Exercises 18.1–18.6</h2>
+  <div class="cols wl">
+    <ol class="small" style="margin:0;padding-left:1.4em;display:grid;gap:.3em;font-size:.66em" start="1">
+      <li>The simple kernel reduces 1024 elements with 32-thread warps. How many warps of the block diverge in the 5th iteration?</li>
+      <li>The same question for the convergent kernel.</li>
+      <li>Rewrite the convergent kernel to use the access pattern on the right.</li>
+      <li>Change the coarsened kernel to compute the <b>maximum</b> instead of the sum.</li>
+      <li>Change the coarsened kernel to accept any length, not only multiples of COARSE_FACTOR·2·blockDim.x. Add a parameter <code>N</code> for the length.</li>
+      <li>The input is {6, 2, 7, 4, 5, 8, 3, 1}. Show the array after each iteration for (a) the simple kernel and (b) the convergent kernel.</li>
+    </ol>
+    <div>
+      <div class="diagram" data-anim="ex3pic"><div class="svgwrap" data-svg></div></div>
+      <p class="small muted" style="font-size:.6em;margin-top:.3em">Exercise 3: 8 threads own the <b>last</b> half of 16 elements; each step adds from the left, and the result ends in the last element.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Exercise 18.6 traced</h2>
+  <div class="diagram" data-anim="ex6">
+    <div class="svgwrap" data-svg></div>
+    <div class="cap" data-cap></div>
+    <div class="dctl"><button data-mode="simple" class="on">(a) simple</button><button data-mode="conv">(b) convergent</button><button data-mode="rev">reversed (18.3)</button><button data-act="play">Pause</button><button data-act="step">Step</button><button data-act="reset">Reset</button></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Solutions 18.1, 18.2, 18.3, 18.6</h2>
+  <div class="cols">
+    <table style="font-size:.56em">
+      <tr><th>#</th><th>Answer</th></tr>
+      <tr><td>18.1</td><td>512 threads = 16 warps. Iteration 5 has stride 16: threads with t % 16 == 0 work, 2 per warp. <b>All 16 warps</b> diverge.</td></tr>
+      <tr><td>18.2</td><td>Strides 512, 256, 128, 64, <b>32</b>: threads 0–31 are exactly warp 0, fully active; the other 15 warps are fully idle. <b>0 warps</b> diverge (divergence starts at stride 16).</td></tr>
+      <tr><td>18.6 (a)</td><td>stride 1: {8, 2, 11, 4, 13, 8, 4, 1}<br>stride 2: {19, 2, 11, 4, 17, 8, 4, 1}<br>stride 4: {<b>36</b>, 2, 11, 4, 17, 8, 4, 1}</td></tr>
+      <tr><td>18.6 (b)</td><td>stride 4: {11, 10, 10, 5, 5, 8, 3, 1}<br>stride 2: {21, 15, 10, 5, 5, 8, 3, 1}<br>stride 1: {<b>36</b>, 15, 10, 5, 5, 8, 3, 1}</td></tr>
+    </table>
+<pre style="font-size:.5em"><code>// 18.3: threads own the last half, stride points left
+__global__ void ReversedSumReductionKernel(
+    float* input, float* output) {
+  unsigned int i = blockDim.x + threadIdx.x;
+  for (unsigned int stride = blockDim.x; stride &gt;= 1;
+       stride /= 2) {
+    if (threadIdx.x &gt;= blockDim.x - stride) {
+      input[i] += input[i - stride];
+    }
+    __syncthreads();
+  }
+  if (threadIdx.x == blockDim.x - 1) {
+    *output = input[i];       // input[2*blockDim.x - 1]
+  }
+}
+// the active threads are the last ones: still
+// consecutive, so whole warps drop out together</code></pre>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Solutions 18.4 and 18.5</h2>
+  <div class="cols">
+<pre style="font-size:.5em"><code>// 18.4: maximum; host sets *output = -INFINITY
+__device__ float warp_max(float v) {
+  for (unsigned int s = WARP_SIZE/2; s &gt; 0; s /= 2)
+    v = fmaxf(v, __shfl_down_sync(0xffffffff, v, s));
+  return v;
+}
+__global__ void CoarsenedMaxReductionKernel(
+    float* input, float* output) {
+  unsigned int i = COARSE_FACTOR*2*blockDim.x*blockIdx.x
+                   + threadIdx.x;
+  float m = input[i];
+  for (unsigned int c = 1; c &lt; COARSE_FACTOR*2; ++c)
+    m = fmaxf(m, input[i + c*BLOCK_DIM]);
+  m = warp_max(m);
+  __shared__ float m_s[BLOCK_DIM/WARP_SIZE];
+  if (laneIdx() == 0) m_s[warpIdx()] = m;
+  __syncthreads();
+  if (warpIdx() == 0) {
+    m = warp_max(threadIdx.x &lt; BLOCK_DIM/WARP_SIZE
+                 ? m_s[threadIdx.x] : -INFINITY);
+    if (threadIdx.x == 0) {
+      cuda::atomic_ref&lt;float, cuda::thread_scope_device&gt;
+          out(*output);
+      float old = out.load(cuda::memory_order_relaxed);
+      while (old &lt; m &amp;&amp; !out.compare_exchange_strong(
+                 old, m, cuda::memory_order_relaxed)) {}
+    }
+  }
+}</code></pre>
+    <div style="display:grid;gap:.6em">
+<pre style="font-size:.5em"><code>// 18.5: any N; missing elements count as 0
+__global__ void CoarsenedSumReductionKernel(
+    float* input, float* output, unsigned int N) {
+  unsigned int segment =
+      COARSE_FACTOR*2*blockDim.x*blockIdx.x;
+  unsigned int i = segment + threadIdx.x;
+  float partialSum = 0.0f;
+  for (unsigned int c = 0; c &lt; COARSE_FACTOR*2; ++c) {
+    if (i + c*BLOCK_DIM &lt; N) {
+      partialSum += input[i + c*BLOCK_DIM];
+    }
+  }
+  // ... rest unchanged: every thread still calls
+  // warp_reduce, so the full mask stays valid
+}
+// grid: cdiv(N, COARSE_FACTOR*2*BLOCK_DIM) blocks</code></pre>
+      <ul class="small" style="font-size:.62em">
+        <li>18.4: identity −∞ instead of 0, <code>fmaxf</code> instead of +, and an atomic maximum: a <code>compare_exchange</code> loop for <code>float</code>, which retries while <code>m</code> is larger. With <code>int</code> data, <code>fetch_max</code> or <code>atomicMax</code> does it in one call (<code>reduction_book.cu</code>).</li>
+        <li>18.5: guard each load and start from the identity; never return early, or the shuffles' mask would name lanes that left.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Self-study and code</h2>
+  <ul class="small">
+    <li><code>ec2/reduction/reduction.cu</code>: the classic reduction kernels with <code>atomicAdd</code>.</li>
+    <li><code>reduction_book.cu</code>: every kernel of this session as the book writes it: simple, convergent, shared memory, warp-level with <code>__shfl_down_sync</code>, two-stage, multi-block with <code>cuda::atomic_ref</code> and coarsened, plus the maximum and arbitrary-N versions of the exercises. All checked against the CPU.</li>
+    <li><code>bikeshare_daily_summary.cu</code> and <code>bikeshare_nearest_truck.cu</code>: ideas from another domain, a bike-sharing system: a daily report with block reductions, and the rebalancing truck that reaches each empty station first (argmin).</li>
+    <li><code>bikeshare_kpis.cu</code>: several KPIs of a day of bike trips in one pass, with a struct operator (sum, min, max, count), warp shuffles and atomics, and why float sums depend on the order.</li>
+    <li><code>bikeshare_bike_totals.cu</code>: per-bike totals with one coarsened block per bike, then an argmax with a deterministic tie-break.</li>
+    <li><code>colab.ipynb</code>: run everything on a Colab GPU. On a laptop without a GPU the warp shuffles run in the CPU emulation (<code>ec2/common/cuda_compat.h</code>): <code>g++ -std=c++17 -O2 -pthread -x c++ -I../common FILE.cu</code>. Kernels are launched with <code>launch(kernel, grid, block, args...)</code>, so the same file compiles both ways.</li>
+    <li><b>Exercise</b>: time the seven kernels on 2²⁴ floats and explain each change; then sum the same data in two orders and compare the last digits.</li>
+  </ul>
+</section>
+
+</div>
+<div class="foot"><span>18 · Parallel reduction</span><span id="counter"></span></div>
